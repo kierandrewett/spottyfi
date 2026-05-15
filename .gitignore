@@ -1,0 +1,9 @@
+# Rust build artefacts.
+/target
+
+# Editor / OS cruft.
+*.swp
+.DS_Store
+
+# Runtime state written by the app (layouts, caches) when run from the repo root.
+/layout.ron

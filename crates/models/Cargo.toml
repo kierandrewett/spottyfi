@@ -1,0 +1,11 @@
+[package]
+name = "spottyfi-models"
+description = "Shared domain types for Spottyfi (Track, Album, Artist, …)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]

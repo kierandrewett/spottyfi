@@ -1,0 +1,11 @@
+[package]
+name = "spottyfi-auth"
+description = "OAuth PKCE flow, token refresh and keyring storage for Spottyfi."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]

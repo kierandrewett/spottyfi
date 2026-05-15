@@ -1,0 +1,30 @@
+[package]
+name = "spottyfi-app"
+description = "Spottyfi — a native Rust Spotify client. The application binary."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+default-run = "spottyfi"
+
+[[bin]]
+name = "spottyfi"
+path = "src/main.rs"
+
+[dependencies]
+spottyfi-models.workspace = true
+spottyfi-state.workspace = true
+spottyfi-api.workspace = true
+spottyfi-auth.workspace = true
+spottyfi-audio.workspace = true
+spottyfi-cache.workspace = true
+spottyfi-ui.workspace = true
+
+eframe.workspace = true
+egui.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+clap.workspace = true
