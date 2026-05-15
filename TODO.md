@@ -10,9 +10,9 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
 - [x] `app` binary opens an empty egui window titled `Spottyfi`
 - [x] `tracing` set up; `RUST_LOG=spottyfi=debug` works
 - [x] CLI flags scaffolded (`--no-audio`, `--offline`, `--clear-cache`, `--log-level`)
-- [ ] `cargo build` / `clippy -D warnings` / `fmt --check` / `nextest` all green
-- [ ] CI: build + clippy + fmt on Linux
-- [ ] Public GitHub repo, regular commits + pushes
+- [x] `cargo build` / `clippy -D warnings` / `fmt --check` / `nextest` all green
+- [x] CI: build + clippy + fmt + test on Linux
+- [x] Public GitHub repo, regular commits + pushes
 
 ## Phase 1 — Authentication `[ ]`
 
