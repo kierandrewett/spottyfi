@@ -10,7 +10,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
-use spottyfi_audio::{PlaybackController, PlaybackState, SharedPlaybackState};
+use spottyfi_audio::{
+    PlaybackController, PlaybackState, QueueState, QueueTrack, SharedPlaybackState,
+    SharedQueueState,
+};
 use spottyfi_auth::Session;
 use tokio::runtime::Handle;
 
@@ -37,6 +40,8 @@ pub struct PlaybackControllerHandle {
     egui_ctx: egui::Context,
     /// The playback-state snapshot the UI projects.
     state: SharedPlaybackState,
+    /// The queue-state snapshot the UI's queue panel projects.
+    queue_state: SharedQueueState,
     /// The live controller, set once the engine has started. Held behind an
     /// `Arc` so a clone can be moved into a spawned transport-command task.
     controller: Arc<ArcSwap<Option<Arc<PlaybackController>>>>,
@@ -58,6 +63,7 @@ impl PlaybackControllerHandle {
             runtime,
             egui_ctx,
             state: Arc::new(ArcSwap::from_pointee(PlaybackState::default())),
+            queue_state: Arc::new(ArcSwap::from_pointee(QueueState::default())),
             controller: Arc::new(ArcSwap::from_pointee(None)),
             status: Arc::new(ArcSwap::from_pointee(EngineStatus::Idle)),
             audio_disabled,
@@ -68,6 +74,11 @@ impl PlaybackControllerHandle {
     /// The current playback-state snapshot.
     pub fn state(&self) -> Arc<PlaybackState> {
         self.state.load_full()
+    }
+
+    /// The current queue-state snapshot, read by the queue panel each frame.
+    pub fn queue_state(&self) -> Arc<QueueState> {
+        self.queue_state.load_full()
     }
 
     /// The current engine lifecycle status.
@@ -92,6 +103,7 @@ impl PlaybackControllerHandle {
         let controller_slot = Arc::clone(&self.controller);
         let status = Arc::clone(&self.status);
         let state_slot = Arc::clone(&self.state);
+        let queue_slot = Arc::clone(&self.queue_state);
 
         Self::publish_status(&status, &egui_ctx, EngineStatus::Starting);
 
@@ -107,9 +119,15 @@ impl PlaybackControllerHandle {
 
             match PlaybackController::start(&token.access_token).await {
                 Ok(controller) => {
-                    // Mirror the engine's state into our shared slot, and wake
-                    // the UI whenever it changes.
-                    Self::bridge_state(&runtime, &egui_ctx, controller.state(), state_slot);
+                    // Mirror the engine's playback and queue state into our
+                    // shared slots, waking the UI whenever either changes.
+                    Self::bridge_snapshot(&runtime, &egui_ctx, controller.state(), state_slot);
+                    Self::bridge_snapshot(
+                        &runtime,
+                        &egui_ctx,
+                        controller.queue_state(),
+                        queue_slot,
+                    );
                     controller_slot.store(Arc::new(Some(Arc::new(controller))));
                     Self::publish_status(&status, &egui_ctx, EngineStatus::Ready);
                 }
@@ -125,6 +143,7 @@ impl PlaybackControllerHandle {
     pub fn shutdown(&mut self) {
         self.controller.store(Arc::new(None));
         self.state.store(Arc::new(PlaybackState::default()));
+        self.queue_state.store(Arc::new(QueueState::default()));
         self.status.store(Arc::new(EngineStatus::Idle));
         self.start_requested = false;
     }
@@ -135,6 +154,82 @@ impl PlaybackControllerHandle {
             if let Err(err) = controller.play_uri(&uri).await {
                 tracing::warn!(%err, %uri, "play_uri failed");
             }
+        });
+    }
+
+    /// Play a context — a playlist/album's full resolved track list — starting
+    /// at `offset`, so Next/Prev walk the list.
+    pub fn play_context(&self, uri: String, name: String, tracks: Vec<QueueTrack>, offset: usize) {
+        self.dispatch(move |controller| async move {
+            if let Err(err) = controller.play_context(&uri, &name, tracks, offset).await {
+                tracing::warn!(%err, %uri, "play_context failed");
+            }
+        });
+    }
+
+    /// Skip to the next track (manual queue first, then the context).
+    pub fn next(&self) {
+        self.dispatch(|controller| async move {
+            if let Err(err) = controller.next().await {
+                tracing::warn!(%err, "next failed");
+            }
+        });
+    }
+
+    /// Skip to the previous context track.
+    pub fn previous(&self) {
+        self.dispatch(|controller| async move {
+            if let Err(err) = controller.previous().await {
+                tracing::warn!(%err, "previous failed");
+            }
+        });
+    }
+
+    /// Add a track to the front of the manual queue (play it next).
+    pub fn play_next(&self, track: QueueTrack) {
+        self.dispatch(move |controller| async move {
+            controller.play_next(track).await;
+        });
+    }
+
+    /// Add a track to the end of the manual queue.
+    pub fn enqueue(&self, track: QueueTrack) {
+        self.dispatch(move |controller| async move {
+            controller.enqueue(track).await;
+        });
+    }
+
+    /// Jump to manual-queue entry `index` — a click in the queue panel.
+    pub fn skip_to_manual(&self, index: usize) {
+        self.dispatch(move |controller| async move {
+            if let Err(err) = controller.skip_to_manual(index).await {
+                tracing::warn!(%err, index, "skip_to_manual failed");
+            }
+        });
+    }
+
+    /// Jump to context entry `index` — a click in the queue panel's "Next
+    /// from …" section. `index` is an absolute index into the context's
+    /// track list, which the panel derives from `QueueState::context_index`.
+    pub fn skip_to_context(&self, index: usize) {
+        self.dispatch(move |controller| async move {
+            if let Err(err) = controller.skip_to_context(index).await {
+                tracing::warn!(%err, index, "skip_to_context failed");
+            }
+        });
+    }
+
+    /// Move manual-queue entry `from` to `to` — the drag-to-reorder primitive.
+    pub fn reorder_manual(&self, from: usize, to: usize) {
+        self.dispatch(move |controller| async move {
+            controller.reorder_manual(from, to).await;
+        });
+    }
+
+    /// Remove manual-queue entry `index`.
+    pub fn remove_manual(&self, index: usize) {
+        self.dispatch(move |controller| async move {
+            controller.remove_manual(index).await;
         });
     }
 
@@ -198,19 +293,22 @@ impl PlaybackControllerHandle {
         egui_ctx.request_repaint();
     }
 
-    /// Spawn a task that mirrors the engine's state into our shared slot and
-    /// requests a repaint whenever the snapshot changes.
-    fn bridge_state(
+    /// Spawn a task that mirrors an engine-owned `ArcSwap` snapshot into our
+    /// shared slot and requests a repaint whenever the snapshot changes.
+    ///
+    /// Used for both the playback state (swapped ~10Hz) and the queue state
+    /// (swapped on every queue mutation and on auto-advance).
+    fn bridge_snapshot<T: Send + Sync + 'static>(
         runtime: &Handle,
         egui_ctx: &egui::Context,
-        engine_state: SharedPlaybackState,
-        target: SharedPlaybackState,
+        engine_state: Arc<ArcSwap<T>>,
+        target: Arc<ArcSwap<T>>,
     ) {
         let egui_ctx = egui_ctx.clone();
         runtime.spawn(async move {
             let mut last = engine_state.load_full();
-            // The engine swaps its snapshot ~10Hz; poll a touch faster so the
-            // UI never lags a frame behind a control action.
+            // Poll a touch faster than the engine's ~10Hz swap so the UI never
+            // lags a frame behind a control action.
             let mut tick = tokio::time::interval(Duration::from_millis(80));
             loop {
                 tick.tick().await;
