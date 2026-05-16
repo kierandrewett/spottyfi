@@ -26,6 +26,8 @@ the feature surface of the modern client.
 ```sh
 # Live login needs a Spotify app — set its Client ID first (PKCE, no secret):
 export SPOTTYFI_CLIENT_ID=<your-client-id>
+# Optional: a free Last.fm API key powers Browse's charts & recommendations.
+export SPOTTYFI_LASTFM_API_KEY=<your-lastfm-key>
 cargo run
 ```
 
@@ -45,6 +47,14 @@ Logging uses [`tracing`]. `RUST_LOG` overrides everything:
 ```sh
 RUST_LOG=spottyfi=debug cargo run
 ```
+
+### Environment variables
+
+| Variable | Required? | Purpose |
+| --- | --- | --- |
+| `SPOTTYFI_CLIENT_ID` | for live login | the registered Spotify app's Client ID (PKCE, no secret) |
+| `SPOTTYFI_REDIRECT_PORT` | optional | overrides the loopback callback port (default `8888`) |
+| `SPOTTYFI_LASTFM_API_KEY` | optional | a free [Last.fm API key](https://www.last.fm/api/account/create); enables Browse's charts and recommendations. Without it, Browse still shows the Spotify category grid and those sections show a "set the key" note. |
 
 ## Workspace layout
 

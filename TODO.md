@@ -90,7 +90,33 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
   show/episode variant, so the Podcasts tab shows an explanatory note.
   Audiobooks omitted for the same reason. See `docs/questions.md` #10.
 
-## Phase 7 — Browse `[ ]`
+## Phase 7 — Browse `[x]`
+
+- [x] `lastfm` module in `api`: `LastfmClient` (chart.getTop*, tag.getTop*,
+      artist.getSimilar, track.getSimilar, artist.getTopTracks) with its own
+      `thiserror` error; key from `SPOTTYFI_LASTFM_API_KEY`, `from_env`
+      returns `NotConfigured` without panicking
+- [x] `LastfmResolver` maps Last.fm artist/track names to Spotify objects
+      via `SpotifyApi::search` (best-match)
+- [x] `current_user_top_artists` / `current_user_top_tracks` + `new_releases`
+      added to the `SpotifyApi` trait
+- [x] `BrowsePage` — Spotify category grid (rotated art tiles) + Last.fm
+      charts shelves
+- [x] `CategoryPage` — a Spotify category mapped to a Last.fm tag's top
+      tracks/artists, resolved to Spotify objects
+- [x] `ChartsPage` — Last.fm global top tracks/artists
+- [x] `MadeForYouPage` — recommendations from the user's Spotify top items
+      via Last.fm similarity
+- [x] `NewReleasesPage` — Spotify `new-releases`; clean note when unavailable
+- [x] Sidebar Browse / Charts / New Releases / Discover entries wired to the
+      real pages (Discover → Made For You)
+- [x] Graceful degradation with no Last.fm key; unit tests for Last.fm JSON
+      parsing and the name→Spotify resolver
+- Note: discovery is sourced from Last.fm because Spotify's
+  Recommendations / Featured Playlists / Category-playlists endpoints are
+  dead for new apps — see `docs/questions.md` #7. The maintainer must
+  create a free Last.fm API key and set `SPOTTYFI_LASTFM_API_KEY`.
+
 ## Phase 8 — Queue + playback context `[ ]`
 ## Phase 9 — Caches `[ ]`
 ## Phase 10 — Docking power features `[ ]`

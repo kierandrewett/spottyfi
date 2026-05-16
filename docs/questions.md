@@ -76,27 +76,44 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
    marked `#[deprecated]` in rspotify 0.16 but is *not* on Spotify's
    2024-11-27 list — it is included defensively in case access is uneven.
 
-   **Open decisions for the maintainer / Phase 7 (Browse):**
-   - **Recommendations → a third-party source (proposal — not yet decided).**
-     With Spotify's `/recommendations` dead for new apps, Phase 7's Browse
-     surface needs another source of suggestions. One candidate is the
-     **Last.fm API** (`track.getSimilar`, `artist.getSimilar`,
-     `artist.getTopTracks`, `chart.getTopTracks`, `tag.getTopArtists`), which
-     would need a free **Last.fm API key**
-     (https://www.last.fm/api/account/create) — e.g. a `SPOTTYFI_LASTFM_API_KEY`
-     env var mirroring `SPOTTYFI_CLIENT_ID`. Last.fm returns artist/track
-     *names*, not Spotify ids, so Phase 7 would resolve them back via
-     `api.search(...)`, in a thin `lastfm` module. **Maintainer to decide
-     before Phase 7** — Last.fm, another source, or dropping recommendations.
-   - **Featured Playlists / Browse categories** have no Last.fm equivalent.
-     Phase 7's `BrowsePage` will likely fall back to *new releases*
-     (`GET /browse/new-releases` — also `#[deprecated]` in rspotify but not
-     on the 2024-11-27 kill list, so its real status needs a live check once
-     the app is registered) and to Last.fm charts/tags for the genre grid.
-   - **Confirm once the app exists.** All of the above is the *documented*
-     behaviour; the only certain test is to register the app and hit each
-     endpoint. The `EndpointUnavailable` plumbing means that test is a
-     no-risk smoke check rather than something that can crash the client.
+   **Resolution — Phase 7 (Browse): Last.fm is now integrated.**
+   The maintainer approved sourcing discovery from the **Last.fm API**
+   instead of Spotify's dead endpoints. Phase 7 implemented it:
+
+   - **`lastfm` module in the `api` crate.** `LastfmClient` talks to
+     `https://ws.audioscrobbler.com/2.0/` (simple JSON GETs via `reqwest`)
+     and wraps `chart.getTopArtists`, `chart.getTopTracks`,
+     `tag.getTopArtists`, `tag.getTopTracks`, `artist.getSimilar`,
+     `track.getSimilar` and `artist.getTopTracks`. It has its own
+     `thiserror` error (`LastfmError`).
+   - **Name resolution.** Last.fm returns artist/track *names*, not Spotify
+     ids. `LastfmResolver` maps each name back to a Spotify object via
+     `SpotifyApi::search`, preferring a case-insensitive exact match.
+   - **API key.** A free Last.fm key (https://www.last.fm/api/account/create)
+     is read from the **`SPOTTYFI_LASTFM_API_KEY`** environment variable,
+     mirroring `SPOTTYFI_CLIENT_ID`. **The maintainer must create a key and
+     set this variable** for Browse's charts/recommendations to work.
+   - **Graceful degradation.** With no key, `LastfmClient::from_env` returns
+     `LastfmError::NotConfigured` (it never panics). `BrowsePage` still shows
+     the Spotify category grid; Last.fm-backed sections (`ChartsPage`,
+     `CategoryPage`, `MadeForYouPage`, the Browse charts shelves) show a calm
+     "Set SPOTTYFI_LASTFM_API_KEY to enable charts & recommendations" note.
+   - **Pages.** `BrowsePage` (Spotify category grid with rotated art tiles +
+     Last.fm charts), `CategoryPage` (a Spotify category mapped to a Last.fm
+     tag), `MadeForYouPage` (Spotify top artists/tracks → Last.fm similarity),
+     `ChartsPage` (Last.fm `chart.getTop*`). The sidebar's Browse / Charts /
+     New Releases / Discover entries open these real pages (Discover → Made
+     For You).
+   - **`current_user_top_artists` / `current_user_top_tracks`** were added to
+     the `SpotifyApi` trait — `GET /me/top/*` is *not* on the 2024-11-27
+     kill list and seeds Made For You.
+   - **New Releases.** `NewReleasesPage` uses Spotify `GET /browse/new-releases`
+     (`new_releases` on the trait). `rspotify` marks it deprecated and its
+     status for new apps is uncertain — an `EndpointUnavailable` is shown as a
+     clean note, never a crash.
+   - **Confirm once the app exists.** The `EndpointUnavailable` plumbing means
+     hitting each Spotify endpoint live is a no-risk smoke check; the only
+     hard requirement on the maintainer is the free Last.fm API key.
 
 ## Resolved
 

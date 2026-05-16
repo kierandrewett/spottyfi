@@ -210,7 +210,13 @@ Debounced 250ms search, cancellable in-flight requests. `SearchPage` with All /
 Songs / Artists / Albums / Playlists / Podcasts tabs and a Top Result card.
 
 ### Phase 7 — Browse
-`BrowsePage` genre/category grid, `CategoryPage`, `MadeForYouPage`.
+`BrowsePage` genre/category grid, `CategoryPage`, `MadeForYouPage`. Spotify's
+discovery endpoints (Recommendations, Featured Playlists, a Category's
+playlists) are dead for newly-registered apps, so discovery is sourced from
+the **Last.fm API** instead — a `lastfm` module in the `api` crate, keyed by
+`SPOTTYFI_LASTFM_API_KEY`, with a resolver that maps Last.fm names back to
+Spotify objects. Browse degrades gracefully when no key is set. See
+`docs/questions.md` #7.
 
 ### Phase 8 — Queue + playback context
 `QueuePanel` with Now Playing, "Next from <context>", and the manual queue.
