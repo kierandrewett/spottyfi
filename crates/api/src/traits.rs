@@ -152,6 +152,16 @@ pub trait SpotifyApi: Send + Sync {
     /// registered after 2024-11-27.
     async fn browse_categories(&self, limit: u32) -> ApiResult<Vec<Category>>;
 
+    /// Spotify's newly-released albums (`GET /browse/new-releases`).
+    ///
+    /// # Errors
+    ///
+    /// May fail with [`ApiError::EndpointUnavailable`] — `rspotify` marks this
+    /// endpoint deprecated and its status for newly-registered apps is
+    /// uncertain. Phase 7's `NewReleasesPage` shows a clean note rather than
+    /// crashing when it does.
+    async fn new_releases(&self, limit: u32) -> ApiResult<Vec<SimplifiedAlbum>>;
+
     /// Track recommendations seeded by artists, genres and/or tracks
     /// (`GET /recommendations`).
     ///

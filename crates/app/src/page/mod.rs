@@ -19,10 +19,16 @@
 
 mod album;
 mod artist;
+mod browse;
+mod cards;
+mod category;
+mod charts;
 mod home;
 mod incremental;
 mod library;
 mod liked;
+mod made_for_you;
+mod new_releases;
 mod playlist;
 mod promise;
 mod search;
@@ -32,6 +38,7 @@ mod track_view;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use spottyfi_api::lastfm::LastfmClient;
 use spottyfi_api::SpotifyApi;
 use spottyfi_audio::PlaybackState;
 use spottyfi_state::ActivityRegistry;
@@ -45,9 +52,14 @@ use crate::shell::Tab;
 
 pub use album::AlbumPage;
 pub use artist::ArtistPage;
+pub use browse::BrowsePage;
+pub use category::CategoryPage;
+pub use charts::ChartsPage;
 pub use home::HomePage;
 pub use library::LibraryPage;
 pub use liked::LikedSongsPage;
+pub use made_for_you::MadeForYouPage;
+pub use new_releases::NewReleasesPage;
 pub use playlist::PlaylistPage;
 pub use search::SearchPage;
 
@@ -59,6 +71,12 @@ pub use search::SearchPage;
 pub struct PageServices {
     /// The Spotify Web API client (the real client, or a mock in tests).
     pub api: Arc<dyn SpotifyApi>,
+    /// The Last.fm client used by Browse for charts and recommendations.
+    ///
+    /// `None` when `SPOTTYFI_LASTFM_API_KEY` is unset — Browse degrades
+    /// gracefully, showing the Spotify category grid and a calm "set the key"
+    /// note in place of the Last.fm-backed sections.
+    pub lastfm: Option<LastfmClient>,
     /// The tokio runtime the async loads are spawned onto.
     pub runtime: Handle,
     /// The egui context, woken when a load resolves.
@@ -198,6 +216,11 @@ fn build_page(tab: &Tab, services: &PageServices) -> Box<dyn Page> {
         Tab::Album(id) => Box::new(AlbumPage::new(services, id.clone())),
         Tab::Artist(id) => Box::new(ArtistPage::new(services, id.clone())),
         Tab::Search => Box::new(SearchPage::new(services)),
+        Tab::Browse => Box::new(BrowsePage::new(services)),
+        Tab::Category(id) => Box::new(CategoryPage::new(services, id.clone())),
+        Tab::Charts => Box::new(ChartsPage::new(services)),
+        Tab::NewReleases => Box::new(NewReleasesPage::new(services)),
+        Tab::MadeForYou => Box::new(MadeForYouPage::new(services)),
         // Panels are not pages; the registry is only consulted for page tabs.
         Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Placeholder(_) => {
             Box::new(HomePage::new(services))

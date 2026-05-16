@@ -81,8 +81,18 @@ impl ShellState {
         if self.session.is_some() {
             return;
         }
+        // Last.fm powers Browse's charts and recommendations. With no API key
+        // configured this is `None` and Browse degrades gracefully.
+        let lastfm = match spottyfi_api::lastfm::LastfmClient::from_env() {
+            Ok(client) => Some(client),
+            Err(err) => {
+                tracing::info!(%err, "Last.fm not configured; Browse charts disabled");
+                None
+            }
+        };
         let services = PageServices {
             api: Arc::clone(&api),
+            lastfm,
             runtime: runtime.clone(),
             ctx: ctx.clone(),
             activity: Arc::clone(&self.activity),

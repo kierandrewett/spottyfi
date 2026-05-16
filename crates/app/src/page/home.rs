@@ -186,6 +186,7 @@ mod tests {
             .expect("build runtime");
         let services = PageServices {
             api: Arc::new(mock),
+            lastfm: None,
             runtime: runtime.handle().clone(),
             ctx: egui::Context::default(),
             activity: spottyfi_state::ActivityRegistry::new(),

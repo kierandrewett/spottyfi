@@ -181,11 +181,7 @@ impl LastfmClient {
 
     /// The top artists for a tag/genre (`tag.getTopArtists`).
     #[tracing::instrument(skip(self))]
-    pub async fn tag_top_artists(
-        &self,
-        tag: &str,
-        limit: u32,
-    ) -> LastfmResult<Vec<LastfmArtist>> {
+    pub async fn tag_top_artists(&self, tag: &str, limit: u32) -> LastfmResult<Vec<LastfmArtist>> {
         let limit = limit.to_string();
         let resp: ArtistsResponse = self
             .get("tag.gettopartists", &[("tag", tag), ("limit", &limit)])

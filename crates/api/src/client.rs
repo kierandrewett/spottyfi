@@ -360,7 +360,10 @@ impl SpotifyApi for SpotifyClient {
     async fn current_user_top_artists(&self, limit: u32) -> ApiResult<Vec<Artist>> {
         // Not on Spotify's 2024-11-27 deprecation list — works for new apps.
         let page = self
-            .request(|| self.rspotify.current_user_top_artists_manual(None, Some(limit), Some(0)))
+            .request(|| {
+                self.rspotify
+                    .current_user_top_artists_manual(None, Some(limit), Some(0))
+            })
             .await?;
         Ok(page.items.iter().map(map::artist).collect())
     }
@@ -369,7 +372,10 @@ impl SpotifyApi for SpotifyClient {
     async fn current_user_top_tracks(&self, limit: u32) -> ApiResult<Vec<Track>> {
         // Not on Spotify's 2024-11-27 deprecation list — works for new apps.
         let page = self
-            .request(|| self.rspotify.current_user_top_tracks_manual(None, Some(limit), Some(0)))
+            .request(|| {
+                self.rspotify
+                    .current_user_top_tracks_manual(None, Some(limit), Some(0))
+            })
             .await?;
         Ok(page.items.iter().map(map::track).collect())
     }
@@ -425,6 +431,20 @@ impl SpotifyApi for SpotifyClient {
             })
             .await?;
         Ok(page.items.iter().map(map::category).collect())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn new_releases(&self, limit: u32) -> ApiResult<Vec<SimplifiedAlbum>> {
+        // `rspotify` marks this deprecated; its status for new apps is
+        // uncertain — a 403/404 surfaces as `EndpointUnavailable`.
+        #[allow(deprecated)]
+        let page = self
+            .request_deprecated("new_releases", || {
+                self.rspotify
+                    .new_releases_manual(None, Some(limit), Some(0))
+            })
+            .await?;
+        Ok(page.items.iter().map(map::simplified_album).collect())
     }
 
     #[tracing::instrument(skip(self))]

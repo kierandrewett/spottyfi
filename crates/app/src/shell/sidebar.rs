@@ -42,22 +42,23 @@ fn main_entries() -> Vec<Entry> {
         Entry {
             icon: Icon::Browse,
             label: "Browse",
-            tab: Tab::Placeholder("Browse".to_owned()),
+            tab: Tab::Browse,
         },
         Entry {
             icon: Icon::Charts,
             label: "Charts",
-            tab: Tab::Placeholder("Charts".to_owned()),
+            tab: Tab::Charts,
         },
         Entry {
             icon: Icon::NewReleases,
             label: "New Releases",
-            tab: Tab::Placeholder("New Releases".to_owned()),
+            tab: Tab::NewReleases,
         },
         Entry {
+            // Discover maps to the Made For You recommendation surface.
             icon: Icon::Discover,
             label: "Discover",
-            tab: Tab::Placeholder("Discover".to_owned()),
+            tab: Tab::MadeForYou,
         },
         Entry {
             icon: Icon::Podcast,
@@ -73,7 +74,7 @@ fn library_entries() -> Vec<Entry> {
         Entry {
             icon: Icon::MadeForYou,
             label: "Made For You",
-            tab: Tab::Placeholder("Made For You".to_owned()),
+            tab: Tab::MadeForYou,
         },
         Entry {
             icon: Icon::RecentlyPlayed,

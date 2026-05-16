@@ -39,8 +39,19 @@ pub enum Tab {
     Artist(String),
     /// The Search page (real search lands in Phase 6).
     Search,
-    /// A not-yet-built page (Browse, Charts, …). Carries its display name; the
-    /// body is a "coming soon" placeholder until the real page is implemented.
+    /// The Browse page: the genre/category grid plus Last.fm charts.
+    Browse,
+    /// A browse-category page, keyed by the Spotify category id.
+    Category(String),
+    /// The Charts page: Last.fm global top tracks and artists.
+    Charts,
+    /// The New Releases page (Spotify `new-releases`).
+    NewReleases,
+    /// The Made For You page: recommendations seeded from the user's top
+    /// artists and tracks via Last.fm.
+    MadeForYou,
+    /// A not-yet-built page. Carries its display name; the body is a "coming
+    /// soon" placeholder until the real page is implemented.
     Placeholder(String),
     /// The Now Playing album-art panel.
     NowPlayingArt,
@@ -66,6 +77,11 @@ impl Tab {
             Tab::Album(_) => "Album",
             Tab::Artist(_) => "Artist",
             Tab::Search => "Search",
+            Tab::Browse => "Browse",
+            Tab::Category(_) => "Category",
+            Tab::Charts => "Charts",
+            Tab::NewReleases => "New Releases",
+            Tab::MadeForYou => "Made For You",
             Tab::Placeholder(_) => "Coming soon",
             Tab::NowPlayingArt => "Now Playing",
             Tab::Queue => "Queue",
@@ -82,7 +98,9 @@ impl Tab {
     #[must_use]
     pub fn display_title(&self, page_title: &str) -> String {
         match self {
-            Tab::Playlist(_) | Tab::Album(_) | Tab::Artist(_) => page_title.to_owned(),
+            Tab::Playlist(_) | Tab::Album(_) | Tab::Artist(_) | Tab::Category(_) => {
+                page_title.to_owned()
+            }
             Tab::Placeholder(name) => name.clone(),
             _ => self.title().to_owned(),
         }

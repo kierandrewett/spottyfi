@@ -124,7 +124,11 @@ fn best_track(title: &str, artist: &str, candidates: &[Track]) -> Option<Track> 
                 .any(|a| a.name.eq_ignore_ascii_case(artist))
     });
     title_and_artist
-        .or_else(|| candidates.iter().find(|t| t.name.eq_ignore_ascii_case(title)))
+        .or_else(|| {
+            candidates
+                .iter()
+                .find(|t| t.name.eq_ignore_ascii_case(title))
+        })
         .or_else(|| candidates.first())
         .cloned()
 }
@@ -193,10 +197,7 @@ mod tests {
 
     #[test]
     fn best_track_prefers_a_title_and_artist_match() {
-        let candidates = vec![
-            track("Creep", "Wrong Artist"),
-            track("Creep", "Radiohead"),
-        ];
+        let candidates = vec![track("Creep", "Wrong Artist"), track("Creep", "Radiohead")];
         let chosen = best_track("Creep", "Radiohead", &candidates).expect("a match");
         assert_eq!(chosen.artists[0].name, "Radiohead");
     }
