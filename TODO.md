@@ -70,7 +70,26 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
   see `docs/questions.md` #8 and #9. "Play next" / "Add to queue" warn and
   defer to the Phase 8 queue.
 
-## Phase 6 — Search `[ ]`
+## Phase 6 — Search `[x]`
+
+- [x] `SearchPage` — a real, registry-backed page replacing the placeholder
+      (`Tab::Search` is now a page, not a self-rendered panel)
+- [x] In-page search input (no top-bar box); typing re-runs the query
+- [x] Debounced ~250ms — query fires only after the user stops typing
+- [x] Cancellation — a new query aborts the in-flight task; a stale slow
+      response can never overwrite a newer query's results (generation guard)
+- [x] In-flight search registered in the `ActivityRegistry` ("Searching…")
+- [x] Category tabs: All / Songs / Artists / Albums / Playlists / Podcasts
+- [x] **All** tab: Top result card + inline Songs list + horizontal shelves
+- [x] Songs reuse the track-row/table widget; artist/album/playlist cards
+      via the network image loader; clicking navigates, double-click plays
+- [x] `Ctrl/Cmd+K` focuses the search input (opening the tab if needed);
+      `Tools ▸ Search` opens + focuses the same way
+- [x] Unit tests for debounce, cancellation and result routing
+- Note: **Podcasts** is deferred — `api`'s `SearchType` enum has no
+  show/episode variant, so the Podcasts tab shows an explanatory note.
+  Audiobooks omitted for the same reason. See `docs/questions.md` #10.
+
 ## Phase 7 — Browse `[ ]`
 ## Phase 8 — Queue + playback context `[ ]`
 ## Phase 9 — Caches `[ ]`

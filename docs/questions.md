@@ -5,6 +5,18 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
 
 ## Open
 
+10. **Podcast / audiobook search (Phase 6).** The Search page ships with a
+    **Podcasts** category tab, but it currently renders an explanatory note
+    instead of results: the `api` crate's `SearchType` enum
+    (`Track | Artist | Album | Playlist`) has no `Show`/`Episode`/`Audiobook`
+    variant, and `models::SearchResults` has no field for them. Wiring podcast
+    search means a small `api` + `models` change: add `SearchType::Show`
+    (rspotify already has `rspotify::model::SearchType::Show` and `Episode`),
+    a `shows` field on `SearchResults`, and a `Show` domain type. Deferred so
+    Phase 6 stays UI-focused. Audiobooks are omitted entirely for now (rspotify
+    has no audiobook search type). The page's category tab is in place so this
+    is a drop-in once the `api` surface exists.
+
 8. **Liked Songs "Date added" column (Phase 5).** The track table has a
    "Date added" column, populated for playlist pages from each
    `PlaylistTrack.added_at`. The **Liked Songs** page cannot fill it: the
