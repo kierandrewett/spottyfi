@@ -11,6 +11,8 @@ rust-version.workspace = true
 [dependencies]
 spottyfi-models.workspace = true
 spottyfi-state.workspace = true
+# The on-disk image cache the network loader checks before hitting the network.
+spottyfi-cache.workspace = true
 
 egui.workspace = true
 # `TableBuilder` for the sortable track tables on playlist / album / liked pages.
@@ -26,3 +28,5 @@ image = { workspace = true }
 
 [dev-dependencies]
 serde_json.workspace = true
+# A throwaway directory for the on-disk image-cache integration test.
+tempfile = "3"

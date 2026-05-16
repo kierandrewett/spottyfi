@@ -21,12 +21,19 @@
 //! ([`MAX_IN_FLIGHT`]); excess URIs wait in a queue and are dispatched as
 //! earlier fetches complete. The cache still guarantees one fetch per URI.
 //!
-//! ## Phase 9 seam
+//! ## On-disk cache
 //!
-//! The in-memory cache is the seam for the Phase 9 on-disk cache: [`fetch`] is
-//! the single place that performs network I/O. Phase 9 slots a
-//! `sha1(url).webp` disk lookup in front of the `ehttp` call and a disk write
-//! into its callback, with no change to the loader's public surface.
+//! In front of the network sits the `cache` crate's [`ImageCache`]: a
+//! `sha1(url).webp` on-disk LRU. [`fetch`] runs the whole slow path —
+//! disk lookup, network fetch, disk write and decode — on a dedicated worker
+//! thread, so the egui UI thread never blocks on I/O:
+//!
+//! 1. a disk hit decodes the cached bytes — no network call;
+//! 2. a disk miss fetches over HTTP, writes the encoded bytes to the disk
+//!    cache, then decodes them.
+//!
+//! The loader's public surface is unchanged; the disk cache is supplied at
+//! construction via [`NetworkImageLoader::with_disk_cache`].
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -34,6 +41,7 @@ use std::sync::{Arc, Mutex};
 use egui::ahash::HashMap;
 use egui::load::{ImageLoadResult, ImagePoll, LoadError, SizeHint};
 use egui::{ColorImage, Context};
+use spottyfi_cache::ImageCache;
 
 /// The maximum number of image fetches allowed to run concurrently.
 ///
@@ -71,6 +79,8 @@ struct PoolState {
 #[derive(Clone)]
 struct Pool {
     state: Arc<Mutex<PoolState>>,
+    /// The on-disk image cache checked before the network; `None` disables it.
+    disk: Option<ImageCache>,
 }
 
 impl Default for Pool {
@@ -80,6 +90,7 @@ impl Default for Pool {
                 queue: VecDeque::new(),
                 in_flight: 0,
             })),
+            disk: None,
         }
     }
 }
@@ -142,6 +153,21 @@ impl NetworkImageLoader {
     /// The loader's unique id, per the [`egui::load::ImageLoader`] contract.
     const ID: &'static str = concat!(module_path!(), "::NetworkImageLoader");
 
+    /// Build a loader backed by an on-disk [`ImageCache`].
+    ///
+    /// Fetches then check the disk cache before the network and persist
+    /// freshly-fetched bytes to it.
+    #[must_use]
+    pub fn with_disk_cache(disk: ImageCache) -> Self {
+        Self {
+            cache: SharedCache::default(),
+            pool: Pool {
+                disk: Some(disk),
+                ..Pool::default()
+            },
+        }
+    }
+
     /// Whether this loader handles `uri` (an `http`/`https` scheme).
     fn handles(uri: &str) -> bool {
         uri.starts_with("http://") || uri.starts_with("https://")
@@ -152,8 +178,25 @@ impl NetworkImageLoader {
 ///
 /// Call once at startup, after `egui_extras::install_image_loaders` so the
 /// stock byte/decode loaders are present for `bytes://` and `file://` URIs.
+///
+/// The loader opens the on-disk image cache under the platform cache
+/// directory; if that cannot be opened the loader still works, going straight
+/// to the network (the failure is logged).
 pub fn install(ctx: &Context) {
-    ctx.add_image_loader(Arc::new(NetworkImageLoader::default()));
+    let loader = match open_disk_cache() {
+        Ok(disk) => NetworkImageLoader::with_disk_cache(disk),
+        Err(err) => {
+            tracing::warn!(%err, "on-disk image cache unavailable; images will not be cached");
+            NetworkImageLoader::default()
+        }
+    };
+    ctx.add_image_loader(Arc::new(loader));
+}
+
+/// Open the on-disk image cache under the platform cache directory.
+fn open_disk_cache() -> Result<ImageCache, spottyfi_cache::CacheError> {
+    let dir = spottyfi_cache::paths::image_cache_dir()?;
+    ImageCache::open(dir)
 }
 
 impl egui::load::ImageLoader for NetworkImageLoader {
@@ -220,36 +263,91 @@ impl egui::load::ImageLoader for NetworkImageLoader {
 
 /// Spawn a background fetch + decode for `uri`, storing the result in `cache`.
 ///
+/// The entire slow path runs on a dedicated worker thread, so neither the
+/// disk cache nor the network ever blocks the egui UI thread:
+///
+/// 1. an on-disk cache hit decodes the cached bytes — no network call;
+/// 2. a miss fetches over HTTP, writes the encoded bytes to the disk cache,
+///    then decodes them.
+///
 /// On completion the fetch frees its pool slot and lets the next queued URI
 /// start, keeping the in-flight count bounded.
 fn fetch(ctx: Context, uri: String, cache: SharedCache, pool: Pool) {
-    let request = ehttp::Request::get(&uri);
-    ehttp::fetch(request, move |result| {
-        let entry = match decode_response(result) {
-            Ok(image) => Entry::Ready(Arc::new(image)),
-            Err(message) => {
-                tracing::debug!(%uri, %message, "remote image load failed");
-                Entry::Failed(message)
+    // `ehttp` would spawn its own thread; spawning one explicitly lets the
+    // disk read/write and decode share it, all off the UI thread.
+    let worker = {
+        let ctx = ctx.clone();
+        let cache = Arc::clone(&cache);
+        let pool = pool.clone();
+        move || {
+            let entry = match resolve(&uri, pool.disk.as_ref()) {
+                Ok(image) => Entry::Ready(Arc::new(image)),
+                Err(message) => {
+                    tracing::debug!(%uri, %message, "image load failed");
+                    Entry::Failed(message)
+                }
+            };
+            if let Ok(mut guard) = cache.lock() {
+                guard.insert(uri.clone(), entry);
             }
-        };
-        if let Ok(mut cache) = cache.lock() {
-            cache.insert(uri.clone(), entry);
+            pool.on_fetch_done(&ctx, &cache);
+            ctx.request_repaint();
         }
+    };
+    if let Err(err) = std::thread::Builder::new()
+        .name("spottyfi-img-fetch".to_owned())
+        .spawn(worker)
+    {
+        // A thread-spawn failure must not leak a pool slot, or the loader
+        // would slowly starve. Account for the "completed" fetch.
+        tracing::warn!(%err, "could not spawn image fetch thread");
         pool.on_fetch_done(&ctx, &cache);
-        ctx.request_repaint();
-    });
+    }
 }
 
-/// Decode an `ehttp` response body into an [`egui::ColorImage`].
-fn decode_response(result: Result<ehttp::Response, String>) -> Result<ColorImage, String> {
-    let response = result.map_err(|err| format!("request failed: {err}"))?;
+/// Resolve `uri` to a decoded image: disk cache first, then the network.
+///
+/// Runs on a worker thread (see [`fetch`]). On a disk miss the freshly-fetched
+/// encoded bytes are written back to the disk cache before decoding.
+fn resolve(uri: &str, disk: Option<&ImageCache>) -> Result<ColorImage, String> {
+    if let Some(disk) = disk {
+        match disk.get(uri) {
+            Ok(Some(bytes)) => {
+                tracing::trace!(%uri, "image disk-cache hit");
+                return decode_bytes(&bytes);
+            }
+            Ok(None) => {}
+            Err(err) => tracing::debug!(%uri, %err, "image disk-cache read failed"),
+        }
+    }
+
+    let bytes = fetch_encoded(uri)?;
+    if let Some(disk) = disk {
+        if let Err(err) = disk.put(uri, &bytes) {
+            tracing::debug!(%uri, %err, "image disk-cache write failed");
+        }
+    }
+    decode_bytes(&bytes)
+}
+
+/// Fetch the encoded image bytes for `uri` over HTTP, blocking the worker
+/// thread until the response arrives.
+fn fetch_encoded(uri: &str) -> Result<Vec<u8>, String> {
+    let request = ehttp::Request::get(uri);
+    let response =
+        ehttp::fetch_blocking(&request).map_err(|err| format!("request failed: {err}"))?;
     if !response.ok {
         return Err(format!(
             "bad status: {} {}",
             response.status, response.status_text
         ));
     }
-    let decoded = image::load_from_memory(&response.bytes)
+    Ok(response.bytes)
+}
+
+/// Decode encoded image bytes into an [`egui::ColorImage`].
+fn decode_bytes(bytes: &[u8]) -> Result<ColorImage, String> {
+    let decoded = image::load_from_memory(bytes)
         .map_err(|err| format!("decode failed: {err}"))?
         .to_rgba8();
     let size = [decoded.width() as usize, decoded.height() as usize];
@@ -284,5 +382,39 @@ mod tests {
         }
         let state = pool.state.lock().expect("lock");
         assert_eq!(state.queue.len(), 1);
+    }
+
+    /// A 2x2 PNG, encoded — a stand-in for a real album-art image.
+    fn sample_png() -> Vec<u8> {
+        let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("encode png");
+        bytes
+    }
+
+    #[test]
+    fn resolve_serves_a_disk_cache_hit_without_the_network() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let disk = ImageCache::open(dir.path()).expect("open image cache");
+        let uri = "https://i.scdn.co/image/abc";
+
+        // Seed the disk cache with encoded bytes for the URI.
+        disk.put(uri, &sample_png()).expect("seed disk cache");
+
+        // `resolve` must decode straight from disk — no network call is made
+        // (an unroutable host would fail if it tried).
+        let image = resolve(uri, Some(&disk)).expect("resolve from disk");
+        assert_eq!(image.size, [2, 2]);
+    }
+
+    #[test]
+    fn decode_bytes_round_trips_an_encoded_image() {
+        let image = decode_bytes(&sample_png()).expect("decode");
+        assert_eq!(image.size, [2, 2]);
     }
 }
