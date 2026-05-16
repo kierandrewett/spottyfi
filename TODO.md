@@ -117,7 +117,27 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
   dead for new apps — see `docs/questions.md` #7. The maintainer must
   create a free Last.fm API key and set `SPOTTYFI_LASTFM_API_KEY`.
 
-## Phase 8 — Queue + playback context `[ ]`
+## Phase 8 — Queue + playback context `[x]`
+
+- [x] `audio` queue/context state machine + `PlaybackController` queue methods
+      (auto-advance on `EndOfTrack`)
+- [x] `QueueState` snapshot bridged into the UI via an `ArcSwap`, alongside the
+      playback snapshot
+- [x] Context playback from pages: playing a track from a playlist / album /
+      artist / search / browse plays that page's full resolved track list as a
+      context, so Next/Prev walk it
+- [x] Transport bar next/prev buttons + Playback-menu Next/Previous wired to
+      the controller
+- [x] Track context menu "Play next" / "Add to queue" route to the manual
+      queue (replacing the Phase-8 warn stubs)
+- [x] `QueuePanel`: Now Playing, "Next from <context>" and the manual queue —
+      dense and flat; click an entry to skip to it; drag-to-reorder the manual
+      queue with a remove action
+- Note: single-track `play_uri` (the Debug panel field) still works as a
+  context-free one-off. Pages without a real Spotify context URI (search,
+  browse, charts, Liked Songs) use a synthetic `spottyfi:` context URI — the
+  list still walks correctly; only the panel's "Next from …" label differs.
+
 ## Phase 9 — Caches `[ ]`
 ## Phase 10 — Docking power features `[ ]`
 ## Phase 11 — Lyrics `[ ]`
