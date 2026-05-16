@@ -80,7 +80,9 @@ keeps `ui` free of business logic. `app` is the only crate that knows about both
 - **flume** (preferred) or `tokio::sync` channels between async tasks and the UI.
 - **parking_lot** — locks for shared state read by the UI thread.
 - **arc-swap** — hot-swappable state snapshots the UI reads each frame.
-- **keyring** (`3`) — refresh tokens in Secret Service / keychain / wincred.
+- **keyring** (`4`) + **keyring-core** (`1`) — refresh tokens in Secret Service /
+  keychain / wincred. The 4.x line splits store registration (`keyring`) from the
+  `Entry` API (`keyring-core`); see `docs/questions.md`.
 - **directories-next** — XDG paths.
 - **rusqlite** with `bundled` — metadata + lyrics cache; `.sql` migrations.
 - **image** + **webp** — decode album art for egui.
