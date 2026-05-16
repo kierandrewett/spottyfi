@@ -300,6 +300,7 @@ impl Queue {
                 Some(self.context.name.clone())
             },
             up_next_context: self.upcoming_context(),
+            context_index: self.context.index,
             manual: self.manual.clone(),
             repeat: self.repeat,
         }
@@ -335,6 +336,11 @@ pub struct QueueState {
     pub context_name: Option<String>,
     /// Upcoming context tracks (the "Next from <context>" section).
     pub up_next_context: Vec<QueueTrack>,
+    /// The context cursor — the index of the current track within the
+    /// context's track list, or `None` before a context track has played.
+    /// The queue panel adds `1 + offset` to this to map a click on an
+    /// upcoming-context entry to an absolute context index.
+    pub context_index: Option<usize>,
     /// The manual queue, front-first (the "Queue" section).
     pub manual: Vec<QueueTrack>,
     /// The repeat mode.
@@ -508,6 +514,18 @@ mod tests {
         let upcoming: Vec<_> = snap.up_next_context.iter().map(|t| t.uri.clone()).collect();
         assert_eq!(upcoming, ["t2", "t3"]);
         assert!(snap.has_upcoming());
+    }
+
+    #[test]
+    fn snapshot_exposes_the_context_cursor() {
+        let mut q = Queue::new();
+        assert_eq!(q.snapshot().context_index, None);
+        q.play_context("ctx".into(), "Ctx".into(), context(4), 2);
+        assert_eq!(q.snapshot().context_index, Some(2));
+        // The first upcoming track sits at cursor + 1.
+        let snap = q.snapshot();
+        assert_eq!(snap.context_index.map(|i| i + 1), Some(3));
+        assert_eq!(snap.up_next_context[0].uri, "t3");
     }
 
     #[test]
