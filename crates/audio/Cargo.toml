@@ -11,8 +11,10 @@ rust-version.workspace = true
 [features]
 # The default audio backend. librespot's `rodio` backend goes through ALSA on
 # Linux (and the ALSA shim on PipeWire); it is the only backend Phase 2 wires.
+# `rustls-tls-native-roots` keeps librespot's TLS on rustls, matching the rest
+# of the workspace (reqwest, rspotify) rather than pulling in native-tls.
 default = ["rodio-backend"]
-rodio-backend = ["librespot/rodio-backend"]
+rodio-backend = ["librespot/rodio-backend", "librespot/rustls-tls-native-roots"]
 
 [dependencies]
 spottyfi-models = { workspace = true }
@@ -26,3 +28,4 @@ librespot = { version = "0.8", default-features = false }
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
+arc-swap = { workspace = true }
