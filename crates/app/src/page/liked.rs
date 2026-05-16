@@ -100,7 +100,7 @@ impl Page for LikedSongsPage {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    components::album_art(ui, &palette, None, 160.0, 8.0);
+                    components::album_art(ui, &palette, None, 160.0, 0.0);
                     ui.add_space(16.0);
                     ui.vertical(|ui| {
                         ui.label(components::muted(&palette, "Playlist", 11.0));
@@ -139,7 +139,7 @@ impl Page for LikedSongsPage {
                     self.sort,
                     TrackColumns::full(),
                     &rows,
-                    56.0,
+                    38.0,
                 ) {
                     if let track_table::TrackAction::Sort(column) = &table_action {
                         self.sort.toggle(*column);

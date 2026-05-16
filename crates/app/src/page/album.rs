@@ -149,7 +149,7 @@ impl Page for AlbumPage {
                     self.sort,
                     TrackColumns::album_page(),
                     &rows,
-                    56.0,
+                    38.0,
                 ) {
                     if let track_table::TrackAction::Sort(column) = &table_action {
                         self.sort.toggle(*column);
@@ -180,7 +180,7 @@ fn header(
     let mut action = None;
     ui.horizontal(|ui| {
         let art = album.images.first().map(|i| i.url.as_str());
-        components::album_art(ui, palette, art, 160.0, 8.0);
+        components::album_art(ui, palette, art, 160.0, 0.0);
         ui.add_space(16.0);
         ui.vertical(|ui| {
             ui.label(components::muted(palette, "Album", 11.0));

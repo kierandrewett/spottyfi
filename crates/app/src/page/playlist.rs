@@ -114,7 +114,9 @@ impl Page for PlaylistPage {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                header(ui, &palette, &data.playlist);
+                if header(ui, &palette, &data.playlist) {
+                    action = Some(PageAction::Play(data.playlist.id.uri()));
+                }
                 ui.add_space(14.0);
 
                 let playing_uri = ctx.playback.track.as_ref().map(|t| t.uri.as_str());
@@ -136,7 +138,7 @@ impl Page for PlaylistPage {
                     self.sort,
                     TrackColumns::full(),
                     &rows,
-                    56.0,
+                    38.0,
                 ) {
                     if let track_table::TrackAction::Sort(column) = &table_action {
                         self.sort.toggle(*column);
@@ -157,14 +159,23 @@ fn is_playing(track: &spottyfi_models::Track, playing_uri: Option<&str>) -> bool
     }
 }
 
-/// The playlist header: cover art, name, owner and track count.
-fn header(ui: &mut egui::Ui, palette: &spottyfi_ui::theme::Palette, playlist: &Playlist) {
+/// The playlist hero: cover art, an uppercase kicker, the title, description,
+/// owner/track-count line and a green circular play button. Returns `true`
+/// when the play button is clicked.
+fn header(ui: &mut egui::Ui, palette: &spottyfi_ui::theme::Palette, playlist: &Playlist) -> bool {
+    let mut play = false;
     ui.horizontal(|ui| {
         let art = playlist.images.first().map(|i| i.url.as_str());
-        components::album_art(ui, palette, art, 160.0, 8.0);
+        components::album_art(ui, palette, art, 160.0, 0.0);
         ui.add_space(16.0);
         ui.vertical(|ui| {
-            ui.label(components::muted(palette, "Playlist", 11.0));
+            ui.label(
+                egui::RichText::new("PLAYLIST")
+                    .family(spottyfi_ui::fonts::semibold())
+                    .size(10.5)
+                    .color(palette.text_muted),
+            );
+            ui.add_space(2.0);
             ui.label(
                 egui::RichText::new(&playlist.name)
                     .family(spottyfi_ui::fonts::semibold())
@@ -188,6 +199,38 @@ fn header(ui: &mut egui::Ui, palette: &spottyfi_ui::theme::Palette, playlist: &P
                 format!("{owner}  ·  {} tracks", playlist.total_tracks),
                 12.0,
             ));
+            ui.add_space(10.0);
+            play = hero_play_button(ui, palette);
         });
     });
+    play
+}
+
+/// The hero's green circular play button followed by a heart (save) toggle.
+/// Returns `true` when the play button is clicked.
+fn hero_play_button(ui: &mut egui::Ui, palette: &spottyfi_ui::theme::Palette) -> bool {
+    let mut clicked = false;
+    ui.horizontal(|ui| {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(46.0, 46.0), egui::Sense::click());
+        if ui.is_rect_visible(rect) {
+            ui.painter()
+                .circle_filled(rect.center(), rect.width() / 2.0, palette.accent);
+            let g = 20.0;
+            spottyfi_ui::Icon::Play
+                .image(g, egui::Color32::BLACK)
+                .paint_at(
+                    ui,
+                    egui::Rect::from_center_size(rect.center(), egui::vec2(g, g)),
+                );
+        }
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            clicked = true;
+        }
+        ui.add_space(8.0);
+        spottyfi_ui::icons::icon_button(ui, palette, spottyfi_ui::Icon::Heart, 20.0, false, "Save");
+    });
+    clicked
 }

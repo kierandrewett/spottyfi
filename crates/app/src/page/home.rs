@@ -136,14 +136,14 @@ fn card(
     let size = egui::vec2(150.0, 190.0);
     let frame = egui::Frame::new()
         .fill(palette.card)
-        .corner_radius(8.0)
+        .corner_radius(0)
         .inner_margin(egui::Margin::same(10));
     let response = frame
         .show(ui, |ui| {
             ui.set_min_size(size);
             ui.set_max_size(size);
             ui.vertical(|ui| {
-                components::album_art(ui, palette, art, 128.0, 6.0);
+                components::album_art(ui, palette, art, 128.0, 0.0);
                 ui.add_space(8.0);
                 ui.add(
                     egui::Label::new(
