@@ -13,7 +13,7 @@ use spottyfi_ui::components;
 use spottyfi_ui::track_table::{self, TrackColumns, TrackRow, TrackTableState};
 
 use super::incremental::IncrementalLoad;
-use super::track_view::{self, Entry};
+use super::track_view::{self, Entry, PlayContext};
 use super::{load_error, loading_spinner, Loadable, Page, PageAction, PageContext, PageServices};
 
 /// The playlist metadata load: name, description, art, owner.
@@ -133,11 +133,25 @@ impl Page for PlaylistPage {
         let still_loading = !self.tracks.is_done();
         let stream_error = self.tracks.with(|s| s.error.map(ToString::to_string));
 
+        let context = PlayContext {
+            uri: playlist.id.uri(),
+            name: playlist.name.clone(),
+        };
+
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if header(ui, &palette, playlist) {
-                    action = Some(PageAction::Play(playlist.id.uri()));
+                    // The hero plays the whole playlist from the top.
+                    let tracks = track_view::queue_tracks(&self.sorted);
+                    if !tracks.is_empty() {
+                        action = Some(PageAction::PlayContext {
+                            uri: context.uri.clone(),
+                            name: context.name.clone(),
+                            tracks,
+                            offset: 0,
+                        });
+                    }
                 }
                 ui.add_space(14.0);
 
@@ -164,7 +178,7 @@ impl Page for PlaylistPage {
                     if let track_table::TrackAction::Sort(column) = &table_action {
                         self.sort.toggle(*column);
                     } else {
-                        action = track_view::resolve_action(table_action, &self.sorted);
+                        action = track_view::resolve_action(table_action, &self.sorted, &context);
                     }
                 }
 

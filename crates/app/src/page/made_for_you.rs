@@ -192,8 +192,12 @@ impl Page for MadeForYouPage {
                         if !data.track_mix.is_empty() {
                             components::section_header(ui, &palette, "Your Track Mix");
                             ui.add_space(4.0);
+                            let context = super::track_view::PlayContext {
+                                uri: "spottyfi:made-for-you:track-mix".to_owned(),
+                                name: "Your Track Mix".to_owned(),
+                            };
                             if let Some(a) =
-                                cards::track_list(ui, &palette, &data.track_mix, playing)
+                                cards::track_list(ui, &palette, &data.track_mix, playing, &context)
                             {
                                 action = Some(a);
                             }

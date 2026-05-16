@@ -33,6 +33,38 @@ pub enum TransportIntent {
     SetVolume(f32),
     /// Play the given Spotify URI / URL (from the debug field).
     PlayUri(String),
+    /// Skip to the next track (manual queue first, then the context).
+    Next,
+    /// Skip to the previous context track.
+    Previous,
+    /// Play a context — a full resolved track list — starting at `offset`.
+    PlayContext {
+        /// The context's own Spotify URI.
+        uri: String,
+        /// The context's display name (shown in the queue panel).
+        name: String,
+        /// The context's tracks, in play order.
+        tracks: Vec<spottyfi_audio::QueueTrack>,
+        /// The index in `tracks` to start playback at.
+        offset: usize,
+    },
+    /// Add a track to the front of the manual queue (play it next).
+    PlayNext(spottyfi_audio::QueueTrack),
+    /// Add a track to the end of the manual queue.
+    Enqueue(spottyfi_audio::QueueTrack),
+    /// Jump to manual-queue entry `index` (a click in the queue panel).
+    SkipToManual(usize),
+    /// Jump to upcoming-context entry `index` (a click in the queue panel).
+    SkipToContext(usize),
+    /// Move manual-queue entry `from` to `to` (drag-to-reorder).
+    ReorderManual {
+        /// The source index in the manual queue.
+        from: usize,
+        /// The destination index in the manual queue.
+        to: usize,
+    },
+    /// Remove manual-queue entry `index`.
+    RemoveManual(usize),
 }
 
 /// Per-frame, mutable UI state for the transport widgets.
@@ -217,7 +249,11 @@ fn control_row(
                     {
                         ui_state.shuffle = !ui_state.shuffle;
                     }
-                    icons::icon_button(ui, palette, Icon::SkipBack, 16.0, false, "Previous");
+                    if icons::icon_button(ui, palette, Icon::SkipBack, 16.0, false, "Previous")
+                        .clicked()
+                    {
+                        intent = Some(TransportIntent::Previous);
+                    }
 
                     // The play/pause control: the one accent-green element.
                     let (rect, response) = ui.allocate_exact_size(
@@ -253,7 +289,11 @@ fn control_row(
                         intent = Some(TransportIntent::TogglePlayPause);
                     }
 
-                    icons::icon_button(ui, palette, Icon::SkipForward, 16.0, false, "Next");
+                    if icons::icon_button(ui, palette, Icon::SkipForward, 16.0, false, "Next")
+                        .clicked()
+                    {
+                        intent = Some(TransportIntent::Next);
+                    }
                     if icons::icon_button(
                         ui,
                         palette,

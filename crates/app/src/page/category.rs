@@ -163,7 +163,13 @@ impl Page for CategoryPage {
                     if !data.tracks.is_empty() {
                         components::section_header(ui, &palette, "Top Tracks");
                         ui.add_space(4.0);
-                        if let Some(a) = cards::track_list(ui, &palette, &data.tracks, playing) {
+                        let context = super::track_view::PlayContext {
+                            uri: format!("spottyfi:category:{}", self.category_id),
+                            name: format!("{} — Top Tracks", titlecase(&data.tag)),
+                        };
+                        if let Some(a) =
+                            cards::track_list(ui, &palette, &data.tracks, playing, &context)
+                        {
                             action = Some(a);
                         }
                         ui.add_space(20.0);

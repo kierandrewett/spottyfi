@@ -203,7 +203,12 @@ fn charts_section(
             if !shelves.tracks.is_empty() {
                 ui.label(components::muted(palette, "Top Tracks", 11.5));
                 ui.add_space(2.0);
-                if let Some(a) = cards::track_list(ui, palette, &shelves.tracks, playing) {
+                let context = super::track_view::PlayContext {
+                    uri: "spottyfi:browse:top-tracks".to_owned(),
+                    name: "Top Tracks".to_owned(),
+                };
+                if let Some(a) = cards::track_list(ui, palette, &shelves.tracks, playing, &context)
+                {
                     action = Some(a);
                 }
                 ui.add_space(16.0);

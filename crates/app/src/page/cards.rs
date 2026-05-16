@@ -10,7 +10,7 @@ use spottyfi_ui::components;
 use spottyfi_ui::theme::Palette;
 use spottyfi_ui::track_table::{self, TrackColumns, TrackRow, TrackTableState};
 
-use super::track_view::{self, Entry};
+use super::track_view::{self, Entry, PlayContext};
 use super::PageAction;
 use crate::shell::Tab;
 
@@ -56,13 +56,16 @@ pub fn album_grid(
 
 /// A track list rendered with the shared track-table widget.
 ///
-/// Double-click plays; the row context menu navigates / copies. The list has
-/// no inherent user-sortable order, so header sorts are ignored.
+/// Double-click plays the whole list (so Next/Prev walk it) from that track;
+/// the row context menu queues / navigates / copies. The list has no inherent
+/// user-sortable order, so header sorts are ignored. `context` names the
+/// playback context the list belongs to (a chart, a category, …).
 pub fn track_list(
     ui: &mut egui::Ui,
     palette: &Palette,
     tracks: &[Track],
     playing_uri: Option<&str>,
+    context: &PlayContext,
 ) -> Option<PageAction> {
     if tracks.is_empty() {
         return None;
@@ -95,7 +98,7 @@ pub fn track_list(
     if matches!(table_action, track_table::TrackAction::Sort(_)) {
         return None;
     }
-    track_view::resolve_action(table_action, &entries)
+    track_view::resolve_action(table_action, &entries, context)
 }
 
 /// Whether `track` is the one currently playing.

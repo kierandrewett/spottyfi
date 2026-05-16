@@ -127,7 +127,13 @@ impl Page for ChartsPage {
                         let playing = ctx.playback.track.as_ref().map(|t| t.uri.as_str());
                         components::section_header(ui, &palette, "Top Tracks");
                         ui.add_space(4.0);
-                        if let Some(a) = cards::track_list(ui, &palette, &data.tracks, playing) {
+                        let context = super::track_view::PlayContext {
+                            uri: "spottyfi:charts:top-tracks".to_owned(),
+                            name: "Top Tracks".to_owned(),
+                        };
+                        if let Some(a) =
+                            cards::track_list(ui, &palette, &data.tracks, playing, &context)
+                        {
                             action = Some(a);
                         }
                         ui.add_space(20.0);

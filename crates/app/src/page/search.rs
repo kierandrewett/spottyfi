@@ -506,7 +506,11 @@ fn song_list(
     if matches!(table_action, track_table::TrackAction::Sort(_)) {
         return None;
     }
-    track_view::resolve_action(table_action, &entries)
+    let context = track_view::PlayContext {
+        uri: "spottyfi:search:songs".to_owned(),
+        name: "Search results".to_owned(),
+    };
+    track_view::resolve_action(table_action, &entries, &context)
 }
 
 /// Whether `track` is the one currently playing.

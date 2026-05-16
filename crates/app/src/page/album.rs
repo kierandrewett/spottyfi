@@ -7,7 +7,7 @@ use spottyfi_models::{Album, SimplifiedAlbum, SimplifiedTrack, SpotifyId as _, T
 use spottyfi_ui::components;
 use spottyfi_ui::track_table::{self, TrackColumns, TrackRow, TrackTableState};
 
-use super::track_view::{self, Entry};
+use super::track_view::{self, Entry, PlayContext};
 use super::{load_error, loading_spinner, Loadable, Page, PageAction, PageContext, PageServices};
 
 /// The data the album page loads.
@@ -127,6 +127,11 @@ impl Page for AlbumPage {
             self.sorted_for = Some(self.sort);
         }
 
+        let context = PlayContext {
+            uri: data.album.id.uri(),
+            name: data.album.name.clone(),
+        };
+
         let mut action = None;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -159,7 +164,9 @@ impl Page for AlbumPage {
                 ) {
                     if let track_table::TrackAction::Sort(column) = &table_action {
                         self.sort.toggle(*column);
-                    } else if let Some(a) = track_view::resolve_action(table_action, &self.sorted) {
+                    } else if let Some(a) =
+                        track_view::resolve_action(table_action, &self.sorted, &context)
+                    {
                         action = Some(a);
                     }
                 }

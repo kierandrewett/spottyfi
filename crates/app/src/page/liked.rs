@@ -9,7 +9,7 @@ use spottyfi_ui::components;
 use spottyfi_ui::track_table::{self, TrackColumns, TrackRow, TrackTableState};
 
 use super::incremental::IncrementalLoad;
-use super::track_view::{self, Entry};
+use super::track_view::{self, Entry, PlayContext};
 use super::{loading_spinner, Page, PageAction, PageContext, PageServices};
 
 /// The Liked Songs page: a header over a sortable saved-tracks table.
@@ -139,7 +139,11 @@ impl Page for LikedSongsPage {
                     if let track_table::TrackAction::Sort(column) = &table_action {
                         self.sort.toggle(*column);
                     } else {
-                        action = track_view::resolve_action(table_action, &self.sorted);
+                        let context = PlayContext {
+                            uri: "spotify:collection:tracks".to_owned(),
+                            name: "Liked Songs".to_owned(),
+                        };
+                        action = track_view::resolve_action(table_action, &self.sorted, &context);
                     }
                 }
 

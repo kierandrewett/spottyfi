@@ -97,8 +97,22 @@ pub struct PageContext<'a> {
 /// Something a page asked the app to do this frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PageAction {
-    /// Play a single track / context by Spotify URI.
-    Play(String),
+    /// Play a context — a playlist/album's full resolved track list — starting
+    /// at `offset`, so Next/Prev walk the list.
+    PlayContext {
+        /// The context's own Spotify URI.
+        uri: String,
+        /// The context's display name (shown in the queue panel).
+        name: String,
+        /// The context's tracks, in play order.
+        tracks: Vec<spottyfi_audio::QueueTrack>,
+        /// The index in `tracks` to start playback at.
+        offset: usize,
+    },
+    /// Add a track to the front of the manual queue (play it next).
+    PlayNext(spottyfi_audio::QueueTrack),
+    /// Add a track to the end of the manual queue.
+    Enqueue(spottyfi_audio::QueueTrack),
     /// Open (navigate to) another page tab.
     Open(Tab),
     /// Copy a string (a Spotify URI) to the system clipboard.

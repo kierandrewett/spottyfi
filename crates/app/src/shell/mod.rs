@@ -25,7 +25,7 @@ pub use tabs::{DockIntent, Tab};
 use crate::page::{IncrementalLoad, PageRegistry, PageServices};
 use crate::playback_controller::EngineStatus;
 use crate::transport::{TransportIntent, TransportUiState};
-use spottyfi_audio::PlaybackState;
+use spottyfi_audio::{PlaybackState, QueueState};
 use tabs::{ShellTabViewer, TabContext};
 
 /// Something the user asked the shell to do this frame.
@@ -165,12 +165,14 @@ fn open_tab(dock: &mut egui_dock::DockState<Tab>, tab: Tab) {
 ///
 /// `ui` is eframe's root UI. The shell adds the top bar, sidebar and dock; the
 /// caller adds the bottom transport panel before calling this.
+#[allow(clippy::too_many_arguments)]
 pub fn shell(
     ui: &mut egui::Ui,
     state: &mut ShellState,
     profile: &UserProfile,
     avatar: Option<&egui::TextureHandle>,
     playback: &PlaybackState,
+    queue: &QueueState,
     transport_ui: &mut TransportUiState,
     engine: &EngineStatus,
 ) -> Option<ShellIntent> {
@@ -200,7 +202,7 @@ pub fn shell(
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(palette.base))
         .show_inside(ui, |ui| {
-            for dock_intent in dock(ui, state, &palette, playback, transport_ui, engine) {
+            for dock_intent in dock(ui, state, &palette, playback, queue, transport_ui, engine) {
                 match dock_intent {
                     DockIntent::Transport(t) => intent = Some(ShellIntent::Transport(t)),
                     DockIntent::Open(tab) => nav.push(tab),
@@ -349,9 +351,20 @@ fn menu_bar(
                         intent = Some(ShellIntent::Transport(TransportIntent::TogglePlayPause));
                         ui.close();
                     }
-                    // Next / previous need the Phase 8 queue — shown but inert.
-                    let _ = ui.add_enabled(false, egui::Button::new("Next track"));
-                    let _ = ui.add_enabled(false, egui::Button::new("Previous track"));
+                    if ui
+                        .add_enabled(has_track, egui::Button::new("Next track"))
+                        .clicked()
+                    {
+                        intent = Some(ShellIntent::Transport(TransportIntent::Next));
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_track, egui::Button::new("Previous track"))
+                        .clicked()
+                    {
+                        intent = Some(ShellIntent::Transport(TransportIntent::Previous));
+                        ui.close();
+                    }
                 });
 
                 ui.menu_button("Tools", |ui| {
@@ -457,11 +470,13 @@ fn activity_indicator(ui: &mut egui::Ui, palette: &Palette, activity: &ActivityR
 }
 
 /// The centre dock area. Returns every [`DockIntent`] raised this frame.
+#[allow(clippy::too_many_arguments)]
 fn dock(
     ui: &mut egui::Ui,
     state: &mut ShellState,
     palette: &Palette,
     playback: &PlaybackState,
+    queue: &QueueState,
     transport_ui: &mut TransportUiState,
     engine: &EngineStatus,
 ) -> Vec<DockIntent> {
@@ -487,6 +502,7 @@ fn dock(
         ctx: TabContext {
             palette: *palette,
             playback,
+            queue,
             transport_ui,
             engine,
             pages: &mut session.pages,

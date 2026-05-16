@@ -160,10 +160,16 @@ impl Page for ArtistPage {
                     ) {
                         if let track_table::TrackAction::Sort(column) = &table_action {
                             self.sort.toggle(*column);
-                        } else if let Some(a) =
-                            track_view::resolve_action(table_action, &self.sorted)
-                        {
-                            action = Some(a);
+                        } else {
+                            let context = track_view::PlayContext {
+                                uri: data.artist.id.uri(),
+                                name: format!("{} — Popular", data.artist.name),
+                            };
+                            if let Some(a) =
+                                track_view::resolve_action(table_action, &self.sorted, &context)
+                            {
+                                action = Some(a);
+                            }
                         }
                     }
                 }

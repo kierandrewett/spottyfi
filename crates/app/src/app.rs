@@ -150,6 +150,22 @@ impl SpottyfiApp {
             TransportIntent::Seek(position) => self.playback.seek(position),
             TransportIntent::SetVolume(volume) => self.playback.set_volume(volume),
             TransportIntent::PlayUri(uri) => self.playback.play_uri(uri),
+            TransportIntent::Next => self.playback.next(),
+            TransportIntent::Previous => self.playback.previous(),
+            TransportIntent::PlayContext {
+                uri,
+                name,
+                tracks,
+                offset,
+            } => self.playback.play_context(uri, name, tracks, offset),
+            TransportIntent::PlayNext(track) => self.playback.play_next(track),
+            TransportIntent::Enqueue(track) => self.playback.enqueue(track),
+            TransportIntent::SkipToManual(index) => self.playback.skip_to_manual(index),
+            TransportIntent::SkipToContext(index) => self.playback.skip_to_context(index),
+            TransportIntent::ReorderManual { from, to } => {
+                self.playback.reorder_manual(from, to);
+            }
+            TransportIntent::RemoveManual(index) => self.playback.remove_manual(index),
         }
     }
 
@@ -185,6 +201,7 @@ impl eframe::App for SpottyfiApp {
         match &*auth_state {
             spottyfi_auth::AuthState::LoggedIn(profile) => {
                 let playback = self.playback.state();
+                let queue = self.playback.queue_state();
                 let engine = self.playback.status();
 
                 // The transport panel is added before the shell's central
@@ -198,6 +215,7 @@ impl eframe::App for SpottyfiApp {
                     profile,
                     self.avatar_texture.as_ref(),
                     &playback,
+                    &queue,
                     &mut self.transport_ui,
                     &engine,
                 );

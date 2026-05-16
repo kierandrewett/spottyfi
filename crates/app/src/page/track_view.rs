@@ -5,6 +5,9 @@
 //! data. This module supplies the page-side glue — sorting a row list by the
 //! chosen column, and translating a [`TrackAction`] into a [`PageAction`].
 
+use std::time::Duration;
+
+use spottyfi_audio::QueueTrack;
 use spottyfi_models::{SpotifyId as _, Track};
 use spottyfi_ui::track_table::{SortColumn, TrackAction};
 
@@ -18,6 +21,43 @@ pub struct Entry {
     pub track: Track,
     /// The RFC 3339 timestamp the track was added, if the page has one.
     pub added_at: Option<String>,
+}
+
+/// The playback context a page can play through: a playlist/album's own URI
+/// and display name, used to seed [`PageAction::PlayContext`].
+#[derive(Debug, Clone)]
+pub struct PlayContext {
+    /// The context's own Spotify URI (`spotify:playlist:…`, `spotify:album:…`).
+    pub uri: String,
+    /// The context's human-readable display name.
+    pub name: String,
+}
+
+/// Project a [`Track`] into the `audio` crate's [`QueueTrack`].
+///
+/// Returns `None` for a track with no id (a local file) — the queue is
+/// keyed by canonical `spotify:track:` URIs and cannot play those.
+#[must_use]
+pub fn to_queue_track(track: &Track) -> Option<QueueTrack> {
+    let uri = track.id.as_ref()?.uri();
+    Some(QueueTrack {
+        uri,
+        title: track.name.clone(),
+        artists: track.artists.iter().map(|a| a.name.clone()).collect(),
+        album: track.album.name.clone(),
+        art_url: track.album.images.first().map(|i| i.url.clone()),
+        duration: Duration::from_millis(u64::from(track.duration_ms)),
+    })
+}
+
+/// Project every playable track in `entries` into [`QueueTrack`]s, keeping the
+/// order. Local-file tracks (no id) are dropped.
+#[must_use]
+pub fn queue_tracks(entries: &[Entry]) -> Vec<QueueTrack> {
+    entries
+        .iter()
+        .filter_map(|e| to_queue_track(&e.track))
+        .collect()
 }
 
 /// Sort `entries` in place by `column`, ascending or descending.
@@ -67,14 +107,33 @@ pub fn sort_entries(
 /// Translate a track-table [`TrackAction`] into a page-level [`PageAction`].
 ///
 /// `entries` is the *currently displayed* (possibly sorted) row list, so a
-/// position-based action resolves to the right track. Returns `None` for
-/// actions that the page handles itself (a header `Sort`) or that need a
-/// later phase (`PlayNext` / `AddToQueue` — the Phase 8 queue).
-pub fn resolve_action(action: TrackAction, entries: &[Entry]) -> Option<PageAction> {
+/// position-based action resolves to the right track. `context` names the
+/// playback context the rows belong to: playing a row plays the whole list
+/// (so Next/Prev walk it) starting at that row.
+///
+/// Returns `None` only for actions the page handles itself (a header `Sort`)
+/// or for a row that cannot be played (a local file with no id).
+pub fn resolve_action(
+    action: TrackAction,
+    entries: &[Entry],
+    context: &PlayContext,
+) -> Option<PageAction> {
     match action {
         TrackAction::Play(position) => {
-            let track = track_at(entries, position)?;
-            track.id.as_ref().map(|id| PageAction::Play(id.uri()))
+            let offset = position.checked_sub(1)?;
+            let tracks = queue_tracks(entries);
+            if tracks.is_empty() {
+                return None;
+            }
+            // `offset` is a position in the displayed list, but `tracks` drops
+            // unplayable rows; clamp so the offset stays in range.
+            let offset = offset.min(tracks.len() - 1);
+            Some(PageAction::PlayContext {
+                uri: context.uri.clone(),
+                name: context.name.clone(),
+                tracks,
+                offset,
+            })
         }
         TrackAction::CopyUri(position) => {
             let track = track_at(entries, position)?;
@@ -85,15 +144,13 @@ pub fn resolve_action(action: TrackAction, entries: &[Entry]) -> Option<PageActi
         }
         TrackAction::GoToAlbum(id) => Some(PageAction::Open(Tab::Album(id))),
         TrackAction::GoToArtist(id) => Some(PageAction::Open(Tab::Artist(id))),
-        TrackAction::PlayNext(_) => {
-            // TODO(phase-8): route to the manual queue once it exists.
-            tracing::warn!("'Play next' needs the Phase 8 queue; ignored");
-            None
+        TrackAction::PlayNext(position) => {
+            let track = track_at(entries, position)?;
+            to_queue_track(track).map(PageAction::PlayNext)
         }
-        TrackAction::AddToQueue(_) => {
-            // TODO(phase-8): route to the manual queue once it exists.
-            tracing::warn!("'Add to queue' needs the Phase 8 queue; ignored");
-            None
+        TrackAction::AddToQueue(position) => {
+            let track = track_at(entries, position)?;
+            to_queue_track(track).map(PageAction::Enqueue)
         }
         // The page applies header sorts itself; nothing to dispatch.
         TrackAction::Sort(_) => None,
@@ -182,28 +239,55 @@ mod tests {
         assert_eq!(rows[0].track.name, "Bravo");
     }
 
-    #[test]
-    fn play_resolves_to_the_displayed_track() {
-        let rows = entries();
-        let action = resolve_action(TrackAction::Play(2), &rows);
-        assert_eq!(
-            action,
-            Some(PageAction::Play("spotify:track:id-Alpha".into()))
-        );
+    fn ctx() -> PlayContext {
+        PlayContext {
+            uri: "spotify:playlist:ctx".to_owned(),
+            name: "Ctx".to_owned(),
+        }
     }
 
     #[test]
-    fn queue_actions_are_deferred_to_phase_8() {
+    fn play_resolves_to_a_context_starting_at_the_displayed_track() {
         let rows = entries();
-        assert_eq!(resolve_action(TrackAction::PlayNext(1), &rows), None);
-        assert_eq!(resolve_action(TrackAction::AddToQueue(1), &rows), None);
+        let action = resolve_action(TrackAction::Play(2), &rows, &ctx());
+        match action {
+            Some(PageAction::PlayContext {
+                uri,
+                tracks,
+                offset,
+                ..
+            }) => {
+                assert_eq!(uri, "spotify:playlist:ctx");
+                assert_eq!(offset, 1);
+                assert_eq!(tracks.len(), 3);
+                assert_eq!(tracks[1].uri, "spotify:track:id-Alpha");
+            }
+            other => panic!("expected PlayContext, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn queue_actions_resolve_to_queue_tracks() {
+        let rows = entries();
+        match resolve_action(TrackAction::PlayNext(1), &rows, &ctx()) {
+            Some(PageAction::PlayNext(track)) => {
+                assert_eq!(track.uri, "spotify:track:id-Bravo");
+            }
+            other => panic!("expected PlayNext, got {other:?}"),
+        }
+        match resolve_action(TrackAction::AddToQueue(3), &rows, &ctx()) {
+            Some(PageAction::Enqueue(track)) => {
+                assert_eq!(track.uri, "spotify:track:id-Charlie");
+            }
+            other => panic!("expected Enqueue, got {other:?}"),
+        }
     }
 
     #[test]
     fn navigation_actions_open_the_right_tab() {
         let rows = entries();
         assert_eq!(
-            resolve_action(TrackAction::GoToAlbum("abc".into()), &rows),
+            resolve_action(TrackAction::GoToAlbum("abc".into()), &rows, &ctx()),
             Some(PageAction::Open(Tab::Album("abc".into())))
         );
     }
