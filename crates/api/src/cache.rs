@@ -1,17 +1,16 @@
-//! An in-memory LRU cache in front of cacheable Web API GETs.
-//!
-//! # Phase 3 seam
+//! An in-memory LRU cache: the hot layer in front of cacheable Web API GETs.
 //!
 //! This is deliberately minimal: a fixed-capacity [`lru::LruCache`] keyed by a
 //! string. It exists so the client can short-circuit repeat fetches of stable
-//! objects (an album, an artist) within a session.
+//! objects (an album, an artist) within a session without touching the
+//! SQLite store.
 //!
-//! TODO(Phase 9): the real `cache` crate brings a SQLite metadata store with
-//! stale-while-revalidate and TTLs. When it lands, this type becomes a thin
-//! façade over it (or is dropped entirely). Keep the [`ObjectCache`] surface
-//! small so that swap is cheap. Cache *invalidation* (e.g. on a library
-//! mutation) is also deferred to Phase 9 — for now entries simply age out by
-//! LRU eviction, which is acceptable for a single session.
+//! As of Phase 9 this is no longer the whole cache — it is the *hot* layer
+//! inside [`MetadataLayer`](crate::MetadataLayer), which puts the persistent
+//! SQLite [`MetadataCache`](spottyfi_cache::MetadataCache) behind it as the
+//! source of truth. A hot hit avoids the SQLite round-trip entirely; a hot
+//! miss falls through to the persistent store and the stale-while-revalidate
+//! logic.
 
 use std::num::NonZeroUsize;
 use std::sync::Mutex;

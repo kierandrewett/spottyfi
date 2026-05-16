@@ -11,6 +11,8 @@ rust-version.workspace = true
 [dependencies]
 spottyfi-models = { workspace = true }
 spottyfi-auth = { workspace = true }
+# The persistent SQLite metadata cache that backs stale-while-revalidate.
+spottyfi-cache = { workspace = true }
 
 rspotify = { workspace = true }
 # Reads the status code / `Retry-After` header off the `reqwest::Response`

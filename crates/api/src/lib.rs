@@ -20,9 +20,12 @@
 //!
 //! ## Caching
 //!
-//! Cacheable GETs (currently `album` and `artist`) sit behind an in-memory
-//! [`ObjectCache`]. This is a Phase 3 seam — the on-disk `cache` crate
-//! (Phase 9) replaces it.
+//! Cacheable GETs (`album`, `artist`, `playlist`) go through the
+//! [`MetadataLayer`]: a tiny in-memory hot cache ([`ObjectCache`]) in front of
+//! the persistent SQLite [`MetadataCache`](spottyfi_cache::MetadataCache) from
+//! the `cache` crate, which is the source of truth. The layer implements
+//! **stale-while-revalidate** — a cached object is returned immediately, and
+//! when it is older than the freshness window a background refresh is spawned.
 //!
 //! ## Deprecated endpoints
 //!
@@ -54,11 +57,13 @@ mod client;
 mod error;
 pub mod lastfm;
 mod map;
+mod metadata;
 mod retry;
 mod traits;
 
 pub use crate::cache::ObjectCache;
 pub use crate::client::SpotifyClient;
 pub use crate::error::{ApiError, ApiResult};
+pub use crate::metadata::MetadataLayer;
 pub use crate::retry::RetryPolicy;
 pub use crate::traits::{ItemStream, MockSpotifyApi, SearchType, SpotifyApi};

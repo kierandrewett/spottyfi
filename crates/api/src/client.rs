@@ -5,6 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rspotify::clients::{BaseClient as _, OAuthClient as _};
 use rspotify::model as rs;
+use rspotify::model::Id as _;
 use rspotify::{AuthCodePkceSpotify, ClientResult};
 
 use spottyfi_auth::Session;
@@ -13,9 +14,11 @@ use spottyfi_models::{
     SimplifiedPlaylist, Track, User,
 };
 
-use crate::cache::ObjectCache;
+use spottyfi_cache::Kind;
+
 use crate::error::{ApiError, ApiResult};
 use crate::map;
+use crate::metadata::{Lookup, MetadataLayer};
 use crate::retry::{classify, RetryDecision, RetryPolicy};
 use crate::traits::{ItemStream, SearchType, SpotifyApi};
 
@@ -25,13 +28,13 @@ const STREAM_PAGE_SIZE: u32 = 50;
 /// The Spotify Web API client.
 ///
 /// Wraps the `rspotify` client from an authenticated [`Session`], adds the
-/// retry / rate-limit policy and the in-memory object cache, and maps every
-/// response onto [`spottyfi_models`] types.
+/// retry / rate-limit policy and the [`MetadataLayer`] (hot cache + persistent
+/// SQLite store), and maps every response onto [`spottyfi_models`] types.
 #[derive(Clone)]
 pub struct SpotifyClient {
     rspotify: Arc<AuthCodePkceSpotify>,
     policy: RetryPolicy,
-    cache: ObjectCache,
+    cache: MetadataLayer,
 }
 
 impl std::fmt::Debug for SpotifyClient {
@@ -45,19 +48,31 @@ impl std::fmt::Debug for SpotifyClient {
 
 impl SpotifyClient {
     /// Build a client from an authenticated [`Session`].
+    ///
+    /// Opens the persistent SQLite metadata cache under the platform cache
+    /// directory; if that fails (no cache dir, unwritable DB, migration
+    /// error), the client degrades to an in-memory-only cache and logs the
+    /// failure rather than refusing to start.
     #[must_use]
     pub fn new(session: &Session) -> Self {
+        let cache = match open_metadata_layer() {
+            Ok(layer) => layer,
+            Err(err) => {
+                tracing::warn!(%err, "persistent metadata cache unavailable; using in-memory cache only");
+                MetadataLayer::in_memory_only()
+            }
+        };
         Self {
             rspotify: session.client(),
             policy: RetryPolicy::default(),
-            cache: ObjectCache::default(),
+            cache,
         }
     }
 
-    /// Build a client with an explicit retry policy and cache (for tests and
-    /// tuning).
+    /// Build a client with an explicit retry policy and metadata layer (for
+    /// tests and tuning).
     #[must_use]
-    pub fn with_config(session: &Session, policy: RetryPolicy, cache: ObjectCache) -> Self {
+    pub fn with_config(session: &Session, policy: RetryPolicy, cache: MetadataLayer) -> Self {
         Self {
             rspotify: session.client(),
             policy,
@@ -116,6 +131,80 @@ impl SpotifyClient {
             other => other,
         }
     }
+
+    /// Serve `kind`/`cache_id` with stale-while-revalidate semantics.
+    ///
+    /// - A **fresh** cache hit is returned without any network call.
+    /// - A **stale** cache hit is returned immediately, and `fetch` is spawned
+    ///   on the runtime to refresh the cache in the background — the slow path
+    ///   never blocks the caller.
+    /// - A **miss** awaits `fetch`, caches the result and returns it.
+    ///
+    /// `fetch` is a cloneable factory because it may be invoked twice (once for
+    /// the foreground miss, once for a background refresh) and `rspotify`
+    /// futures are single-use.
+    async fn cached<T, F, Fut>(&self, kind: Kind, cache_id: &str, fetch: F) -> ApiResult<T>
+    where
+        T: Clone + Send + Sync + serde::Serialize + serde::de::DeserializeOwned + 'static,
+        F: Fn() -> Fut + Clone + Send + 'static,
+        Fut: std::future::Future<Output = ApiResult<T>> + Send,
+    {
+        match self.cache.get::<T>(kind, cache_id).await {
+            Lookup::Hit { value, stale } => {
+                if stale {
+                    tracing::debug!(
+                        ?kind,
+                        cache_id,
+                        "cache hit (stale); refreshing in background"
+                    );
+                    self.spawn_refresh(kind, cache_id.to_owned(), fetch);
+                } else {
+                    tracing::debug!(?kind, cache_id, "cache hit (fresh)");
+                }
+                Ok(value)
+            }
+            Lookup::Miss => {
+                tracing::debug!(?kind, cache_id, "cache miss; fetching");
+                let value = fetch().await?;
+                self.cache.put(kind, cache_id, &value).await;
+                Ok(value)
+            }
+        }
+    }
+
+    /// Spawn a background task that refreshes `kind`/`cache_id` in the cache.
+    ///
+    /// A refresh failure is logged and dropped — the stale value the caller
+    /// already returned remains usable until the next attempt.
+    fn spawn_refresh<T, F, Fut>(&self, kind: Kind, cache_id: String, fetch: F)
+    where
+        T: Clone + Send + Sync + serde::Serialize + 'static,
+        F: Fn() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ApiResult<T>> + Send,
+    {
+        let cache = self.cache.clone();
+        tokio::spawn(async move {
+            match fetch().await {
+                Ok(value) => {
+                    cache.put(kind, &cache_id, &value).await;
+                    tracing::debug!(?kind, cache_id, "background cache refresh complete");
+                }
+                Err(err) => {
+                    tracing::debug!(%err, ?kind, cache_id, "background cache refresh failed");
+                }
+            }
+        });
+    }
+}
+
+/// Open the persistent [`MetadataLayer`] under the platform cache directory.
+fn open_metadata_layer() -> Result<MetadataLayer, spottyfi_cache::CacheError> {
+    let db_path = spottyfi_cache::paths::metadata_db_path()?;
+    let cache = spottyfi_cache::MetadataCache::open(db_path)?;
+    Ok(MetadataLayer::new(
+        crate::cache::ObjectCache::default(),
+        Arc::new(cache),
+    ))
 }
 
 /// Build a `TrackId` from a bare id or URI, mapping a parse failure onto a
@@ -188,13 +277,22 @@ impl SpotifyApi for SpotifyClient {
     #[tracing::instrument(skip(self))]
     async fn playlist(&self, playlist_id: &str) -> ApiResult<Playlist> {
         let id = self::playlist_id(playlist_id)?;
-        let full = self
-            .request(|| {
-                self.rspotify
-                    .playlist(id.as_ref(), None, Some(rs::Market::FromToken))
-            })
-            .await?;
-        Ok(map::playlist(&full))
+        let cache_id = id.id().to_owned();
+        let this = self.clone();
+        self.cached(Kind::Playlist, &cache_id, move || {
+            let this = this.clone();
+            let id = id.clone();
+            async move {
+                let full = this
+                    .request(|| {
+                        this.rspotify
+                            .playlist(id.as_ref(), None, Some(rs::Market::FromToken))
+                    })
+                    .await?;
+                Ok(map::playlist(&full))
+            }
+        })
+        .await
     }
 
     #[tracing::instrument(skip(self))]
@@ -278,35 +376,41 @@ impl SpotifyApi for SpotifyClient {
 
     #[tracing::instrument(skip(self))]
     async fn album(&self, album_id: &str) -> ApiResult<Album> {
-        let cache_key = format!("album:{album_id}");
-        if let Some(hit) = self.cache.get::<Album>(&cache_key) {
-            tracing::debug!(album_id, "album cache hit");
-            return Ok(hit);
-        }
+        // Parse up-front so an invalid id fails fast, and so the cache key is
+        // the bare id regardless of whether a URI or a bare id was passed.
         let id = self::album_id(album_id)?;
-        let full = self
-            .request(|| {
-                self.rspotify
-                    .album(id.as_ref(), Some(rs::Market::FromToken))
-            })
-            .await?;
-        let album = map::album(&full);
-        self.cache.put(cache_key, album.clone());
-        Ok(album)
+        let cache_id = id.id().to_owned();
+        let this = self.clone();
+        self.cached(Kind::Album, &cache_id, move || {
+            let this = this.clone();
+            let id = id.clone();
+            async move {
+                let full = this
+                    .request(|| {
+                        this.rspotify
+                            .album(id.as_ref(), Some(rs::Market::FromToken))
+                    })
+                    .await?;
+                Ok(map::album(&full))
+            }
+        })
+        .await
     }
 
     #[tracing::instrument(skip(self))]
     async fn artist(&self, artist_id: &str) -> ApiResult<Artist> {
-        let cache_key = format!("artist:{artist_id}");
-        if let Some(hit) = self.cache.get::<Artist>(&cache_key) {
-            tracing::debug!(artist_id, "artist cache hit");
-            return Ok(hit);
-        }
         let id = self::artist_id(artist_id)?;
-        let full = self.request(|| self.rspotify.artist(id.as_ref())).await?;
-        let artist = map::artist(&full);
-        self.cache.put(cache_key, artist.clone());
-        Ok(artist)
+        let cache_id = id.id().to_owned();
+        let this = self.clone();
+        self.cached(Kind::Artist, &cache_id, move || {
+            let this = this.clone();
+            let id = id.clone();
+            async move {
+                let full = this.request(|| this.rspotify.artist(id.as_ref())).await?;
+                Ok(map::artist(&full))
+            }
+        })
+        .await
     }
 
     #[tracing::instrument(skip(self))]
