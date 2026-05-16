@@ -10,9 +10,10 @@ mod app;
 mod auth_controller;
 mod avatar;
 mod cli;
+mod login;
 mod playback_controller;
+mod shell;
 mod transport;
-mod ui;
 
 use anyhow::Context as _;
 use clap::Parser as _;

@@ -23,7 +23,7 @@ spottyfi-ui = { path = "crates/ui" }
 # UI / render loop.
 eframe = "0.34"
 egui = "0.34"
-egui_extras = "0.34"
+egui_extras = { version = "0.34", features = ["image"] }
 
 # Async runtime.
 tokio = { version = "1", features = ["full"] }

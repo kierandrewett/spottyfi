@@ -24,12 +24,25 @@ spottyfi-ui.workspace = true
 
 eframe.workspace = true
 egui.workspace = true
+egui_extras.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+serde.workspace = true
 
 tokio.workspace = true
 arc-swap.workspace = true
 reqwest.workspace = true
 image.workspace = true
+
+# Dockable tabs and splits — the headline UX feature. 0.19.1 is built against
+# egui 0.34; its `serde` feature derives Serialize/Deserialize on `DockState`
+# for layout persistence.
+egui_dock = { version = "0.19", features = ["serde"] }
+
+# Platform config directory for the persisted layout / settings.
+directories = "6"
+
+# RON for the on-disk layout + settings file.
+ron = "0.12"

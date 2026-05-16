@@ -1,29 +1,25 @@
 //! The bottom transport bar and the debug "play a URI" control.
 //!
-//! Both are wired to real playback state and controls. They are deliberately
-//! plain — Phase 4 builds the polished dock shell — but functional: the
-//! scrubber emits a seek on drag-release, the volume slider drives the mixer,
-//! and the debug field demonstrates playback before the browsing UI exists.
+//! Phase 4 promotes the transport to the real, polished bar: now-playing album
+//! art (loaded from the live URL via the `ui` crate's network image loader),
+//! title/artist, centred controls (shuffle, prev, play/pause, next, repeat), a
+//! progress scrubber with elapsed/total readouts, and a right cluster of
+//! lyrics/queue/devices toggle placeholders plus a volume slider.
+//!
+//! Shuffle, repeat and the right-cluster toggles are visual placeholders this
+//! phase — they have no engine wiring until later phases — but they are themed
+//! and laid out so the bar reads as complete.
 
 use std::time::Duration;
 
 use spottyfi_audio::PlaybackState;
+use spottyfi_ui::components;
+use spottyfi_ui::theme::Palette;
 
 use crate::playback_controller::EngineStatus;
 
 /// Height of the transport bar, per `PLAN.md`'s UI shell spec.
 pub const TRANSPORT_HEIGHT: f32 = 76.0;
-
-/// Elevated panel grey (`#1f1f1f`).
-const ELEVATED: egui::Color32 = egui::Color32::from_rgb(0x1f, 0x1f, 0x1f);
-/// Card grey, used for the art placeholder (`#181818`).
-const CARD: egui::Color32 = egui::Color32::from_rgb(0x28, 0x28, 0x28);
-/// Accent green (`#1ed760`).
-const ACCENT: egui::Color32 = egui::Color32::from_rgb(0x1e, 0xd7, 0x60);
-/// Muted secondary text.
-const MUTED: egui::Color32 = egui::Color32::from_rgb(0xb3, 0xb3, 0xb3);
-/// Error red.
-const ERROR: egui::Color32 = egui::Color32::from_rgb(0xf1, 0x5e, 0x6c);
 
 /// A transport command the user issued this frame.
 #[derive(Debug, Clone, PartialEq)]
@@ -40,8 +36,9 @@ pub enum TransportIntent {
 
 /// Per-frame, mutable UI state for the transport widgets.
 ///
-/// Held by the app so the scrubber's in-drag value and the debug text field
-/// survive between frames.
+/// Held by the app so the scrubber's in-drag value, the debug field, and the
+/// state of the (not-yet-wired) shuffle / repeat toggles survive between
+/// frames.
 #[derive(Default)]
 pub struct TransportUiState {
     /// The track URI typed into the debug control.
@@ -49,11 +46,19 @@ pub struct TransportUiState {
     /// While the user drags the scrubber, the in-progress position fraction;
     /// `None` when not dragging, so the bar follows live playback.
     scrub: Option<f32>,
+    /// Visual-only shuffle toggle (no engine wiring yet).
+    shuffle: bool,
+    /// Visual-only repeat toggle (no engine wiring yet).
+    repeat: bool,
 }
 
 /// Render the bottom transport bar. Returns any [`TransportIntent`] issued.
+///
+/// `palette` themes the bar; `playback` is the live snapshot the controls
+/// project.
 pub fn transport_bar(
     ui: &mut egui::Ui,
+    palette: &Palette,
     ui_state: &mut TransportUiState,
     playback: &PlaybackState,
 ) -> Option<TransportIntent> {
@@ -61,105 +66,138 @@ pub fn transport_bar(
 
     egui::Panel::bottom("transport")
         .exact_size(TRANSPORT_HEIGHT)
-        .frame(egui::Frame::new().fill(ELEVATED).inner_margin(10.0))
+        .frame(
+            egui::Frame::new()
+                .fill(palette.elevated)
+                .inner_margin(egui::Margin::symmetric(14, 8))
+                .stroke(egui::Stroke::new(1.0, palette.outline)),
+        )
         .show_inside(ui, |ui| {
             ui.horizontal_centered(|ui| {
-                // Left: now-playing art + title/artist.
-                now_playing(ui, playback);
-
-                ui.add_space(16.0);
-
-                // Centre: play/pause + scrubber, taking the remaining width
-                // minus a fixed slice for the volume control on the right.
-                let volume_width = 160.0;
-                let centre_width = (ui.available_width() - volume_width).max(180.0);
+                // Left third: now-playing art + title/artist.
+                let side = (ui.available_width() * 0.28).clamp(180.0, 360.0);
                 ui.allocate_ui_with_layout(
-                    egui::vec2(centre_width, TRANSPORT_HEIGHT - 20.0),
+                    egui::vec2(side, TRANSPORT_HEIGHT - 16.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| now_playing(ui, palette, playback),
+                );
+
+                // Right cluster reserves a fixed slice; the centre takes the rest.
+                let right_width = 210.0;
+                let centre_width = (ui.available_width() - right_width).max(220.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(centre_width, TRANSPORT_HEIGHT - 16.0),
                     egui::Layout::top_down(egui::Align::Center),
                     |ui| {
-                        if let Some(i) = centre_controls(ui, ui_state, playback) {
+                        if let Some(i) = centre_controls(ui, palette, ui_state, playback) {
                             intent = Some(i);
                         }
                     },
                 );
 
-                // Right: volume slider.
-                if let Some(i) = volume_control(ui, playback) {
-                    intent = Some(i);
-                }
+                // Right cluster: toggle placeholders + volume.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width().max(120.0), TRANSPORT_HEIGHT - 16.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        if let Some(i) = right_cluster(ui, palette, playback) {
+                            intent = Some(i);
+                        }
+                    },
+                );
             });
         });
 
     intent
 }
 
-/// The now-playing block: an art placeholder plus title and artist.
-fn now_playing(ui: &mut egui::Ui, playback: &PlaybackState) {
-    // Art placeholder. Network art loading arrives with the image loaders in
-    // Phase 4; `playback.track.art_url` is already populated for then.
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(48.0, 48.0), egui::Sense::hover());
-    ui.painter().rect_filled(rect, 4.0, CARD);
+/// The now-playing block: album art (live URL) plus title and artist.
+fn now_playing(ui: &mut egui::Ui, palette: &Palette, playback: &PlaybackState) {
+    let art_url = playback.track.as_ref().and_then(|t| t.art_url.as_deref());
+    components::album_art(ui, palette, art_url, 52.0, 4.0);
 
     ui.add_space(10.0);
     ui.vertical(|ui| {
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         match &playback.track {
             Some(track) => {
-                ui.label(
-                    egui::RichText::new(&track.title)
-                        .color(egui::Color32::WHITE)
-                        .strong(),
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(&track.title)
+                            .family(spottyfi_ui::fonts::medium())
+                            .color(palette.text),
+                    )
+                    .truncate(),
                 );
-                ui.label(
-                    egui::RichText::new(track.artist_line())
-                        .color(MUTED)
-                        .size(12.0),
+                ui.add(
+                    egui::Label::new(components::muted(palette, track.artist_line(), 12.0))
+                        .truncate(),
                 );
             }
             None => {
-                ui.label(egui::RichText::new("Nothing playing").color(MUTED));
+                ui.label(components::muted(palette, "Nothing playing", 13.0));
             }
         }
     });
 }
 
-/// The centre block: a play/pause button above a seek scrubber.
+/// The centre block: a control row above a seek scrubber.
 fn centre_controls(
     ui: &mut egui::Ui,
+    palette: &Palette,
     ui_state: &mut TransportUiState,
     playback: &PlaybackState,
 ) -> Option<TransportIntent> {
     let mut intent = None;
+    let has_track = playback.track.is_some();
 
-    // egui's default font lacks the media glyphs; use plain text labels.
-    let label = if playback.buffering {
-        "Loading…"
-    } else if playback.playing {
-        "Pause"
-    } else {
-        "Play"
-    };
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        // Centre the control cluster horizontally.
+        let cluster_width = 230.0;
+        let pad = ((ui.available_width() - cluster_width) * 0.5).max(0.0);
+        ui.add_space(pad);
 
-    let button = egui::Button::new(
-        egui::RichText::new(label)
-            .color(egui::Color32::BLACK)
-            .strong(),
-    )
-    .fill(ACCENT)
-    .corner_radius(16.0)
-    .min_size(egui::vec2(84.0, 28.0));
-    if ui
-        .add_enabled(playback.track.is_some(), button)
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
-        intent = Some(TransportIntent::TogglePlayPause);
-    }
+        if components::icon_button(ui, palette, "\u{1f500}", 14.0, ui_state.shuffle, "Shuffle")
+            .clicked()
+        {
+            ui_state.shuffle = !ui_state.shuffle;
+        }
+        components::icon_button(ui, palette, "\u{23ee}", 15.0, false, "Previous");
 
-    ui.add_space(4.0);
+        // The play/pause control: a filled accent circle.
+        let glyph = if playback.buffering {
+            "\u{2026}" // ellipsis while loading
+        } else if playback.playing {
+            "\u{23f8}" // pause
+        } else {
+            "\u{25b6}" // play
+        };
+        let play = egui::Button::new(
+            egui::RichText::new(glyph)
+                .size(15.0)
+                .color(egui::Color32::BLACK),
+        )
+        .fill(palette.accent)
+        .corner_radius(18.0)
+        .min_size(egui::vec2(34.0, 34.0));
+        if ui
+            .add_enabled(has_track, play)
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            intent = Some(TransportIntent::TogglePlayPause);
+        }
 
-    // Seek scrubber. While dragging we hold a local fraction so the thumb
-    // tracks the pointer; on release we emit a single Seek.
+        components::icon_button(ui, palette, "\u{23ed}", 15.0, false, "Next");
+        if components::icon_button(ui, palette, "\u{1f501}", 14.0, ui_state.repeat, "Repeat")
+            .clicked()
+        {
+            ui_state.repeat = !ui_state.repeat;
+        }
+    });
+
+    // Seek scrubber with elapsed / total readouts on either side.
     let duration = playback
         .track
         .as_ref()
@@ -167,153 +205,153 @@ fn centre_controls(
     let live_fraction = playback.progress_fraction();
     let mut shown = ui_state.scrub.unwrap_or(live_fraction);
 
-    ui.spacing_mut().slider_width = ui.available_width().max(120.0);
-    let slider = ui.add_enabled(
-        !duration.is_zero(),
-        egui::Slider::new(&mut shown, 0.0..=1.0)
-            .show_value(false)
-            .handle_shape(egui::style::HandleShape::Circle),
-    );
-
-    if slider.drag_started() || slider.dragged() {
-        ui_state.scrub = Some(shown);
-    }
-    if slider.drag_stopped() {
-        let target = Duration::from_secs_f32(shown * duration.as_secs_f32());
-        intent = Some(TransportIntent::Seek(target));
-        ui_state.scrub = None;
-    } else if slider.clicked() {
-        // A plain click on the track also seeks.
-        let target = Duration::from_secs_f32(shown * duration.as_secs_f32());
-        intent = Some(TransportIntent::Seek(target));
-        ui_state.scrub = None;
-    }
-
-    // Elapsed / total readout.
     let position = if ui_state.scrub.is_some() {
         Duration::from_secs_f32(shown * duration.as_secs_f32())
     } else {
         playback.position
     };
-    ui.label(
-        egui::RichText::new(format!(
-            "{} / {}",
-            fmt_duration(position),
-            fmt_duration(duration)
-        ))
-        .color(MUTED)
-        .size(11.0),
-    );
 
-    intent
-}
+    ui.horizontal(|ui| {
+        ui.label(components::muted(palette, fmt_duration(position), 10.5));
 
-/// The right-hand volume slider.
-fn volume_control(ui: &mut egui::Ui, playback: &PlaybackState) -> Option<TransportIntent> {
-    let mut intent = None;
-    let mut volume = playback.volume;
-    ui.vertical(|ui| {
-        ui.add_space(20.0);
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Vol").color(MUTED).size(11.0));
-            ui.spacing_mut().slider_width = 110.0;
-            let response = ui.add(
-                egui::Slider::new(&mut volume, 0.0..=1.0)
-                    .show_value(false)
-                    .handle_shape(egui::style::HandleShape::Circle),
-            );
-            if response.changed() {
-                intent = Some(TransportIntent::SetVolume(volume));
-            }
-        });
+        let track_width = (ui.available_width() - 44.0).max(80.0);
+        ui.spacing_mut().slider_width = track_width;
+        let slider = ui.add_enabled(
+            !duration.is_zero(),
+            egui::Slider::new(&mut shown, 0.0..=1.0)
+                .show_value(false)
+                .handle_shape(egui::style::HandleShape::Circle),
+        );
+
+        if slider.drag_started() || slider.dragged() {
+            ui_state.scrub = Some(shown);
+        }
+        if slider.drag_stopped() || slider.clicked() {
+            let target = Duration::from_secs_f32(shown * duration.as_secs_f32());
+            intent = Some(TransportIntent::Seek(target));
+            ui_state.scrub = None;
+        }
+
+        ui.label(components::muted(palette, fmt_duration(duration), 10.5));
     });
+
     intent
 }
 
-/// The debug control: a URI field plus a Play button, shown in the logged-in
-/// view so playback can be exercised before the browsing UI exists (Phase 5).
+/// The right cluster: lyrics/queue/devices toggle placeholders + volume.
+fn right_cluster(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    playback: &PlaybackState,
+) -> Option<TransportIntent> {
+    let mut intent = None;
+
+    // Volume slider (right-to-left layout, so this lands rightmost).
+    let mut volume = playback.volume;
+    ui.spacing_mut().slider_width = 84.0;
+    let response = ui.add(
+        egui::Slider::new(&mut volume, 0.0..=1.0)
+            .show_value(false)
+            .handle_shape(egui::style::HandleShape::Circle),
+    );
+    if response.changed() {
+        intent = Some(TransportIntent::SetVolume(volume));
+    }
+    components::icon_button(ui, palette, "\u{1f50a}", 14.0, false, "Volume");
+
+    ui.add_space(2.0);
+    // Toggle placeholders — wired in later phases.
+    components::icon_button(ui, palette, "\u{1f5a5}", 13.0, false, "Devices (later)");
+    components::icon_button(ui, palette, "\u{1f4dc}", 13.0, false, "Queue (later)");
+    components::icon_button(ui, palette, "\u{1f3a4}", 13.0, false, "Lyrics (later)");
+
+    intent
+}
+
+/// The debug control: a URI field plus a Play button, shown in the Debug panel
+/// so playback can be exercised before the browsing UI exists (Phase 5).
 pub fn debug_play_control(
     ui: &mut egui::Ui,
+    palette: &Palette,
     ui_state: &mut TransportUiState,
     engine: &EngineStatus,
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
-    ui.group(|ui| {
-        ui.set_max_width(440.0);
-        ui.label(
-            egui::RichText::new("Debug — play a track")
-                .color(egui::Color32::WHITE)
-                .strong(),
-        );
-        ui.add_space(2.0);
-        ui.label(
-            egui::RichText::new("Paste a spotify:track: URI or an open.spotify.com link.")
-                .color(MUTED)
-                .size(11.0),
-        );
-        ui.add_space(6.0);
-
-        match engine {
-            EngineStatus::Idle => {
-                ui.label(
-                    egui::RichText::new("Audio engine not started.")
-                        .color(MUTED)
-                        .size(11.0),
-                );
-            }
-            EngineStatus::Starting => {
-                ui.horizontal(|ui| {
-                    ui.add(egui::Spinner::new().size(14.0).color(ACCENT));
-                    ui.label(
-                        egui::RichText::new("Connecting the audio engine…")
-                            .color(MUTED)
-                            .size(11.0),
-                    );
-                });
-            }
-            EngineStatus::Failed(message) => {
-                ui.label(
-                    egui::RichText::new("Audio engine failed")
-                        .color(ERROR)
-                        .strong(),
-                );
-                ui.label(egui::RichText::new(message).color(MUTED).size(11.0));
-            }
-            EngineStatus::Ready => {}
-        }
-
-        let ready = matches!(engine, EngineStatus::Ready);
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let field = ui.add_enabled(
-                ready,
-                egui::TextEdit::singleline(&mut ui_state.debug_uri)
-                    .hint_text("spotify:track:…")
-                    .desired_width(280.0),
+    egui::Frame::new()
+        .fill(palette.card)
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::same(12))
+        .show(ui, |ui| {
+            ui.set_max_width(460.0);
+            ui.label(
+                egui::RichText::new("Play a track")
+                    .family(spottyfi_ui::fonts::medium())
+                    .color(palette.text),
             );
-            let submit = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            ui.add_space(2.0);
+            ui.label(components::muted(
+                palette,
+                "Paste a spotify:track: URI or an open.spotify.com link.",
+                11.0,
+            ));
+            ui.add_space(8.0);
 
-            let play = ui
-                .add_enabled(
-                    ready && !ui_state.debug_uri.trim().is_empty(),
-                    egui::Button::new(
-                        egui::RichText::new("Play")
-                            .color(egui::Color32::BLACK)
+            match engine {
+                EngineStatus::Idle => {
+                    ui.label(components::muted(
+                        palette,
+                        "Audio engine not started.",
+                        11.0,
+                    ));
+                }
+                EngineStatus::Starting => {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(14.0).color(palette.accent));
+                        ui.label(components::muted(
+                            palette,
+                            "Connecting the audio engine…",
+                            11.0,
+                        ));
+                    });
+                }
+                EngineStatus::Failed(message) => {
+                    ui.label(
+                        egui::RichText::new("Audio engine failed")
+                            .color(palette.error)
                             .strong(),
-                    )
-                    .fill(ACCENT)
-                    .corner_radius(14.0),
-                )
-                .clicked();
-
-            if (play || submit) && !ui_state.debug_uri.trim().is_empty() {
-                intent = Some(TransportIntent::PlayUri(
-                    ui_state.debug_uri.trim().to_owned(),
-                ));
+                    );
+                    ui.label(components::muted(palette, message.clone(), 11.0));
+                }
+                EngineStatus::Ready => {}
             }
+
+            let ready = matches!(engine, EngineStatus::Ready);
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let field = ui.add_enabled(
+                    ready,
+                    egui::TextEdit::singleline(&mut ui_state.debug_uri)
+                        .hint_text("spotify:track:…")
+                        .desired_width(290.0),
+                );
+                let submit = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                let can_play = ready && !ui_state.debug_uri.trim().is_empty();
+                let play = ui
+                    .add_enabled_ui(can_play, |ui| {
+                        components::primary_button(ui, palette, "Play", egui::vec2(72.0, 30.0))
+                    })
+                    .inner
+                    .clicked();
+
+                if (play || submit) && can_play {
+                    intent = Some(TransportIntent::PlayUri(
+                        ui_state.debug_uri.trim().to_owned(),
+                    ));
+                }
+            });
         });
-    });
 
     intent
 }

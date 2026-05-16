@@ -1,9 +1,9 @@
 //! The eframe application.
 //!
-//! Phase 2 adds the audio engine: after login the app starts the librespot
-//! engine on its tokio runtime, holds playback state behind an `ArcSwap`, and
-//! renders a functional bottom transport bar plus a debug "play a URI"
-//! control. The dock surface and sidebar still arrive in Phase 4.
+//! Phase 4 builds the real application shell: when logged out it shows the
+//! login screen; when logged in it renders the top bar, sidebar, the
+//! `egui_dock` centre and the polished bottom transport. The dock layout and
+//! theme persist across restarts.
 
 use std::sync::Arc;
 
@@ -12,9 +12,10 @@ use tokio::runtime::Runtime;
 
 use crate::auth_controller::AuthController;
 use crate::avatar::{self, SharedAvatar};
+use crate::login::{self, LoginIntent};
 use crate::playback_controller::PlaybackControllerHandle;
+use crate::shell::{self, ShellIntent, ShellState};
 use crate::transport::{self, TransportIntent, TransportUiState};
-use crate::ui::{self, AuthIntent};
 
 /// Top-level Spottyfi application state held by eframe.
 pub struct SpottyfiApp {
@@ -27,6 +28,8 @@ pub struct SpottyfiApp {
     playback: PlaybackControllerHandle,
     /// Per-frame UI state for the transport widgets (scrub drag, debug field).
     transport_ui: TransportUiState,
+    /// The persisted + per-session shell state (dock layout, theme, sidebar).
+    shell: ShellState,
     /// The decoded avatar image, populated by a background task.
     avatar_image: SharedAvatar,
     /// The uploaded avatar texture, created once from `avatar_image`.
@@ -38,12 +41,22 @@ pub struct SpottyfiApp {
 impl SpottyfiApp {
     /// Build the app from eframe's creation context.
     ///
-    /// Creates the tokio runtime, captures the egui context so background
-    /// tasks can request repaints, spawns the startup session-restore, and
-    /// prepares the (not-yet-started) audio engine. `no_audio` reflects the
-    /// `--no-audio` CLI flag.
+    /// Creates the tokio runtime, installs the bundled fonts and image
+    /// loaders, restores the persisted shell layout / theme, spawns the
+    /// startup session-restore, and prepares the audio engine. `no_audio`
+    /// reflects the `--no-audio` CLI flag.
     pub fn new(cc: &eframe::CreationContext<'_>, no_audio: bool) -> anyhow::Result<Self> {
         tracing::debug!("constructing SpottyfiApp");
+
+        // Fonts + image loaders. `egui_extras` provides the stock byte/decode
+        // loaders; `spottyfi_ui` adds the network loader and the fonts.
+        egui_extras::install_image_loaders(&cc.egui_ctx);
+        spottyfi_ui::install_fonts_and_network_loader(&cc.egui_ctx);
+
+        // Restore the persisted shell (dock layout, theme, sidebar state) and
+        // apply the theme straight away.
+        let mut shell = ShellState::load();
+        shell.sync_theme(&cc.egui_ctx);
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -62,6 +75,7 @@ impl SpottyfiApp {
             auth,
             playback,
             transport_ui: TransportUiState::default(),
+            shell,
             avatar_image: Arc::new(ArcSwap::from_pointee(None)),
             avatar_texture: None,
             avatar_requested: false,
@@ -118,57 +132,71 @@ impl SpottyfiApp {
             TransportIntent::PlayUri(uri) => self.playback.play_uri(uri),
         }
     }
+
+    /// Tear down the session-scoped state on logout.
+    fn handle_logout(&mut self) {
+        self.auth.spawn_logout();
+        self.playback.shutdown();
+        // Drop the avatar so a future login fetches a fresh one.
+        self.avatar_texture = None;
+        self.avatar_requested = false;
+        self.avatar_image.store(Arc::new(None));
+    }
 }
 
 impl eframe::App for SpottyfiApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
+        // Keep the egui style in sync with the (possibly just-changed) theme.
+        self.shell.sync_theme(&ctx);
+        let palette = self.shell.theme().palette();
+
         self.ensure_avatar(&ctx);
         self.ensure_avatar_texture(&ctx);
         self.ensure_audio();
 
         let auth_state = self.auth.state();
-        let logged_in = matches!(*auth_state, spottyfi_auth::AuthState::LoggedIn(_));
 
-        // The transport bar is shown only once logged in: it needs a session
-        // (and, ideally, a running engine) to be meaningful. It is a bottom
-        // panel, so it must be added before the central auth screen.
-        let mut transport_intent = None;
-        if logged_in {
-            let playback = self.playback.state();
-            transport_intent = transport::transport_bar(ui, &mut self.transport_ui, &playback);
-        }
+        match &*auth_state {
+            spottyfi_auth::AuthState::LoggedIn(profile) => {
+                let playback = self.playback.state();
+                let engine = self.playback.status();
 
-        // The engine status `Arc` must outlive the `auth_screen` call, so
-        // bind it here rather than borrowing a temporary.
-        let engine_status = self.playback.status();
-        let auth_intent = ui::auth_screen(
-            ui,
-            &auth_state,
-            self.avatar_texture.as_ref(),
-            logged_in.then(|| ui::DebugControls {
-                ui_state: &mut self.transport_ui,
-                engine: &engine_status,
-            }),
-        );
+                // The transport panel is added before the shell's central
+                // dock so the dock fills the space above it.
+                let transport_intent =
+                    transport::transport_bar(ui, &palette, &mut self.transport_ui, &playback);
 
-        if let Some(intent) = transport_intent {
-            self.apply_transport_intent(intent);
-        }
+                let shell_intent = shell::shell(
+                    ui,
+                    &mut self.shell,
+                    profile,
+                    self.avatar_texture.as_ref(),
+                    &playback,
+                    &mut self.transport_ui,
+                    &engine,
+                );
 
-        match auth_intent {
-            Some(AuthIntent::Login) => self.auth.spawn_login(),
-            Some(AuthIntent::Logout) => {
-                self.auth.spawn_logout();
-                self.playback.shutdown();
-                // Drop the avatar so a future login fetches a fresh one.
-                self.avatar_texture = None;
-                self.avatar_requested = false;
-                self.avatar_image.store(Arc::new(None));
+                if let Some(intent) = transport_intent {
+                    self.apply_transport_intent(intent);
+                }
+                match shell_intent {
+                    Some(ShellIntent::Logout) => self.handle_logout(),
+                    Some(ShellIntent::Transport(intent)) => self.apply_transport_intent(intent),
+                    None => {}
+                }
             }
-            Some(AuthIntent::PlayDebug(intent)) => self.apply_transport_intent(intent),
-            None => {}
+            other => {
+                if let Some(LoginIntent::Login) = login::login_screen(ui, &palette, other) {
+                    self.auth.spawn_login();
+                }
+            }
         }
+    }
+
+    fn on_exit(&mut self) {
+        // Persist the dock layout + settings so the next launch restores them.
+        self.shell.save();
     }
 }
