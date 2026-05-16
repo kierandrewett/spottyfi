@@ -9,3 +9,17 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+spottyfi-models.workspace = true
+
+rspotify.workspace = true
+keyring.workspace = true
+keyring-core.workspace = true
+tiny_http.workspace = true
+webbrowser.workspace = true
+tokio.workspace = true
+arc-swap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+thiserror.workspace = true

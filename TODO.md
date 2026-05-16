@@ -4,7 +4,7 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
 
-## Phase 0 — Bootstrap `[~]`
+## Phase 0 — Bootstrap `[x]`
 
 - [x] Cargo workspace with eight crates
 - [x] `app` binary opens an empty egui window titled `Spottyfi`
@@ -14,13 +14,15 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
 - [x] CI: build + clippy + fmt + test on Linux
 - [x] Public GitHub repo, regular commits + pushes
 
-## Phase 1 — Authentication `[ ]`
+## Phase 1 — Authentication `[~]`
 
-- [ ] OAuth 2.0 PKCE against `accounts.spotify.com`
-- [ ] Local HTTP callback server
-- [ ] Token stored in keyring (`dev.drewett.spottyfi`)
-- [ ] Auto-refresh background task
-- [ ] Login screen + logout flow
+- [x] OAuth 2.0 PKCE against `accounts.spotify.com`
+- [x] Local HTTP callback server (fixed port `127.0.0.1:8888`)
+- [x] Token stored in keyring (`dev.drewett.spottyfi`)
+- [x] Auto-refresh background task
+- [x] Login screen + logout flow
+- [ ] **Live test, blocked on maintainer:** register a Spotify app, set
+      `SPOTTYFI_CLIENT_ID`, register redirect `http://127.0.0.1:8888/callback`
 
 ## Phase 2 — Audio engine `[ ]`
 

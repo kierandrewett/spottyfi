@@ -3,10 +3,14 @@
 //! This binary is the only crate that knows about both `audio` and `ui`; it
 //! wires the dock layout, the tokio runtime and the egui render loop together.
 //!
-//! Phase 0: opens an empty egui window. See `PLAN.md` for the roadmap.
+//! Phase 1: OAuth login screen that transitions to a logged-in view. See
+//! `PLAN.md` for the roadmap.
 
 mod app;
+mod auth_controller;
+mod avatar;
 mod cli;
+mod ui;
 
 use anyhow::Context as _;
 use clap::Parser as _;
@@ -41,7 +45,11 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "Spottyfi",
         native_options,
-        Box::new(|cc| Ok(Box::new(SpottyfiApp::new(cc)))),
+        Box::new(|cc| {
+            SpottyfiApp::new(cc)
+                .map(|app| Box::new(app) as Box<dyn eframe::App>)
+                .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { err.into() })
+        }),
     )
     .map_err(|err| anyhow::anyhow!("eframe failed: {err}"))
     .context("running the Spottyfi window")?;
