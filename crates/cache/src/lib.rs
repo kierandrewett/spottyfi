@@ -39,3 +39,41 @@ pub use crate::error::{CacheError, CacheResult};
 pub use crate::freshness::{Freshness, Staleness};
 pub use crate::image::ImageCache;
 pub use crate::metadata::{Cached, Kind, MetadataCache};
+
+/// Wipe both on-disk caches: delete the metadata SQLite database and remove
+/// every file in the image cache directory.
+///
+/// Intended for the `--clear-cache` startup flag — call it *before* opening
+/// either cache. Missing files are not an error (a clean profile is already
+/// "cleared"); the SQLite WAL/SHM sidecar files are removed too.
+///
+/// # Errors
+///
+/// Returns the first error encountered removing a file or directory.
+pub fn clear_on_disk() -> CacheResult<()> {
+    // Remove the metadata DB and its WAL/SHM sidecars.
+    let db = paths::metadata_db_path()?;
+    for suffix in ["", "-wal", "-shm"] {
+        let path = if suffix.is_empty() {
+            db.clone()
+        } else {
+            let mut p = db.clone().into_os_string();
+            p.push(suffix);
+            p.into()
+        };
+        match std::fs::remove_file(&path) {
+            Ok(()) => tracing::info!(path = %path.display(), "removed cache file"),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
+
+    // Remove the whole image cache directory.
+    let images = paths::image_cache_dir()?;
+    match std::fs::remove_dir_all(&images) {
+        Ok(()) => tracing::info!(path = %images.display(), "removed image cache directory"),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    Ok(())
+}

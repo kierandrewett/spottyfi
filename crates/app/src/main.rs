@@ -34,7 +34,11 @@ fn main() -> anyhow::Result<()> {
         tracing::warn!("--offline: network requests will be suppressed");
     }
     if cli.clear_cache {
-        tracing::warn!("--clear-cache: caches will be wiped on startup (no-op until Phase 9)");
+        tracing::warn!("--clear-cache: wiping the metadata and image caches");
+        match spottyfi_cache::clear_on_disk() {
+            Ok(()) => tracing::info!("caches cleared"),
+            Err(err) => tracing::error!(%err, "failed to clear caches"),
+        }
     }
 
     let native_options = eframe::NativeOptions {

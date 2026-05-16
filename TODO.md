@@ -138,7 +138,29 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
   browse, charts, Liked Songs) use a synthetic `spottyfi:` context URI — the
   list still walks correctly; only the panel's "Next from …" label differs.
 
-## Phase 9 — Caches `[ ]`
+## Phase 9 — Caches `[x]`
+
+- [x] `cache` crate: SQLite metadata store (`rusqlite`, bundled) for
+      tracks/albums/artists/playlists; JSON-blob rows + `last_fetched`
+- [x] `.sql` migration files under `crates/cache/migrations/`, applied by a
+      forward-only runner that tracks the version in `PRAGMA user_version`
+- [x] `Freshness`/`Staleness` stale-while-revalidate policy (1h window)
+- [x] `api`: `MetadataLayer` (in-memory hot cache + persistent SQLite store)
+      wires SWR into `album`/`artist`/`playlist` — fresh hit skips the
+      network, stale hit serves immediately + spawns a background refresh;
+      blocking SQLite calls run on `spawn_blocking`
+- [x] `cache` crate: on-disk `ImageCache` keyed by `sha1(url).webp`, a
+      size-capped LRU with a 500MB default cap, mtime-ordered eviction
+- [x] `ui`: the on-disk image cache slots into the `NetworkImageLoader`
+      Phase 9 seam — disk lookup before the network, disk write on a miss,
+      all on a worker thread; public surface unchanged
+- [x] `--clear-cache` wipes the metadata DB (+ WAL/SHM) and the image cache
+      directory on startup
+- [x] Unit tests for the migration runner, freshness logic and LRU eviction
+- Note: the persistent metadata cache and on-disk image cache both degrade
+  gracefully (in-memory-only / network-only, with a warning) if the
+  platform cache directory cannot be resolved.
+
 ## Phase 10 — Docking power features `[ ]`
 ## Phase 11 — Lyrics `[ ]`
 ## Phase 12 — Platform polish `[ ]`
