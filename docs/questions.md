@@ -5,11 +5,6 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
 
 ## Open
 
-1. **librespot auth flow.** Does `Credentials::with_access_token` work with the
-   token from our PKCE flow, or is a separate dealer/keymaster handshake / token
-   exchange required? The librespot auth path has moved twice in the last year.
-   _Blocks: Phase 1, Phase 2._
-
 2. **Spotify app registration.** Spottyfi needs a Spotify app registered on the
    developer dashboard (https://developer.spotify.com/dashboard). The maintainer
    must create it and provide the **Client ID** via the `SPOTTYFI_CLIENT_ID`
@@ -32,6 +27,34 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
 
 ## Resolved
 
+- **librespot auth flow** (was #1) — **`Credentials::with_access_token` works
+  directly** with the OAuth access token from Spottyfi's PKCE flow. No separate
+  dealer/keymaster handshake or token exchange is needed. Confirmed against the
+  librespot 0.8.0 source: `with_access_token` sets `auth_type` to
+  `AUTHENTICATION_SPOTIFY_TOKEN`, and `Session::connect` forwards that auth type
+  and the raw token bytes straight into the access-point handshake
+  (`librespot-core/src/connection/mod.rs`). The 0.8.0 `examples/play.rs` does
+  exactly this. _Caveats:_ (1) a token-authed session **cannot use keymaster** —
+  `session.token_provider()` will not mint fresh tokens from inside librespot,
+  so token refresh must stay owned by the `auth` crate (it already is); the
+  audio engine is simply restarted with a fresh token if the session drops.
+  (2) librespot needs the `streaming` scope, which Spottyfi's PKCE flow already
+  requests. (3) Playback requires a **Spotify Premium** account — librespot
+  rejects free accounts at the AP handshake.
+- **Roadmap pinned `librespot = "0.6"`; the implemented version is `0.8`.** The
+  API moved: `SpotifyId` is now split into `SpotifyId` (the raw id) and
+  `SpotifyUri` (the typed enum, used by `Player::load` and `PlayerEvent`).
+  `Player::new` takes a `VolumeGetter` and a sink-builder closure. The new
+  `PlayerEvent::PositionChanged` (gated on `PlayerConfig::position_update_interval`)
+  feeds the ~10Hz progress updates.
+- **`vergen-gitcl 1.0.8` dependency conflict.** librespot-core's build script
+  pulls `vergen-gitcl 1.0.8`, which has inconsistent constraints: it requires
+  `vergen-lib ^0.1.6` directly but also `vergen ^9.0.6`, and `vergen 9.1.0`
+  needs `vergen-lib 9.1.0` — two incompatible `vergen-lib` versions in one
+  build. `Cargo.lock` pins `vergen` to `9.0.6` (which pairs with `vergen-lib
+  0.1.6`) to resolve it. The lockfile is committed, so this holds; if a future
+  `cargo update` reintroduces the break, re-pin with
+  `cargo update vergen --precise 9.0.6`.
 - **Product name** — `Spottyfi` (placeholder, may change).
 - **Nix flake** — dropped; use `rustup` with the pinned `rust-toolchain.toml`.
 - **Redirect URI** — fixed loopback `http://127.0.0.1:8888/callback` (port
