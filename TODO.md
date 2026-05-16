@@ -41,10 +41,16 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
 - Note: several discovery endpoints are dead for new apps — see
   `docs/questions.md` #7 (affects Phase 7 Browse).
 
-## Phase 4 — Core UI shell `[ ]`
+## Phase 4 — Core UI shell `[x]`
 
-- [ ] Top bar, sidebar, `egui_dock` centre, bottom transport
-- [ ] Theme applied; layout persists
+- [x] `ui` crate: two dark themes, bundled Inter/JetBrains Mono fonts,
+      network `ImageLoader`, reusable components (headers, art, buttons, chips)
+- [x] Top bar (nav + Home + omni-search + View menu + profile menu)
+- [x] Resizable, collapsible left sidebar with hardcoded library entries
+- [x] `egui_dock` centre with the default Home / Now Playing Art / Queue layout
+- [x] Polished bottom transport wired to live `PlaybackState`
+- [x] Settings window: theme + density (persisted)
+- [x] Dock layout + settings persist to `<config_dir>/layout.ron`; reset action
 
 ## Phase 5 — Library + page system `[ ]`
 ## Phase 6 — Search `[ ]`

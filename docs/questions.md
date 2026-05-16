@@ -11,14 +11,6 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
    environment variable (the PKCE flow has no client secret, so the ID is not
    sensitive). _Blocks live login in Phase 1; the code is built without it._
 
-3. **`egui_dock` state serialisation.** Confirm the pinned `egui_dock` version
-   derives `Serialize`/`Deserialize` on `DockState`. _Blocks: Phase 4 layout
-   persistence._
-
-4. **egui image-loading lifecycle.** Validate `egui_extras::install_image_loaders`
-   plus the required `image` crate features, and whether web URLs need a custom
-   network loader. _Blocks: Phase 4._
-
 5. **MPRIS2 + Wayland.** Smoke-test the MPRIS2 D-Bus interface on the target
    NixOS/Wayland setup early (Phase 4), not at Phase 12.
 
@@ -75,6 +67,21 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
 
 ## Resolved
 
+- **`egui_dock` state serialisation** (was #3) — `egui_dock 0.19.1` is the
+  release built against `egui 0.34` (0.19.0/0.19.1 target `egui ^0.34`; the
+  newer line had not bumped past it). Its `serde` feature derives
+  `Serialize`/`Deserialize` on `DockState` (`#[cfg_attr(feature = "serde", …)]`
+  on the type), so the whole layout round-trips through RON. Phase 4 enables
+  the feature and persists the layout to `<config_dir>/layout.ron`.
+- **egui image-loading lifecycle** (was #4) — egui ships no network image
+  loader. Phase 4 establishes one consistent approach: a custom
+  `egui::load::ImageLoader` (`spottyfi-ui`'s `NetworkImageLoader`) that fetches
+  `http(s)` URLs with `ehttp` and decodes them with the `image` crate. Once
+  installed (after `egui_extras::install_image_loaders`), `egui::Image::from_uri(url)`
+  resolves remote album art and avatars everywhere. The loader's in-memory
+  cache is the seam for the Phase 9 on-disk `sha1(url).webp` cache — only the
+  `fetch` function does network I/O. `image` needs the `jpeg`+`png` features
+  (already enabled in the workspace) for Spotify's `i.scdn.co` art.
 - **librespot auth flow** (was #1) — **`Credentials::with_access_token` works
   directly** with the OAuth access token from Spottyfi's PKCE flow. No separate
   dealer/keymaster handshake or token exchange is needed. Confirmed against the
