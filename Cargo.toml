@@ -25,6 +25,11 @@ eframe = "0.34"
 egui = "0.34"
 egui_extras = { version = "0.34", features = ["image"] }
 
+# One-shot async fetches surfaced to the egui UI thread (the `Promise<T>`
+# pattern from `docs/threading.md`). The `tokio` feature lets a promise be
+# spawned onto the app's existing tokio runtime.
+poll-promise = { version = "0.3", features = ["tokio"] }
+
 # Async runtime.
 tokio = { version = "1", features = ["full"] }
 

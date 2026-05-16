@@ -13,6 +13,8 @@
 //!   `egui::Image::from_uri(http_url)` resolves remote album art and avatars.
 //! - [`components`] — reusable widgets (section headers, album art, icon and
 //!   primary buttons, filter chips) plus the row-[`components::Density`] notion.
+//! - [`track_table`] — the sortable track-table widget (Phase 5) shared by the
+//!   playlist, album and liked-songs pages.
 //!
 //! The dock shell itself lives in the `app` binary, which is the only crate
 //! that may depend on both `audio` and `ui`.
@@ -23,9 +25,13 @@ pub mod components;
 pub mod fonts;
 pub mod image_loader;
 pub mod theme;
+pub mod track_table;
 
 pub use components::Density;
 pub use theme::{Palette, Theme};
+pub use track_table::{
+    track_table, SortColumn, TrackAction, TrackColumns, TrackRow, TrackTableState,
+};
 
 /// Install Spottyfi's fonts and image loaders into an egui context.
 ///

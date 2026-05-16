@@ -13,6 +13,8 @@ spottyfi-models.workspace = true
 spottyfi-state.workspace = true
 
 egui.workspace = true
+# `TableBuilder` for the sortable track tables on playlist / album / liked pages.
+egui_extras.workspace = true
 serde = { workspace = true }
 tracing.workspace = true
 

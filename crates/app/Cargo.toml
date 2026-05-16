@@ -36,6 +36,10 @@ arc-swap.workspace = true
 reqwest.workspace = true
 image.workspace = true
 
+# One-shot async page loads bridged onto the egui UI thread.
+poll-promise.workspace = true
+futures.workspace = true
+
 # Dockable tabs and splits — the headline UX feature. 0.19.1 is built against
 # egui 0.34; its `serde` feature derives Serialize/Deserialize on `DockState`
 # for layout persistence.
