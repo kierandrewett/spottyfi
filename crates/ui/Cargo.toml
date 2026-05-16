@@ -9,3 +9,18 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+spottyfi-models.workspace = true
+spottyfi-state.workspace = true
+
+egui.workspace = true
+serde = { workspace = true }
+tracing.workspace = true
+
+# Remote image loading: fetch HTTP(S) album art / avatars as a custom
+# `egui::load::ImageLoader`. `ehttp` is a tiny async HTTP client that works on
+# the egui worker without a tokio runtime; `image` decodes the bytes.
+ehttp = "0.7"
+image = { workspace = true }
+
+[dev-dependencies]
+serde_json.workspace = true
