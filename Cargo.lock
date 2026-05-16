@@ -4954,7 +4954,6 @@ checksum = "5f6a58fecbf9da8965bcdb20ce4fd29788d1acee68ddbb64f0ba1b81bccdb7df"
 dependencies = [
  "document-features",
  "static_assertions",
- "tokio",
 ]
 
 [[package]]

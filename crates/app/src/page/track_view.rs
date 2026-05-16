@@ -24,13 +24,23 @@ pub struct Entry {
 ///
 /// The `Index` column restores the original order, so it relies on the caller
 /// keeping `entries` in load order; pages re-derive the index from position.
-pub fn sort_entries(entries: &mut [Entry], original: &[Entry], column: SortColumn, descending: bool) {
+pub fn sort_entries(
+    entries: &mut [Entry],
+    original: &[Entry],
+    column: SortColumn,
+    descending: bool,
+) {
     match column {
         SortColumn::Index => {
             entries.clone_from_slice(original);
         }
         SortColumn::Title => {
-            entries.sort_by(|a, b| a.track.name.to_lowercase().cmp(&b.track.name.to_lowercase()));
+            entries.sort_by(|a, b| {
+                a.track
+                    .name
+                    .to_lowercase()
+                    .cmp(&b.track.name.to_lowercase())
+            });
         }
         SortColumn::Album => {
             entries.sort_by(|a, b| {
@@ -46,7 +56,7 @@ pub fn sort_entries(entries: &mut [Entry], original: &[Entry], column: SortColum
             entries.sort_by(|a, b| a.added_at.cmp(&b.added_at));
         }
         SortColumn::Duration => {
-            entries.sort_by(|a, b| a.track.duration_ms.cmp(&b.track.duration_ms));
+            entries.sort_by_key(|entry| entry.track.duration_ms);
         }
     }
     if descending {
@@ -176,7 +186,10 @@ mod tests {
     fn play_resolves_to_the_displayed_track() {
         let rows = entries();
         let action = resolve_action(TrackAction::Play(2), &rows);
-        assert_eq!(action, Some(PageAction::Play("spotify:track:id-Alpha".into())));
+        assert_eq!(
+            action,
+            Some(PageAction::Play("spotify:track:id-Alpha".into()))
+        );
     }
 
     #[test]

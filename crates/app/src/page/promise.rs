@@ -44,14 +44,36 @@ impl<T: Send + 'static> Loadable<T> {
     }
 
     /// The loaded value, or `None` while the load is still in flight.
+    ///
+    /// `poll-promise` caches the resolved value, so once this returns `Some`
+    /// it keeps doing so for the lifetime of the [`Loadable`].
     #[must_use]
     pub fn value(&self) -> Option<&T> {
         self.promise.ready()
     }
+}
 
-    /// Whether the load is still in flight.
-    #[must_use]
-    pub fn is_pending(&self) -> bool {
-        self.promise.ready().is_none()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_spawned_load_resolves_to_its_value() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let ctx = egui::Context::default();
+        let loadable: Loadable<i32> = Loadable::spawn(runtime.handle(), &ctx, async { 7 });
+
+        // Block until the runtime task has produced the value.
+        for _ in 0..200 {
+            if loadable.value().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(loadable.value(), Some(&7));
     }
 }

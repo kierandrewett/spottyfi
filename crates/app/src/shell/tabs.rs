@@ -220,7 +220,11 @@ fn queue_tab(ui: &mut egui::Ui, ctx: &TabContext<'_>) {
     spottyfi_ui::components::section_header(ui, &palette, "Queue");
     match &ctx.playback.track {
         Some(track) => {
-            ui.label(spottyfi_ui::components::muted(&palette, "Now playing", 11.0));
+            ui.label(spottyfi_ui::components::muted(
+                &palette,
+                "Now playing",
+                11.0,
+            ));
             ui.add_space(2.0);
             ui.horizontal(|ui| {
                 spottyfi_ui::components::album_art(
@@ -268,4 +272,41 @@ fn debug_tab(ui: &mut egui::Ui, ctx: &mut TabContext<'_>) -> Option<TransportInt
     spottyfi_ui::components::section_header(ui, &palette, "Debug");
     ui.add_space(4.0);
     transport::debug_play_control(ui, &palette, ctx.transport_ui, ctx.engine)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pages_and_panels_are_classified() {
+        assert!(Tab::Home.is_page());
+        assert!(Tab::Playlist("x".into()).is_page());
+        assert!(Tab::Album("x".into()).is_page());
+        assert!(Tab::Queue.is_panel());
+        assert!(Tab::Debug.is_panel());
+        assert!(!Tab::Debug.is_page());
+    }
+
+    #[test]
+    fn id_carrying_tabs_compare_by_id() {
+        assert_eq!(Tab::Album("a".into()), Tab::Album("a".into()));
+        assert_ne!(Tab::Album("a".into()), Tab::Album("b".into()));
+    }
+
+    #[test]
+    fn page_actions_map_to_dock_intents() {
+        assert_eq!(
+            page_action_to_intent(PageAction::Play("spotify:track:x".into())),
+            DockIntent::Transport(TransportIntent::PlayUri("spotify:track:x".into()))
+        );
+        assert_eq!(
+            page_action_to_intent(PageAction::Open(Tab::LikedSongs)),
+            DockIntent::Open(Tab::LikedSongs)
+        );
+        assert_eq!(
+            page_action_to_intent(PageAction::CopyToClipboard("uri".into())),
+            DockIntent::CopyToClipboard("uri".into())
+        );
+    }
 }

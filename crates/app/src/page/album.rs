@@ -199,7 +199,9 @@ fn header(
                     if let Some(id) = &artist.id {
                         let link = ui.add(
                             egui::Label::new(
-                                egui::RichText::new(&artist.name).size(12.5).color(palette.text),
+                                egui::RichText::new(&artist.name)
+                                    .size(12.5)
+                                    .color(palette.text),
                             )
                             .sense(egui::Sense::click()),
                         );
@@ -217,7 +219,10 @@ fn header(
                 }
                 ui.label(components::muted(
                     palette,
-                    format!("  ·  {}  ·  {} tracks", album.release_date, album.total_tracks),
+                    format!(
+                        "  ·  {}  ·  {} tracks",
+                        album.release_date, album.total_tracks
+                    ),
                     12.0,
                 ));
             });

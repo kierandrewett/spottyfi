@@ -117,11 +117,7 @@ impl Page for PlaylistPage {
                 header(ui, &palette, &data.playlist);
                 ui.add_space(14.0);
 
-                let playing_uri = ctx
-                    .playback
-                    .track
-                    .as_ref()
-                    .map(|t| t.uri.as_str());
+                let playing_uri = ctx.playback.track.as_ref().map(|t| t.uri.as_str());
                 let rows: Vec<TrackRow<'_>> = self
                     .sorted
                     .iter()

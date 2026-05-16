@@ -107,9 +107,8 @@ impl Page for HomePage {
                         for album in &data.albums {
                             let art = album.images.first().map(|i| i.url.as_str());
                             if card(ui, &palette, &album.name, art) {
-                                action = Some(PageAction::Open(Tab::Album(
-                                    album.id.id().to_owned(),
-                                )));
+                                action =
+                                    Some(PageAction::Open(Tab::Album(album.id.id().to_owned())));
                             }
                         }
                     });
@@ -162,4 +161,63 @@ fn card(
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::page::Page as PageTrait;
+    use spottyfi_api::MockSpotifyApi;
+    use spottyfi_models::Page;
+
+    /// Build `PageServices` over a mock API and a fresh tokio runtime, kept
+    /// alive by the returned guard.
+    fn services(mock: MockSpotifyApi) -> (PageServices, tokio::runtime::Runtime) {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let services = PageServices {
+            api: Arc::new(mock),
+            runtime: runtime.handle().clone(),
+            ctx: egui::Context::default(),
+        };
+        (services, runtime)
+    }
+
+    #[test]
+    fn home_loads_its_shelves_from_the_api() {
+        let mut mock = MockSpotifyApi::new();
+        mock.expect_user_playlists()
+            .returning(|_, _| Ok(Page::default()));
+        mock.expect_saved_albums()
+            .returning(|_, _| Ok(Page::default()));
+
+        let (services, _runtime) = services(mock);
+        let page = HomePage::new(&services);
+
+        // The load resolves to an `Ok` with empty (defaulted) shelves.
+        for _ in 0..200 {
+            if page.data.value().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let loaded = page.data.value().expect("home load resolved");
+        let data = loaded.as_ref().expect("home load succeeded");
+        assert!(data.playlists.is_empty());
+        assert!(data.albums.is_empty());
+    }
+
+    #[test]
+    fn home_title_is_static() {
+        let mut mock = MockSpotifyApi::new();
+        mock.expect_user_playlists()
+            .returning(|_, _| Ok(Page::default()));
+        mock.expect_saved_albums()
+            .returning(|_, _| Ok(Page::default()));
+        let (services, _runtime) = services(mock);
+        assert_eq!(PageTrait::title(&HomePage::new(&services)), "Home");
+    }
 }

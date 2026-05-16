@@ -20,8 +20,8 @@
 mod album;
 mod artist;
 mod home;
-mod liked;
 mod library;
+mod liked;
 mod playlist;
 mod promise;
 mod track_view;
@@ -41,8 +41,8 @@ use crate::shell::Tab;
 pub use album::AlbumPage;
 pub use artist::ArtistPage;
 pub use home::HomePage;
-pub use liked::LikedSongsPage;
 pub use library::LibraryPage;
+pub use liked::LikedSongsPage;
 pub use playlist::PlaylistPage;
 
 /// Shared services a page needs to load its data.
@@ -189,8 +189,6 @@ fn build_page(tab: &Tab, services: &PageServices) -> Box<dyn Page> {
         Tab::Album(id) => Box::new(AlbumPage::new(services, id.clone())),
         Tab::Artist(id) => Box::new(ArtistPage::new(services, id.clone())),
         // Panels are not pages; the registry is only consulted for page tabs.
-        Tab::NowPlayingArt | Tab::Queue | Tab::Debug => {
-            Box::new(HomePage::new(services))
-        }
+        Tab::NowPlayingArt | Tab::Queue | Tab::Debug => Box::new(HomePage::new(services)),
     }
 }

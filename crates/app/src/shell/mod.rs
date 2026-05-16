@@ -228,7 +228,12 @@ fn top_bar(
                 );
                 ui.add_space(4.0);
                 if spottyfi_ui::components::icon_button(
-                    ui, palette, "\u{1f3e0}", 14.0, false, "Home",
+                    ui,
+                    palette,
+                    "\u{1f3e0}",
+                    14.0,
+                    false,
+                    "Home",
                 )
                 .clicked()
                 {
