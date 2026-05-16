@@ -20,7 +20,7 @@ mod error;
 mod session;
 mod storage;
 
-use rspotify::clients::{BaseClient as _, OAuthClient as _};
+use rspotify::clients::OAuthClient as _;
 use rspotify::{AuthCodePkceSpotify, Config as RspotifyConfig, Credentials, OAuth};
 
 pub use crate::callback::CALLBACK_TIMEOUT;
@@ -32,9 +32,10 @@ pub use crate::session::{spawn_refresh_task, Session, UserProfile};
 pub use crate::storage::{KEYRING_SERVICE, TOKEN_ACCOUNT};
 
 /// The lifecycle state of authentication, observed by the UI.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum AuthState {
     /// No session; the login screen is shown.
+    #[default]
     LoggedOut,
     /// A stored token is being reloaded and validated at startup.
     Restoring,
@@ -44,12 +45,6 @@ pub enum AuthState {
     LoggedIn(UserProfile),
     /// Authentication failed; carries a human-readable message.
     Failed(String),
-}
-
-impl Default for AuthState {
-    fn default() -> Self {
-        Self::LoggedOut
-    }
 }
 
 /// Build an rspotify PKCE client for the given config.
@@ -99,7 +94,7 @@ pub async fn restore(config: &AuthConfig) -> AuthResult<Option<Session>> {
         .token
         .lock()
         .await
-        .map_err(|err| AuthError::Task(format!("token mutex poisoned: {err}")))? = Some(token);
+        .map_err(|err| AuthError::Task(format!("token mutex poisoned: {err:?}")))? = Some(token);
 
     // Renew up front if the token is already stale, so the first API call
     // (the profile fetch) is guaranteed a valid access token.
@@ -135,15 +130,13 @@ pub async fn login(config: &AuthConfig) -> AuthResult<Session> {
     let port = config.redirect_port;
 
     tracing::info!("opening the system browser for Spotify login");
-    webbrowser::open(&authorize_url)
-        .map_err(|err| AuthError::Browser(err.to_string()))?;
+    webbrowser::open(&authorize_url).map_err(|err| AuthError::Browser(err.to_string()))?;
 
     // tiny_http is blocking; run it off the async runtime's worker threads.
-    let code = tokio::task::spawn_blocking(move || {
-        callback::run_callback_server(port, &expected_state)
-    })
-    .await
-    .map_err(|err| AuthError::Task(format!("callback task panicked: {err}")))??;
+    let code =
+        tokio::task::spawn_blocking(move || callback::run_callback_server(port, &expected_state))
+            .await
+            .map_err(|err| AuthError::Task(format!("callback task panicked: {err}")))??;
 
     tracing::debug!("authorization code received; exchanging for a token");
     client
@@ -155,7 +148,7 @@ pub async fn login(config: &AuthConfig) -> AuthResult<Session> {
         .token
         .lock()
         .await
-        .map_err(|err| AuthError::Task(format!("token mutex poisoned: {err}")))?
+        .map_err(|err| AuthError::Task(format!("token mutex poisoned: {err:?}")))?
         .clone()
         .ok_or_else(|| AuthError::TokenExchange("token missing after exchange".to_owned()))?;
     storage::save_token(&token)?;

@@ -172,9 +172,8 @@ fn hex_value(byte: u8) -> Option<u8> {
 /// [`parse_callback_query`] produced.
 pub fn run_callback_server(port: u16, expected_state: &str) -> AuthResult<String> {
     let addr = format!("127.0.0.1:{port}");
-    let server = Server::http(&addr).map_err(|err| {
-        AuthError::CallbackServer(format!("could not bind {addr}: {err}"))
-    })?;
+    let server = Server::http(&addr)
+        .map_err(|err| AuthError::CallbackServer(format!("could not bind {addr}: {err}")))?;
 
     let deadline = std::time::Instant::now() + CALLBACK_TIMEOUT;
 
@@ -228,8 +227,8 @@ mod tests {
 
     #[test]
     fn parses_a_valid_callback() {
-        let code = parse_callback_query("/callback?code=abc123&state=xyz", "xyz")
-            .expect("should parse");
+        let code =
+            parse_callback_query("/callback?code=abc123&state=xyz", "xyz").expect("should parse");
         assert_eq!(code, "abc123");
     }
 
@@ -272,8 +271,8 @@ mod tests {
 
     #[test]
     fn order_of_params_does_not_matter() {
-        let code = parse_callback_query("/callback?state=xyz&code=abc123", "xyz")
-            .expect("should parse");
+        let code =
+            parse_callback_query("/callback?state=xyz&code=abc123", "xyz").expect("should parse");
         assert_eq!(code, "abc123");
     }
 }

@@ -2569,6 +2569,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -5044,9 +5046,12 @@ name = "spottyfi-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "clap",
  "eframe",
  "egui",
+ "image",
+ "reqwest",
  "spottyfi-api",
  "spottyfi-audio",
  "spottyfi-auth",
@@ -5054,6 +5059,7 @@ dependencies = [
  "spottyfi-models",
  "spottyfi-state",
  "spottyfi-ui",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
@@ -5067,6 +5073,7 @@ name = "spottyfi-auth"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "chrono",
  "keyring",
  "keyring-core",
  "rspotify",
