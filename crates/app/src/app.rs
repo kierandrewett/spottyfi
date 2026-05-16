@@ -18,10 +18,10 @@ impl SpottyfiApp {
 }
 
 impl eframe::App for SpottyfiApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.frames = self.frames.wrapping_add(1);
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::Frame::central_panel(ui.style()).show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(ui.available_height() * 0.4);
                 ui.heading("Spottyfi");
