@@ -39,6 +39,32 @@ thiserror = "2"
 # CLI / serialisation.
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# State snapshots read by the UI thread.
+arc-swap = "1"
+
+# Authentication: Spotify Web API client + OAuth PKCE flow.
+rspotify = { version = "0.16", default-features = false, features = [
+    "client-reqwest",
+    "reqwest-rustls-tls",
+] }
+
+# Refresh / access tokens in the platform keyring. `keyring` 4.x registers a
+# platform-native credential store (all OS backends are bundled unconditionally);
+# `keyring-core` provides the `Entry` get/set/delete API.
+keyring = "4"
+keyring-core = "1"
+
+# Local OAuth callback server + system browser.
+tiny_http = "0.12"
+webbrowser = "1"
+
+# HTTP + image decoding (avatar fetch).
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 [profile.dev]
 # librespot + egui are heavy; a touch of optimisation keeps debug builds usable.
