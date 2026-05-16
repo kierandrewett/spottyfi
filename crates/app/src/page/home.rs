@@ -46,11 +46,17 @@ impl HomePage {
 /// Spawn the home load: one page each of playlists and saved albums.
 fn spawn_load(services: &PageServices) -> Loadable<Loaded> {
     let api = Arc::clone(&services.api);
-    Loadable::spawn(&services.runtime, &services.ctx, async move {
-        let playlists = api.user_playlists(0, SHELF_LEN as u32).await?.items;
-        let albums = api.saved_albums(0, SHELF_LEN as u32).await?.items;
-        Ok(HomeData { playlists, albums })
-    })
+    Loadable::spawn_tracked(
+        &services.runtime,
+        &services.ctx,
+        &services.activity,
+        "Loading home…",
+        async move {
+            let playlists = api.user_playlists(0, SHELF_LEN as u32).await?.items;
+            let albums = api.saved_albums(0, SHELF_LEN as u32).await?.items;
+            Ok(HomeData { playlists, albums })
+        },
+    )
 }
 
 impl Page for HomePage {
@@ -182,6 +188,7 @@ mod tests {
             api: Arc::new(mock),
             runtime: runtime.handle().clone(),
             ctx: egui::Context::default(),
+            activity: spottyfi_state::ActivityRegistry::new(),
         };
         (services, runtime)
     }

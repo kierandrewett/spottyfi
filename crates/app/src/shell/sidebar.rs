@@ -286,8 +286,8 @@ fn section_header(
     now_expanded
 }
 
-/// Render the playlist list — a spinner while loading, an error line on
-/// failure, the playlist rows once loaded.
+/// Render the playlist list — playlists appear incrementally as they stream
+/// in, with a small spinner footer until the load completes.
 fn playlists(
     ui: &mut egui::Ui,
     state: &mut ShellState,
@@ -295,44 +295,47 @@ fn playlists(
     collapsed: bool,
     nav: &mut Vec<Tab>,
 ) {
-    let Some(session) = state.session.as_mut() else {
+    let Some(session) = state.session.as_ref() else {
         ui.add(egui::Spinner::new().size(14.0).color(palette.accent));
         return;
     };
-    match session.sidebar_playlists.value() {
-        None => {
+
+    session.sidebar_playlists.with(|snapshot| {
+        for playlist in snapshot.items {
+            if playlist_row(ui, palette, playlist, collapsed) {
+                nav.push(Tab::Playlist(playlist.id.id().to_owned()));
+            }
+        }
+
+        if !snapshot.done {
+            // Still streaming — a small spinner footer.
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(13.0).color(palette.accent));
                 if !collapsed {
                     ui.label(spottyfi_ui::components::muted(palette, "Loading…", 11.0));
                 }
             });
-        }
-        Some(Err(err)) => {
+        } else if let Some(err) = snapshot.error {
             if !collapsed {
                 ui.label(
-                    egui::RichText::new("Couldn't load playlists")
+                    egui::RichText::new("Couldn't load all playlists")
                         .size(11.0)
                         .color(palette.error),
                 );
-                ui.label(spottyfi_ui::components::muted(palette, err.clone(), 10.0));
-            }
-        }
-        Some(Ok(list)) => {
-            if list.is_empty() && !collapsed {
                 ui.label(spottyfi_ui::components::muted(
                     palette,
-                    "No playlists yet.",
-                    11.0,
+                    err.to_string(),
+                    10.0,
                 ));
             }
-            for playlist in list {
-                if playlist_row(ui, palette, playlist, collapsed) {
-                    nav.push(Tab::Playlist(playlist.id.id().to_owned()));
-                }
-            }
+        } else if snapshot.items.is_empty() && !collapsed {
+            ui.label(spottyfi_ui::components::muted(
+                palette,
+                "No playlists yet.",
+                11.0,
+            ));
         }
-    }
+    });
 }
 
 /// One playlist row: a music-note icon and the playlist name.

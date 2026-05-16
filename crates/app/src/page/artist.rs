@@ -55,32 +55,38 @@ impl ArtistPage {
 /// Spawn the artist load: the artist, their top tracks and their albums.
 fn spawn_load(services: &PageServices, id: String) -> Loadable<Loaded> {
     let api = Arc::clone(&services.api);
-    Loadable::spawn(&services.runtime, &services.ctx, async move {
-        let artist = api.artist(&id).await?;
-        // Top tracks rely on a Spotify endpoint that may be unavailable to
-        // apps registered after 2024-11-27; treat that as "no top tracks"
-        // rather than failing the whole page.
-        let top_tracks = match api.artist_top_tracks(&id).await {
-            Ok(tracks) => tracks
-                .into_iter()
-                .map(|track| Entry {
-                    track,
-                    added_at: None,
-                })
-                .collect(),
-            Err(ApiError::EndpointUnavailable { endpoint }) => {
-                tracing::warn!(endpoint, "artist top tracks unavailable to this app");
-                Vec::new()
-            }
-            Err(err) => return Err(err),
-        };
-        let albums = api.artist_albums(&id, 0, 50).await?.items;
-        Ok(ArtistData {
-            artist,
-            top_tracks,
-            albums,
-        })
-    })
+    Loadable::spawn_tracked(
+        &services.runtime,
+        &services.ctx,
+        &services.activity,
+        "Loading artist…",
+        async move {
+            let artist = api.artist(&id).await?;
+            // Top tracks rely on a Spotify endpoint that may be unavailable to
+            // apps registered after 2024-11-27; treat that as "no top tracks"
+            // rather than failing the whole page.
+            let top_tracks = match api.artist_top_tracks(&id).await {
+                Ok(tracks) => tracks
+                    .into_iter()
+                    .map(|track| Entry {
+                        track,
+                        added_at: None,
+                    })
+                    .collect(),
+                Err(ApiError::EndpointUnavailable { endpoint }) => {
+                    tracing::warn!(endpoint, "artist top tracks unavailable to this app");
+                    Vec::new()
+                }
+                Err(err) => return Err(err),
+            };
+            let albums = api.artist_albums(&id, 0, 50).await?.items;
+            Ok(ArtistData {
+                artist,
+                top_tracks,
+                albums,
+            })
+        },
+    )
 }
 
 impl Page for ArtistPage {

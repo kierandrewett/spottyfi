@@ -20,6 +20,7 @@
 mod album;
 mod artist;
 mod home;
+mod incremental;
 mod library;
 mod liked;
 mod playlist;
@@ -31,9 +32,11 @@ use std::sync::Arc;
 
 use spottyfi_api::SpotifyApi;
 use spottyfi_audio::PlaybackState;
+use spottyfi_state::ActivityRegistry;
 use spottyfi_ui::theme::Palette;
 use tokio::runtime::Handle;
 
+pub use incremental::IncrementalLoad;
 pub use promise::Loadable;
 
 use crate::shell::Tab;
@@ -57,6 +60,9 @@ pub struct PageServices {
     pub runtime: Handle,
     /// The egui context, woken when a load resolves.
     pub ctx: egui::Context,
+    /// The shared background-activity registry; page loads register here so
+    /// the menu-bar indicator reflects them.
+    pub activity: Arc<ActivityRegistry>,
 }
 
 /// Everything a page needs to render one frame, borrowed for the call.

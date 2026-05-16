@@ -50,26 +50,32 @@ impl AlbumPage {
 /// Spawn the album load and project its simplified tracks to full [`Track`]s.
 fn spawn_load(services: &PageServices, id: String) -> Loadable<Loaded> {
     let api = Arc::clone(&services.api);
-    Loadable::spawn(&services.runtime, &services.ctx, async move {
-        let album = api.album(&id).await?;
-        let simplified = SimplifiedAlbum {
-            id: Some(album.id.clone()),
-            name: album.name.clone(),
-            images: album.images.clone(),
-            artists: album.artists.clone(),
-            release_date: Some(album.release_date.clone()),
-        };
-        let original = album
-            .tracks
-            .items
-            .iter()
-            .map(|track| Entry {
-                track: to_track(track, &simplified),
-                added_at: None,
-            })
-            .collect();
-        Ok(AlbumData { album, original })
-    })
+    Loadable::spawn_tracked(
+        &services.runtime,
+        &services.ctx,
+        &services.activity,
+        "Loading album…",
+        async move {
+            let album = api.album(&id).await?;
+            let simplified = SimplifiedAlbum {
+                id: Some(album.id.clone()),
+                name: album.name.clone(),
+                images: album.images.clone(),
+                artists: album.artists.clone(),
+                release_date: Some(album.release_date.clone()),
+            };
+            let original = album
+                .tracks
+                .items
+                .iter()
+                .map(|track| Entry {
+                    track: to_track(track, &simplified),
+                    added_at: None,
+                })
+                .collect();
+            Ok(AlbumData { album, original })
+        },
+    )
 }
 
 /// Promote an album's [`SimplifiedTrack`] to a full [`Track`] by attaching the

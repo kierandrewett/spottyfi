@@ -1,37 +1,35 @@
 //! The Liked Songs page: the user's saved-tracks table.
-
-use std::sync::Arc;
+//!
+//! The saved tracks stream in **incrementally** so the first page renders the
+//! instant it arrives rather than waiting for every page to be collected.
 
 use spottyfi_api::ApiError;
-use spottyfi_models::SpotifyId as _;
+use spottyfi_models::{SpotifyId as _, Track};
 use spottyfi_ui::components;
 use spottyfi_ui::track_table::{self, TrackColumns, TrackRow, TrackTableState};
 
+use super::incremental::IncrementalLoad;
 use super::track_view::{self, Entry};
-use super::{load_error, loading_spinner, Loadable, Page, PageAction, PageContext, PageServices};
-
-/// The data the page loads: every saved track in load order.
-type Loaded = Result<Vec<Entry>, ApiError>;
+use super::{loading_spinner, Page, PageAction, PageContext, PageServices};
 
 /// The Liked Songs page: a header over a sortable saved-tracks table.
 pub struct LikedSongsPage {
-    /// The async load of the saved tracks.
-    data: Loadable<Loaded>,
+    /// The incremental stream of the user's saved tracks.
+    tracks: IncrementalLoad<Entry>,
     /// The track table's sort state.
     sort: TrackTableState,
     /// The currently displayed (sorted) rows.
     sorted: Vec<Entry>,
-    /// The sort the `sorted` cache was built for.
-    sorted_for: Option<TrackTableState>,
+    /// The sort + track-count the `sorted` cache was built for.
+    sorted_for: Option<(TrackTableState, usize)>,
 }
 
 impl LikedSongsPage {
     /// Build the page and kick off the saved-tracks load.
     #[must_use]
     pub fn new(services: &PageServices) -> Self {
-        let data = spawn_load(services);
         Self {
-            data,
+            tracks: spawn_tracks(services),
             sort: TrackTableState::default(),
             sorted: Vec::new(),
             sorted_for: None,
@@ -39,30 +37,27 @@ impl LikedSongsPage {
     }
 }
 
-/// Spawn the saved-tracks load. Spotify's saved-tracks endpoint does not carry
-/// the per-track add date in the mapped [`Track`](spottyfi_models::Track), so
-/// the date-added column stays empty here for now.
-fn spawn_load(services: &PageServices) -> Loadable<Loaded> {
-    let api = Arc::clone(&services.api);
-    Loadable::spawn(&services.runtime, &services.ctx, async move {
-        let mut original = Vec::new();
-        let mut offset = 0u32;
-        loop {
-            let page = api.saved_tracks(offset, 50).await?;
-            let count = page.items.len() as u32;
-            for track in page.items {
-                original.push(Entry {
-                    track,
-                    added_at: None,
-                });
-            }
-            if !page.has_next || count == 0 {
-                break;
-            }
-            offset += count;
-        }
-        Ok(original)
-    })
+/// Spawn the incremental saved-tracks stream. Spotify's saved-tracks endpoint
+/// does not carry the per-track add date in the mapped
+/// [`Track`](spottyfi_models::Track), so the date-added column stays empty.
+fn spawn_tracks(services: &PageServices) -> IncrementalLoad<Entry> {
+    use futures::StreamExt as _;
+    let stream = services
+        .api
+        .saved_tracks_stream()
+        .map(|item: Result<Track, ApiError>| {
+            item.map(|track| Entry {
+                track,
+                added_at: None,
+            })
+        });
+    IncrementalLoad::spawn(
+        &services.runtime,
+        &services.ctx,
+        &services.activity,
+        "Loading liked songs…",
+        stream,
+    )
 }
 
 impl Page for LikedSongsPage {
@@ -72,28 +67,28 @@ impl Page for LikedSongsPage {
 
     fn ui(&mut self, ui: &mut egui::Ui, ctx: &PageContext<'_>) -> Option<PageAction> {
         let palette = ctx.palette;
-        let Some(loaded) = self.data.value() else {
+
+        let still_loading = !self.tracks.is_done();
+        if self.tracks.len() == 0 && still_loading {
             loading_spinner(ui, &palette, "Loading your liked songs…");
             return None;
-        };
-        let original = match loaded {
-            Ok(tracks) => tracks,
-            Err(err) => {
-                load_error(ui, &palette, &err.to_string());
-                return None;
-            }
-        };
-
-        if self.sorted_for != Some(self.sort) {
-            self.sorted = original.clone();
-            track_view::sort_entries(
-                &mut self.sorted,
-                original,
-                self.sort.column,
-                self.sort.descending,
-            );
-            self.sorted_for = Some(self.sort);
         }
+
+        let sort = self.sort;
+        self.tracks.with(|snapshot| {
+            let key = (sort, snapshot.items.len());
+            if self.sorted_for != Some(key) {
+                self.sorted = snapshot.items.to_vec();
+                track_view::sort_entries(
+                    &mut self.sorted,
+                    snapshot.items,
+                    sort.column,
+                    sort.descending,
+                );
+                self.sorted_for = Some(key);
+            }
+        });
+        let stream_error = self.tracks.with(|s| s.error.map(ToString::to_string));
 
         let mut action = None;
         egui::ScrollArea::vertical()
@@ -113,7 +108,7 @@ impl Page for LikedSongsPage {
                         ui.add_space(6.0);
                         ui.label(components::muted(
                             &palette,
-                            format!("{} songs", original.len()),
+                            format!("{} songs", self.sorted.len()),
                             12.0,
                         ));
                     });
@@ -146,6 +141,21 @@ impl Page for LikedSongsPage {
                     } else {
                         action = track_view::resolve_action(table_action, &self.sorted);
                     }
+                }
+
+                if still_loading {
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(13.0).color(palette.accent));
+                        ui.label(components::muted(&palette, "Loading more songs…", 11.0));
+                    });
+                } else if let Some(err) = &stream_error {
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(format!("Some songs failed to load: {err}"))
+                            .size(11.0)
+                            .color(palette.error),
+                    );
                 }
             });
         action

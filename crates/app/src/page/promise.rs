@@ -8,10 +8,18 @@
 //!
 //! The runtime task calls `egui::Context::request_repaint` on completion so
 //! the UI wakes to render the result without polling every frame.
+//!
+//! ## Activity registration
+//!
+//! [`Loadable::spawn_tracked`] registers the load in the shared
+//! [`ActivityRegistry`] so the menu-bar indicator can show that a background
+//! load is in flight, with a cancel affordance that aborts the runtime task.
 
 use std::future::Future;
+use std::sync::Arc;
 
 use poll_promise::Promise;
+use spottyfi_state::ActivityRegistry;
 use tokio::runtime::Handle;
 
 /// A one-shot async load whose result the UI reads each frame.
@@ -25,21 +33,50 @@ pub struct Loadable<T: Send + 'static> {
 }
 
 impl<T: Send + 'static> Loadable<T> {
-    /// Spawn `future` onto `runtime` and return a pending [`Loadable`].
+    /// Spawn `future`, registering it in `registry` under `label` so the
+    /// menu-bar activity indicator shows it while it runs.
     ///
-    /// `ctx` is woken with `request_repaint` when the future resolves so the
-    /// page re-renders with the loaded data.
-    pub fn spawn<F>(runtime: &Handle, ctx: &egui::Context, future: F) -> Self
+    /// The activity is registered as cancellable: the cancel affordance aborts
+    /// the spawned runtime task. The activity is deregistered when the future
+    /// resolves (or when the task is aborted).
+    pub fn spawn_tracked<F>(
+        runtime: &Handle,
+        ctx: &egui::Context,
+        registry: &Arc<ActivityRegistry>,
+        label: impl Into<String>,
+        future: F,
+    ) -> Self
     where
         F: Future<Output = T> + Send + 'static,
     {
         let ctx = ctx.clone();
         let (sender, promise) = Promise::new();
-        runtime.spawn(async move {
+
+        let handle = runtime.spawn(async move {
             let value = future.await;
             sender.send(value);
             ctx.request_repaint();
         });
+
+        // Register the activity with a cancel hook that aborts the task. The
+        // abort handle is cheap to clone and tripping it is a no-op once the
+        // task has already finished.
+        let abort = handle.abort_handle();
+        let registry_for_cancel = Arc::clone(registry);
+        let id = registry.register_cancellable(label, move || abort.abort());
+
+        // Deregister the activity once the task completes, on its own runtime
+        // task so neither the load future nor the UI thread is blocked.
+        let registry_for_finish = Arc::clone(registry);
+        runtime.spawn(async move {
+            // Awaiting the join handle resolves both on success and on abort.
+            let _ = handle.await;
+            registry_for_finish.finish(id);
+        });
+        // `registry_for_cancel` is moved into the cancel closure above; this
+        // keeps the registry alive for the closure's lifetime.
+        let _ = &registry_for_cancel;
+
         Self { promise }
     }
 
@@ -58,22 +95,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_spawned_load_resolves_to_its_value() {
+    fn a_tracked_load_registers_and_deregisters() {
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
+            .worker_threads(2)
             .enable_all()
             .build()
             .expect("build runtime");
         let ctx = egui::Context::default();
-        let loadable: Loadable<i32> = Loadable::spawn(runtime.handle(), &ctx, async { 7 });
+        let registry = ActivityRegistry::new();
 
-        // Block until the runtime task has produced the value.
+        let loadable: Loadable<i32> =
+            Loadable::spawn_tracked(runtime.handle(), &ctx, &registry, "Loading test…", async {
+                42
+            });
+
         for _ in 0..200 {
-            if loadable.value().is_some() {
+            if loadable.value().is_some() && !registry.is_busy() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert_eq!(loadable.value(), Some(&7));
+        assert_eq!(loadable.value(), Some(&42));
+        assert!(!registry.is_busy(), "activity deregistered after load");
     }
 }

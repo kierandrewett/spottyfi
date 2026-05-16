@@ -39,21 +39,27 @@ impl LibraryPage {
 /// Spawn the library load: the user's playlists and saved albums.
 fn spawn_load(services: &PageServices) -> Loadable<Loaded> {
     let api = Arc::clone(&services.api);
-    Loadable::spawn(&services.runtime, &services.ctx, async move {
-        let mut playlists = Vec::new();
-        let mut offset = 0u32;
-        loop {
-            let page = api.user_playlists(offset, 50).await?;
-            let count = page.items.len() as u32;
-            playlists.extend(page.items);
-            if !page.has_next || count == 0 {
-                break;
+    Loadable::spawn_tracked(
+        &services.runtime,
+        &services.ctx,
+        &services.activity,
+        "Loading your library…",
+        async move {
+            let mut playlists = Vec::new();
+            let mut offset = 0u32;
+            loop {
+                let page = api.user_playlists(offset, 50).await?;
+                let count = page.items.len() as u32;
+                playlists.extend(page.items);
+                if !page.has_next || count == 0 {
+                    break;
+                }
+                offset += count;
             }
-            offset += count;
-        }
-        let albums = api.saved_albums(0, 50).await?.items;
-        Ok(LibraryData { playlists, albums })
-    })
+            let albums = api.saved_albums(0, 50).await?.items;
+            Ok(LibraryData { playlists, albums })
+        },
+    )
 }
 
 impl Page for LibraryPage {
