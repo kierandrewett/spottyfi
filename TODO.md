@@ -24,12 +24,14 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
 - [ ] **Live test, blocked on maintainer:** register a Spotify app, set
       `SPOTTYFI_CLIENT_ID`, register redirect `http://127.0.0.1:8888/callback`
 
-## Phase 2 — Audio engine `[ ]`
+## Phase 2 — Audio engine `[~]`
 
-- [ ] `audio` wraps librespot `Player`/`Session`
-- [ ] `PlaybackController` async API
-- [ ] `PlaybackChanged` events ~10Hz
-- [ ] Transport bar wired
+- [x] `audio` wraps librespot 0.8 `Player`/`Session`
+- [x] `PlaybackController` async API (play/pause/seek/volume)
+- [x] Playback state snapshot, refreshed ~10Hz
+- [x] Transport bar wired + debug "play a URI" control
+- [ ] **Live test, blocked on maintainer:** sign in with a Premium account and
+      play a `spotify:track:` URI
 
 ## Phase 3 — Web API client `[ ]`
 
