@@ -6,6 +6,9 @@
 
 use spottyfi_auth::{AuthState, UserProfile};
 
+use crate::playback_controller::EngineStatus;
+use crate::transport::{self, TransportIntent, TransportUiState};
+
 /// Spottyfi base background, near-black (`#121212`).
 const BG: egui::Color32 = egui::Color32::from_rgb(0x12, 0x12, 0x12);
 /// Spotify accent green (`#1ed760`).
@@ -18,19 +21,33 @@ const MUTED: egui::Color32 = egui::Color32::from_rgb(0xb3, 0xb3, 0xb3);
 const ERROR: egui::Color32 = egui::Color32::from_rgb(0xf1, 0x5e, 0x6c);
 
 /// What the user asked the auth screens to do this frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AuthIntent {
     /// Start the OAuth login flow.
     Login,
     /// Log out and return to the login screen.
     Logout,
+    /// Play a track from the debug control in the logged-in view.
+    PlayDebug(TransportIntent),
+}
+
+/// The mutable handles the logged-in view needs to render the debug control.
+pub struct DebugControls<'a> {
+    /// Shared transport UI state (holds the debug text field).
+    pub ui_state: &'a mut TransportUiState,
+    /// The current audio-engine status.
+    pub engine: &'a EngineStatus,
 }
 
 /// Render the screen appropriate to `state`, returning any user intent.
+///
+/// `debug` is supplied only when logged in; it carries the handles the
+/// logged-in view uses to render the debug "play a URI" control.
 pub fn auth_screen(
     ui: &mut egui::Ui,
     state: &AuthState,
     avatar: Option<&egui::TextureHandle>,
+    debug: Option<DebugControls<'_>>,
 ) -> Option<AuthIntent> {
     egui::Frame::new()
         .fill(BG)
@@ -47,7 +64,7 @@ pub fn auth_screen(
                     progress_screen(ui, "Waiting for Spotify… complete sign-in in your browser.");
                     None
                 }
-                AuthState::LoggedIn(profile) => logged_in_screen(ui, profile, avatar),
+                AuthState::LoggedIn(profile) => logged_in_screen(ui, profile, avatar, debug),
             }
         })
         .inner
@@ -108,11 +125,13 @@ fn progress_screen(ui: &mut egui::Ui, status: &str) {
     });
 }
 
-/// The logged-in view: avatar (if available), display name, id and log-out.
+/// The logged-in view: avatar (if available), display name, id, the debug
+/// play control and log-out.
 fn logged_in_screen(
     ui: &mut egui::Ui,
     profile: &UserProfile,
     avatar: Option<&egui::TextureHandle>,
+    debug: Option<DebugControls<'_>>,
 ) -> Option<AuthIntent> {
     let mut intent = None;
     centred(ui, |ui| {
@@ -134,13 +153,18 @@ fn logged_in_screen(
                 .color(MUTED)
                 .size(12.0),
         );
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("Signed in — audio and the dock UI land in later phases.")
-                .color(MUTED)
-                .size(12.0),
-        );
-        ui.add_space(28.0);
+        ui.add_space(20.0);
+
+        // The debug control, so playback is demonstrable before the browsing
+        // UI lands in Phase 5.
+        if let Some(debug) = debug {
+            if let Some(transport_intent) =
+                transport::debug_play_control(ui, debug.ui_state, debug.engine)
+            {
+                intent = Some(AuthIntent::PlayDebug(transport_intent));
+            }
+        }
+        ui.add_space(20.0);
 
         if accent_button(ui, "Log out").clicked() {
             intent = Some(AuthIntent::Logout);

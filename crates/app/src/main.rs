@@ -10,6 +10,8 @@ mod app;
 mod auth_controller;
 mod avatar;
 mod cli;
+mod playback_controller;
+mod transport;
 mod ui;
 
 use anyhow::Context as _;
@@ -45,8 +47,8 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "Spottyfi",
         native_options,
-        Box::new(|cc| {
-            SpottyfiApp::new(cc)
+        Box::new(move |cc| {
+            SpottyfiApp::new(cc, cli.no_audio)
                 .map(|app| Box::new(app) as Box<dyn eframe::App>)
                 .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { err.into() })
         }),
