@@ -15,6 +15,7 @@ use egui_extras::{Column, TableBuilder};
 use spottyfi_models::{SpotifyId as _, Track};
 
 use crate::components;
+use crate::icons::Icon;
 use crate::theme::Palette;
 
 /// Which column a track table is sorted by.
@@ -134,12 +135,15 @@ pub fn track_table(
 ) -> Option<TrackAction> {
     let mut action: Option<TrackAction> = None;
 
+    // A faint header-row background spanning the table width.
+    let header_height = 24.0;
+
     let mut builder = TableBuilder::new(ui)
         .striped(false)
         .resizable(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .sense(egui::Sense::click())
-        .column(Column::exact(34.0)) // #
+        .column(Column::exact(40.0)) // #
         .column(Column::remainder().at_least(220.0)); // Title
     if columns.album {
         builder = builder.column(Column::remainder().at_least(140.0));
@@ -147,40 +151,48 @@ pub fn track_table(
     if columns.date_added {
         builder = builder.column(Column::exact(120.0));
     }
-    builder = builder.column(Column::exact(64.0)); // Duration
+    builder = builder.column(Column::exact(60.0)); // Duration
 
     builder
-        .header(26.0, |mut header| {
+        .header(header_height, |mut header| {
             header.col(|ui| {
+                paint_header_bg(ui, palette);
                 sort_header(ui, palette, state, SortColumn::Index, "#", &mut action);
             });
             header.col(|ui| {
-                sort_header(ui, palette, state, SortColumn::Title, "Title", &mut action);
+                paint_header_bg(ui, palette);
+                sort_header(ui, palette, state, SortColumn::Title, "TITLE", &mut action);
             });
             if columns.album {
                 header.col(|ui| {
-                    sort_header(ui, palette, state, SortColumn::Album, "Album", &mut action);
+                    paint_header_bg(ui, palette);
+                    column_rule(ui, palette);
+                    sort_header(ui, palette, state, SortColumn::Album, "ALBUM", &mut action);
                 });
             }
             if columns.date_added {
                 header.col(|ui| {
+                    paint_header_bg(ui, palette);
+                    column_rule(ui, palette);
                     sort_header(
                         ui,
                         palette,
                         state,
                         SortColumn::DateAdded,
-                        "Date added",
+                        "DATE ADDED",
                         &mut action,
                     );
                 });
             }
             header.col(|ui| {
+                paint_header_bg(ui, palette);
+                column_rule(ui, palette);
                 sort_header(
                     ui,
                     palette,
                     state,
                     SortColumn::Duration,
-                    "Time",
+                    "TIME",
                     &mut action,
                 );
             });
@@ -200,7 +212,24 @@ pub fn track_table(
     action
 }
 
-/// Draw one clickable, sortable column header.
+/// Paint the faint header-row background behind a header cell.
+fn paint_header_bg(ui: &mut egui::Ui, palette: &Palette) {
+    let rect = ui.max_rect().expand2(egui::vec2(0.0, 2.0));
+    ui.painter().rect_filled(rect, 0, palette.card);
+}
+
+/// Draw a thin vertical separator at the left edge of a column.
+fn column_rule(ui: &mut egui::Ui, palette: &Palette) {
+    let rect = ui.max_rect();
+    ui.painter().vline(
+        rect.left(),
+        rect.y_range().expand(2.0),
+        egui::Stroke::new(1.0, palette.outline),
+    );
+}
+
+/// Draw one clickable, sortable column header — uppercase, dimmed, with a
+/// sort caret on the active column.
 fn sort_header(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -228,7 +257,7 @@ fn sort_header(
     let button = egui::Button::new(
         egui::RichText::new(text)
             .family(crate::fonts::medium())
-            .size(11.5)
+            .size(10.5)
             .color(color),
     )
     .frame(false);
@@ -252,23 +281,27 @@ fn render_row(
     let mut action: Option<TrackAction> = None;
     let track = track_row.track;
 
-    // "#" — the play indicator replaces the number for the active track.
+    // "#" — a speaker icon marks the currently-playing row; otherwise the
+    // position number with a small music-note glyph.
     row.col(|ui| {
-        let text = if track_row.is_playing {
-            egui::RichText::new("\u{25b6}")
-                .size(11.0)
-                .color(palette.accent)
+        if track_row.is_playing {
+            ui.add_space(2.0);
+            crate::icons::icon(ui, Icon::Volume, 13.0, palette.accent);
         } else {
-            egui::RichText::new(track_row.position.to_string())
-                .size(12.0)
-                .color(palette.text_muted)
-        };
-        ui.label(text);
+            ui.add_space(2.0);
+            crate::icons::icon(ui, Icon::Music, 11.0, palette.text_muted);
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new(track_row.position.to_string())
+                    .size(11.5)
+                    .color(palette.text_muted),
+            );
+        }
     });
 
     // Title — album-art thumbnail + track name over the artist line.
     row.col(|ui| {
-        components::album_art(ui, palette, primary_image(track), 36.0, 4.0);
+        components::album_art(ui, palette, primary_image(track), 34.0, 0.0);
         ui.add_space(8.0);
         ui.vertical(|ui| {
             let name_color = if track_row.is_playing {
@@ -294,6 +327,7 @@ fn render_row(
     // Album.
     if columns.album {
         row.col(|ui| {
+            column_rule(ui, palette);
             ui.add(
                 egui::Label::new(components::muted(palette, track.album.name.clone(), 12.0))
                     .truncate(),
@@ -304,6 +338,7 @@ fn render_row(
     // Date added.
     if columns.date_added {
         row.col(|ui| {
+            column_rule(ui, palette);
             let text = track_row.date_added.map(format_date).unwrap_or_default();
             ui.label(components::muted(palette, text, 11.5));
         });
@@ -311,6 +346,7 @@ fn render_row(
 
     // Duration.
     row.col(|ui| {
+        column_rule(ui, palette);
         ui.label(components::muted(
             palette,
             format_duration(track.duration_ms),

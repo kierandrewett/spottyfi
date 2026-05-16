@@ -65,10 +65,12 @@ pub fn muted(palette: &Palette, text: impl Into<String>, size: f32) -> egui::Ric
 }
 
 /// An album-art widget that renders a remote image URL, falling back to a
-/// rounded placeholder while it loads or when no URL is available.
+/// flat placeholder with a music-note line icon while it loads or when no URL
+/// is available.
 ///
 /// Remote URLs resolve through the [`crate::image_loader`] installed at
-/// startup, so callers just pass the `https://i.scdn.co/...` URL.
+/// startup, so callers just pass the `https://i.scdn.co/...` URL. `corner_radius`
+/// is kept for source compatibility; the flat aesthetic passes `0`.
 pub fn album_art(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -86,52 +88,25 @@ pub fn album_art(
         ),
         _ => {
             let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::hover());
-            ui.painter()
-                .rect_filled(rect, corner_radius, palette.elevated);
-            // A simple note-ish glyph centred in the placeholder.
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "\u{266B}",
-                egui::FontId::proportional(size * 0.4),
-                palette.text_muted,
-            );
+            if ui.is_rect_visible(rect) {
+                ui.painter()
+                    .rect_filled(rect, corner_radius, palette.elevated);
+                let glyph = (size * 0.42).clamp(10.0, 48.0);
+                let glyph_rect =
+                    egui::Rect::from_center_size(rect.center(), egui::vec2(glyph, glyph));
+                crate::icons::Icon::Music
+                    .image(glyph, palette.text_muted)
+                    .paint_at(ui, glyph_rect);
+            }
             response
         }
     }
 }
 
-/// A compact, frameless icon button rendered from a glyph string.
+/// A flat, sharp-cornered accent button — Spotify's primary call-to-action.
 ///
-/// `active` tints the glyph with the accent colour (e.g. for a toggled
-/// shuffle/repeat control). Returns the click [`egui::Response`].
-pub fn icon_button(
-    ui: &mut egui::Ui,
-    palette: &Palette,
-    glyph: &str,
-    size: f32,
-    active: bool,
-    tooltip: &str,
-) -> egui::Response {
-    let color = if active {
-        palette.accent
-    } else {
-        palette.text_muted
-    };
-    let button = egui::Button::new(egui::RichText::new(glyph).size(size).color(color))
-        .frame(false)
-        .min_size(egui::vec2(size + 12.0, size + 8.0));
-    let response = ui
-        .add(button)
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
-    if tooltip.is_empty() {
-        response
-    } else {
-        response.on_hover_text(tooltip)
-    }
-}
-
-/// A round, filled accent button — Spotify's primary call-to-action shape.
+/// Filled with the accent colour; the maintainer's flat aesthetic keeps it
+/// square (no rounding).
 pub fn primary_button(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -145,13 +120,13 @@ pub fn primary_button(
             .color(egui::Color32::BLACK),
     )
     .fill(palette.accent)
-    .corner_radius(min_size.y / 2.0)
+    .corner_radius(0)
     .min_size(min_size);
     ui.add(button)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// A small pill-shaped filter chip. `selected` draws it filled.
+/// A small, flat, sharp-cornered filter chip. `selected` draws it filled.
 pub fn filter_chip(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -165,8 +140,8 @@ pub fn filter_chip(
     };
     let button = egui::Button::new(egui::RichText::new(label).size(12.5).color(fg))
         .fill(bg)
-        .corner_radius(14.0)
-        .min_size(egui::vec2(0.0, 26.0));
+        .corner_radius(0)
+        .min_size(egui::vec2(0.0, 24.0));
     ui.add(button)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }

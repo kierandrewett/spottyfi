@@ -105,6 +105,9 @@ impl Theme {
 }
 
 /// Dress an [`egui::Style`] in-place with `palette`.
+///
+/// The Spottyfi look is a flat Dear-ImGui-style application: corner radius is
+/// `0` everywhere, there are no widget drop shadows, and spacing is tight.
 fn apply_palette(style: &mut egui::Style, palette: &Palette) {
     let mut visuals = egui::Visuals::dark();
 
@@ -120,58 +123,62 @@ fn apply_palette(style: &mut egui::Style, palette: &Palette) {
     visuals.error_fg_color = palette.error;
 
     visuals.window_stroke = egui::Stroke::new(1.0, palette.outline);
-    visuals.window_corner_radius = egui::CornerRadius::same(10);
-    visuals.menu_corner_radius = egui::CornerRadius::same(8);
+
+    // Sharp corners everywhere — this is a flat ImGui-style application.
+    let sharp = egui::CornerRadius::ZERO;
+    visuals.window_corner_radius = sharp;
+    visuals.menu_corner_radius = sharp;
+
+    // Flat: a faint popup shadow only (a 1px outline carries depth instead).
     visuals.popup_shadow = egui::epaint::Shadow {
-        offset: [0, 6],
-        blur: 24,
+        offset: [0, 2],
+        blur: 8,
         spread: 0,
-        color: egui::Color32::from_black_alpha(160),
+        color: egui::Color32::from_black_alpha(120),
     };
-    visuals.window_shadow = visuals.popup_shadow;
+    visuals.window_shadow = egui::epaint::Shadow::NONE;
 
-    visuals.selection.bg_fill = palette.accent.gamma_multiply(0.35);
-    visuals.selection.stroke = egui::Stroke::new(1.0, palette.accent);
-
-    let rounding = egui::CornerRadius::same(6);
+    // The selection highlight is a flat, slightly-lighter fill — no glow.
+    visuals.selection.bg_fill = palette.hover;
+    visuals.selection.stroke = egui::Stroke::NONE;
 
     // Inactive (resting) widgets.
     visuals.widgets.noninteractive.bg_fill = palette.base;
     visuals.widgets.noninteractive.weak_bg_fill = palette.base;
     visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, palette.outline);
     visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, palette.text_muted);
-    visuals.widgets.noninteractive.corner_radius = rounding;
+    visuals.widgets.noninteractive.corner_radius = sharp;
 
     visuals.widgets.inactive.bg_fill = palette.card;
     visuals.widgets.inactive.weak_bg_fill = palette.card;
     visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
     visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, palette.text);
-    visuals.widgets.inactive.corner_radius = rounding;
+    visuals.widgets.inactive.corner_radius = sharp;
 
     visuals.widgets.hovered.bg_fill = palette.hover;
     visuals.widgets.hovered.weak_bg_fill = palette.hover;
     visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, palette.outline);
     visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, palette.text);
-    visuals.widgets.hovered.corner_radius = rounding;
+    visuals.widgets.hovered.corner_radius = sharp;
 
     visuals.widgets.active.bg_fill = palette.elevated;
     visuals.widgets.active.weak_bg_fill = palette.elevated;
-    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, palette.accent);
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, palette.outline);
     visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, palette.text);
-    visuals.widgets.active.corner_radius = rounding;
+    visuals.widgets.active.corner_radius = sharp;
 
     visuals.widgets.open.bg_fill = palette.elevated;
     visuals.widgets.open.weak_bg_fill = palette.elevated;
     visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, palette.outline);
     visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, palette.text);
-    visuals.widgets.open.corner_radius = rounding;
+    visuals.widgets.open.corner_radius = sharp;
 
     style.visuals = visuals;
 
     // Spacing — tight enough for an information-dense UI.
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     style.spacing.button_padding = egui::vec2(10.0, 4.0);
-    style.spacing.menu_margin = egui::Margin::same(6);
+    style.spacing.menu_margin = egui::Margin::same(4);
     style.spacing.scroll = egui::style::ScrollStyle::thin();
 }
 
