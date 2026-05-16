@@ -9,6 +9,7 @@
 //!   to an [`egui::Style`].
 //! - [`fonts`] — the bundled Inter / JetBrains Mono faces and their
 //!   registration into egui.
+//! - [`icons`] — the bundled Lucide line-icon set as tinted SVG widgets.
 //! - [`image_loader`] — a custom network [`egui::load::ImageLoader`] so
 //!   `egui::Image::from_uri(http_url)` resolves remote album art and avatars.
 //! - [`components`] — reusable widgets (section headers, album art, icon and
@@ -23,11 +24,13 @@
 
 pub mod components;
 pub mod fonts;
+pub mod icons;
 pub mod image_loader;
 pub mod theme;
 pub mod track_table;
 
 pub use components::Density;
+pub use icons::Icon;
 pub use theme::{Palette, Theme};
 pub use track_table::{
     track_table, SortColumn, TrackAction, TrackColumns, TrackRow, TrackTableState,

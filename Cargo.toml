@@ -26,7 +26,9 @@ spottyfi-ui = { path = "crates/ui" }
 # UI / render loop.
 eframe = "0.34"
 egui = "0.34"
-egui_extras = { version = "0.34", features = ["image"] }
+# `image` decodes raster album art; `svg` rasterises the bundled Lucide line
+# icons (via `resvg`) so icon widgets are real vectors, not glyph fallbacks.
+egui_extras = { version = "0.34", features = ["image", "svg"] }
 
 # One-shot async fetches surfaced to the egui UI thread (the `Promise<T>`
 # pattern from `docs/threading.md`). Used via `Promise::new` + an explicit
