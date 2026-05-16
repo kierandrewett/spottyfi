@@ -52,7 +52,24 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
 - [x] Settings window: theme + density (persisted)
 - [x] Dock layout + settings persist to `<config_dir>/layout.ron`; reset action
 
-## Phase 5 — Library + page system `[ ]`
+## Phase 5 — Library + page system `[x]`
+
+- [x] `Page` trait + `PageRegistry`; pages keyed by lightweight `Tab` keys
+- [x] `Loadable<T>` one-shot promise wrapper (`poll-promise` + tokio runtime)
+- [x] Pages: Home, Playlist, Album, Artist, LikedSongs, Library — each loads
+      asynchronously and draws a spinner / error / data
+- [x] Home replaces the Phase 4 placeholder with a real-data shelf view
+- [x] Sidebar lists the user's real playlists (Liked Songs + Library pinned);
+      clicking an entry opens its page tab
+- [x] Sortable track-table widget in `ui` (`#`, Title, Album, Date added,
+      Duration); double-click plays, right-click context menu
+- [x] `app` builds a `SpotifyClient` after login and wires `Arc<dyn SpotifyApi>`
+      into the shell
+- Notes: Liked Songs "Date added" is empty (the `api` `saved_tracks` mapper
+  drops `added_at`); tab navigation is open/focus, not strict replace —
+  see `docs/questions.md` #8 and #9. "Play next" / "Add to queue" warn and
+  defer to the Phase 8 queue.
+
 ## Phase 6 — Search `[ ]`
 ## Phase 7 — Browse `[ ]`
 ## Phase 8 — Queue + playback context `[ ]`

@@ -5,6 +5,27 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
 
 ## Open
 
+8. **Liked Songs "Date added" column (Phase 5).** The track table has a
+   "Date added" column, populated for playlist pages from each
+   `PlaylistTrack.added_at`. The **Liked Songs** page cannot fill it: the
+   `SpotifyApi::saved_tracks` method returns plain
+   [`Track`](spottyfi_models::Track)s, and the `api` crate's `saved_track`
+   mapper drops the `added_at` field that Spotify's `GET /me/tracks`
+   response actually carries (it returns `SavedTrack`, a `{ added_at, track }`
+   wrapper). The Liked Songs column is therefore empty for now. Resolving it
+   means either a new `saved_tracks` return type carrying `added_at`, or a
+   parallel `SavedTrack`-style model — a small `api` change deferred so
+   Phase 5 stays UI-only. Sort-by-date on that page is consequently a no-op.
+
+9. **Tab navigation: open-vs-replace (Phase 5 / Phase 10).** `docs/docking.md`
+   specifies "plain click on a sidebar entry or a link **replaces** the
+   focused tab". Phase 5 implements the simpler **open/focus** rule instead:
+   clicking a playlist focuses its tab if already open, otherwise adds a new
+   tab to the focused leaf. The strict replace-the-focused-tab behaviour, the
+   Cmd-click-for-new-tab modifier and per-tab history are the Phase 10
+   docking-power-features work; the Phase 5 brief explicitly accepts basic
+   open here.
+
 2. **Spotify app registration.** Spottyfi needs a Spotify app registered on the
    developer dashboard (https://developer.spotify.com/dashboard). The maintainer
    must create it and provide the **Client ID** via the `SPOTTYFI_CLIENT_ID`
