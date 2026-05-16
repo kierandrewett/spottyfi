@@ -9,3 +9,28 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+spottyfi-models = { workspace = true }
+
+# SQLite metadata store. `bundled` compiles SQLite in-tree so there is no
+# system dependency. Used for the tracks/albums/artists/playlists cache and
+# the migration runner's `schema_version` bookkeeping.
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+# JSON-encoded model blobs are stored in the SQLite cache rows.
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# `last_fetched` timestamps and the stale-while-revalidate freshness window.
+chrono = { workspace = true }
+
+# Platform cache directory for the SQLite DB and the image-cache folder.
+directories = "6"
+
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+# `sha1(url).webp` filenames for the on-disk image cache.
+sha1 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
