@@ -29,6 +29,10 @@ pub struct PersistedShell {
     pub sidebar_collapsed: bool,
     /// The left sidebar width in points.
     pub sidebar_width: f32,
+    /// The collapsed sidebar tree sections, by key (`main`, `library`,
+    /// `playlists`). A key present here is collapsed; absent means expanded.
+    #[serde(default)]
+    pub collapsed_sections: Vec<String>,
 }
 
 impl Default for PersistedShell {
@@ -38,7 +42,8 @@ impl Default for PersistedShell {
             theme: Theme::default(),
             density: Density::default(),
             sidebar_collapsed: false,
-            sidebar_width: 260.0,
+            sidebar_width: 240.0,
+            collapsed_sections: Vec::new(),
         }
     }
 }

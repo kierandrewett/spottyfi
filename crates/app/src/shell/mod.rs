@@ -53,8 +53,6 @@ pub struct ShellState {
     pub persisted: PersistedShell,
     /// Whether the settings window is open.
     settings_open: bool,
-    /// The omni-search box contents (no real search until Phase 6).
-    search_query: String,
     /// The currently applied theme, tracked so we re-`apply` only on change.
     applied_theme: Option<Theme>,
     /// The session-scoped page state, present once the API is attached.
@@ -68,7 +66,6 @@ impl ShellState {
         Self {
             persisted: PersistedShell::load(),
             settings_open: false,
-            search_query: String::new(),
             applied_theme: None,
             session: None,
         }
@@ -122,6 +119,22 @@ impl ShellState {
         self.persisted.theme
     }
 
+    /// Whether the sidebar tree section `key` is expanded (the default).
+    #[must_use]
+    fn section_expanded(&self, key: &str) -> bool {
+        !self.persisted.collapsed_sections.iter().any(|k| k == key)
+    }
+
+    /// Toggle the expanded/collapsed state of sidebar tree section `key`.
+    fn toggle_section(&mut self, key: &str) {
+        let collapsed = &mut self.persisted.collapsed_sections;
+        if let Some(pos) = collapsed.iter().position(|k| k == key) {
+            collapsed.remove(pos);
+        } else {
+            collapsed.push(key.to_owned());
+        }
+    }
+
     /// Persist the shell layout + settings to disk (call on shutdown).
     pub fn save(&self) {
         self.persisted.save();
@@ -166,9 +179,16 @@ pub fn shell(
     let mut nav: Vec<Tab> = Vec::new();
     let mut copy_to_clipboard: Option<String> = None;
 
-    // Top bar — fixed height, drawn first so panels below dock under it.
-    if let Some(i) = top_bar(ui, state, &palette, profile, avatar, &mut nav) {
+    // Menu bar — fixed height, drawn first so panels below dock under it.
+    if let Some(i) = menu_bar(ui, state, &palette, profile, avatar, playback, &mut nav) {
         intent = Some(i);
+    }
+
+    // Ctrl/Cmd+K opens the Search page (the search box moved to the sidebar).
+    let open_search =
+        ui.input(|i| i.key_pressed(egui::Key::K) && (i.modifiers.command || i.modifiers.ctrl));
+    if open_search {
+        nav.push(Tab::Search);
     }
 
     // Left sidebar — resizable, collapsible, real playlists.
@@ -201,154 +221,177 @@ pub fn shell(
     intent
 }
 
-/// The ~48px top bar: navigation, Home, omni-search and the profile menu.
-fn top_bar(
+/// The thin application menu bar: `File  View  Playback  Tools  Help`.
+///
+/// This replaces the Phase 4 top bar. Search moved to the sidebar (and
+/// `Ctrl/Cmd+K`); the profile actions live under the `File` menu.
+fn menu_bar(
     ui: &mut egui::Ui,
     state: &mut ShellState,
     palette: &Palette,
     profile: &UserProfile,
     avatar: Option<&egui::TextureHandle>,
+    playback: &PlaybackState,
     nav: &mut Vec<Tab>,
 ) -> Option<ShellIntent> {
     let mut intent = None;
 
-    egui::Panel::top("top-bar")
-        .exact_size(48.0)
+    egui::Panel::top("menu-bar")
+        .exact_size(28.0)
         .frame(
             egui::Frame::new()
-                .fill(palette.base)
-                .inner_margin(egui::Margin::symmetric(12, 8)),
+                .fill(palette.elevated)
+                .inner_margin(egui::Margin::symmetric(4, 0)),
         )
         .show_inside(ui, |ui| {
-            ui.horizontal_centered(|ui| {
-                // Back / forward — placeholders, wired to per-tab history later.
-                spottyfi_ui::components::icon_button(ui, palette, "\u{2039}", 16.0, false, "Back");
-                spottyfi_ui::components::icon_button(
-                    ui, palette, "\u{203a}", 16.0, false, "Forward",
-                );
-                ui.add_space(4.0);
-                if spottyfi_ui::components::icon_button(
-                    ui,
-                    palette,
-                    "\u{1f3e0}",
-                    14.0,
-                    false,
-                    "Home",
-                )
-                .clicked()
-                {
-                    nav.push(Tab::Home);
-                }
-
-                ui.add_space(6.0);
-                // View menu — dock layout actions.
-                view_menu(ui, state, palette);
-
-                ui.add_space(10.0);
-
-                // Omni-search — Ctrl/Cmd+K focuses it. No real search yet.
-                let search_id = egui::Id::new("omni-search");
-                let field = egui::TextEdit::singleline(&mut state.search_query)
-                    .id(search_id)
-                    .hint_text("Search  (Ctrl+K)")
-                    .desired_width(320.0)
-                    .margin(egui::Margin::symmetric(10, 5));
-                ui.add(field);
-                let focus_search = ui.input(|i| {
-                    i.key_pressed(egui::Key::K) && (i.modifiers.command || i.modifiers.ctrl)
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    ui.set_min_width(180.0);
+                    let name = profile.display_name.as_deref().unwrap_or("Spotify user");
+                    ui.horizontal(|ui| {
+                        if let Some(texture) = avatar {
+                            ui.add(egui::Image::new((texture.id(), egui::vec2(22.0, 22.0))));
+                        }
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new(name)
+                                    .family(spottyfi_ui::fonts::medium())
+                                    .size(11.5)
+                                    .color(palette.text),
+                            );
+                            ui.label(spottyfi_ui::components::muted(
+                                palette,
+                                profile.id.to_string(),
+                                9.5,
+                            ));
+                        });
+                    });
+                    ui.separator();
+                    if ui.button("Settings…").clicked() {
+                        state.settings_open = true;
+                        ui.close();
+                    }
+                    if ui.button("Log out").clicked() {
+                        intent = Some(ShellIntent::Logout);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Quit").clicked() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        ui.close();
+                    }
                 });
-                if focus_search {
-                    ui.ctx().memory_mut(|m| m.request_focus(search_id));
-                }
 
-                // Profile menu on the far right.
+                ui.menu_button("View", |ui| {
+                    ui.set_min_width(200.0);
+                    if ui.button("Reset layout to default").clicked() {
+                        state.persisted.dock = default_dock();
+                        ui.close();
+                    }
+                    if ui
+                        .checkbox(&mut state.persisted.sidebar_collapsed, "Collapse sidebar")
+                        .clicked()
+                    {
+                        ui.close();
+                    }
+                    ui.separator();
+                    ui.menu_button("Theme", |ui| {
+                        for theme in Theme::all() {
+                            if ui
+                                .radio(state.persisted.theme == theme, theme.label())
+                                .clicked()
+                            {
+                                state.persisted.theme = theme;
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.menu_button("Density", |ui| {
+                        for density in [Density::Comfortable, Density::Compact] {
+                            if ui
+                                .radio(state.persisted.density == density, density.label())
+                                .clicked()
+                            {
+                                state.persisted.density = density;
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.separator();
+                    for tab in [Tab::NowPlayingArt, Tab::Queue, Tab::Debug] {
+                        let present = state.persisted.dock.find_tab(&tab).is_some();
+                        if ui
+                            .add_enabled(
+                                !present,
+                                egui::Button::new(format!("Open {} panel", tab.title())),
+                            )
+                            .clicked()
+                        {
+                            state.persisted.dock.push_to_focused_leaf(tab);
+                            ui.close();
+                        }
+                    }
+                });
+
+                ui.menu_button("Playback", |ui| {
+                    ui.set_min_width(160.0);
+                    let has_track = playback.track.is_some();
+                    let label = if playback.playing { "Pause" } else { "Play" };
+                    if ui
+                        .add_enabled(has_track, egui::Button::new(label))
+                        .clicked()
+                    {
+                        intent = Some(ShellIntent::Transport(TransportIntent::TogglePlayPause));
+                        ui.close();
+                    }
+                    // Next / previous need the Phase 8 queue — shown but inert.
+                    let _ = ui.add_enabled(false, egui::Button::new("Next track"));
+                    let _ = ui.add_enabled(false, egui::Button::new("Previous track"));
+                });
+
+                ui.menu_button("Tools", |ui| {
+                    ui.set_min_width(160.0);
+                    if ui.button("Search").clicked() {
+                        nav.push(Tab::Search);
+                        ui.close();
+                    }
+                    if ui.button("Open Debug panel").clicked() {
+                        if state.persisted.dock.find_tab(&Tab::Debug).is_none() {
+                            state.persisted.dock.push_to_focused_leaf(Tab::Debug);
+                        }
+                        ui.close();
+                    }
+                });
+
+                ui.menu_button("Help", |ui| {
+                    ui.set_min_width(160.0);
+                    ui.label(spottyfi_ui::components::muted(palette, "Spottyfi", 11.0));
+                    ui.label(spottyfi_ui::components::muted(
+                        palette,
+                        concat!("Version ", env!("CARGO_PKG_VERSION")),
+                        10.5,
+                    ));
+                    ui.separator();
+                    let _ = ui.add_enabled(false, egui::Button::new("Keyboard shortcuts"));
+                });
+
+                // The Home shortcut sits on the far right of the menu bar.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(i) = profile_menu(ui, state, palette, profile, avatar) {
-                        intent = Some(i);
+                    if spottyfi_ui::icons::icon_button(
+                        ui,
+                        palette,
+                        spottyfi_ui::Icon::Home,
+                        14.0,
+                        false,
+                        "Home",
+                    )
+                    .clicked()
+                    {
+                        nav.push(Tab::Home);
                     }
                 });
             });
         });
-
-    intent
-}
-
-/// The View menu: dock layout actions and panel visibility.
-fn view_menu(ui: &mut egui::Ui, state: &mut ShellState, palette: &Palette) {
-    let button = egui::Button::new(egui::RichText::new("View").size(12.5).color(palette.text))
-        .fill(palette.card)
-        .corner_radius(8.0)
-        .min_size(egui::vec2(0.0, 26.0));
-    let response = ui.add(button);
-    egui::Popup::menu(&response).show(|ui| {
-        ui.set_min_width(190.0);
-        if ui.button("Reset layout to default").clicked() {
-            state.persisted.dock = default_dock();
-            ui.close();
-        }
-        ui.separator();
-        for tab in [
-            Tab::Home,
-            Tab::Library,
-            Tab::NowPlayingArt,
-            Tab::Queue,
-            Tab::Debug,
-        ] {
-            let present = state.persisted.dock.find_tab(&tab).is_some();
-            if ui
-                .add_enabled(!present, egui::Button::new(format!("Open {}", tab.title())))
-                .clicked()
-            {
-                state.persisted.dock.push_to_focused_leaf(tab);
-                ui.close();
-            }
-        }
-    });
-}
-
-/// The profile menu button: avatar + name, with Settings / Log out actions.
-fn profile_menu(
-    ui: &mut egui::Ui,
-    state: &mut ShellState,
-    palette: &Palette,
-    profile: &UserProfile,
-    avatar: Option<&egui::TextureHandle>,
-) -> Option<ShellIntent> {
-    let mut intent = None;
-    let name = profile.display_name.as_deref().unwrap_or("Spotify user");
-
-    let button = egui::Button::new(
-        egui::RichText::new(format!("{name}  \u{25be}"))
-            .size(12.5)
-            .color(palette.text),
-    )
-    .fill(palette.card)
-    .corner_radius(14.0)
-    .min_size(egui::vec2(0.0, 28.0));
-
-    let response = ui.add(button);
-
-    if let Some(texture) = avatar {
-        ui.add(egui::Image::new((texture.id(), egui::vec2(26.0, 26.0))).corner_radius(13.0));
-    }
-
-    egui::Popup::menu(&response).show(|ui| {
-        ui.set_min_width(160.0);
-        ui.label(spottyfi_ui::components::muted(
-            palette,
-            format!("id: {}", profile.id),
-            10.5,
-        ));
-        ui.separator();
-        if ui.button("Settings").clicked() {
-            state.settings_open = true;
-            ui.close();
-        }
-        if ui.button("Log out").clicked() {
-            intent = Some(ShellIntent::Logout);
-            ui.close();
-        }
-    });
 
     intent
 }
@@ -391,18 +434,79 @@ fn dock(
         },
     };
 
-    let mut dock_style = egui_dock::Style::from_egui(ui.style());
-    dock_style.tab_bar.fill_tab_bar = true;
-    dock_style.dock_area_padding = None;
-    dock_style.separator.color_idle = palette.outline;
-
     egui_dock::DockArea::new(&mut state.persisted.dock)
-        .style(dock_style)
+        .style(dock_style(palette, ui.style()))
         .show_leaf_close_all_buttons(false)
         .show_leaf_collapse_buttons(false)
+        .show_add_buttons(false)
         .show_inside(ui, &mut viewer);
 
     viewer.ctx.intents
+}
+
+/// Build the flat, sharp-cornered `egui_dock` style.
+///
+/// Tabs are square (corner radius `0`), the active tab is a touch lighter than
+/// the bar, and inactive tabs blend into it. egui_dock 0.19 always draws a tab
+/// bar per leaf, so a lone leaf still shows one — see the report's open items;
+/// styling keeps it as unobtrusive as possible.
+fn dock_style(palette: &Palette, egui_style: &egui::Style) -> egui_dock::Style {
+    let mut style = egui_dock::Style::from_egui(egui_style);
+    let sharp = egui::CornerRadius::ZERO;
+
+    style.dock_area_padding = None;
+    style.main_surface_border_stroke = egui::Stroke::NONE;
+    style.main_surface_border_rounding = sharp;
+
+    style.separator.color_idle = palette.outline;
+    style.separator.color_hovered = palette.text_muted;
+    style.separator.width = 1.0;
+
+    // The tab bar — flat, dense, sharp.
+    style.tab_bar.bg_fill = palette.elevated;
+    style.tab_bar.corner_radius = sharp;
+    style.tab_bar.height = 26.0;
+    style.tab_bar.fill_tab_bar = false;
+    style.tab_bar.hline_color = palette.outline;
+
+    // Individual tabs — square; the active tab a touch lighter than the bar,
+    // inactive tabs blended into it.
+    style.tab.spacing = 0.0;
+    style.tab.hline_below_active_tab_name = false;
+    for interaction in [
+        &mut style.tab.active,
+        &mut style.tab.focused,
+        &mut style.tab.active_with_kb_focus,
+        &mut style.tab.focused_with_kb_focus,
+    ] {
+        interaction.corner_radius = sharp;
+        interaction.bg_fill = palette.base;
+        interaction.text_color = palette.text;
+        interaction.outline_color = palette.outline;
+    }
+    for interaction in [
+        &mut style.tab.inactive,
+        &mut style.tab.hovered,
+        &mut style.tab.inactive_with_kb_focus,
+    ] {
+        interaction.corner_radius = sharp;
+        interaction.bg_fill = palette.elevated;
+        interaction.text_color = palette.text_muted;
+        interaction.outline_color = palette.outline;
+    }
+    style.tab.hovered.text_color = palette.text;
+
+    style.tab.tab_body.corner_radius = sharp;
+    style.tab.tab_body.inner_margin = egui::Margin::ZERO;
+    style.tab.tab_body.bg_fill = palette.base;
+    style.tab.tab_body.stroke = egui::Stroke::NONE;
+
+    // The close button on a tab.
+    style.buttons.close_tab_bg_fill = palette.hover;
+    style.buttons.close_tab_active_color = palette.text;
+    style.buttons.close_tab_color = palette.text_muted;
+
+    style
 }
 
 /// The settings window: theme + density selection (both persisted) and a

@@ -189,6 +189,8 @@ fn build_page(tab: &Tab, services: &PageServices) -> Box<dyn Page> {
         Tab::Album(id) => Box::new(AlbumPage::new(services, id.clone())),
         Tab::Artist(id) => Box::new(ArtistPage::new(services, id.clone())),
         // Panels are not pages; the registry is only consulted for page tabs.
-        Tab::NowPlayingArt | Tab::Queue | Tab::Debug => Box::new(HomePage::new(services)),
+        Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Search | Tab::Placeholder(_) => {
+            Box::new(HomePage::new(services))
+        }
     }
 }

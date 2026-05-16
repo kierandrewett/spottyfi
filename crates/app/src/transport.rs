@@ -14,12 +14,13 @@ use std::time::Duration;
 
 use spottyfi_audio::PlaybackState;
 use spottyfi_ui::components;
+use spottyfi_ui::icons::{self, Icon};
 use spottyfi_ui::theme::Palette;
 
 use crate::playback_controller::EngineStatus;
 
-/// Height of the transport bar, per `PLAN.md`'s UI shell spec.
-pub const TRANSPORT_HEIGHT: f32 = 76.0;
+/// Height of the transport bar — a tight, dense strip.
+pub const TRANSPORT_HEIGHT: f32 = 68.0;
 
 /// A transport command the user issued this frame.
 #[derive(Debug, Clone, PartialEq)]
@@ -69,8 +70,7 @@ pub fn transport_bar(
         .frame(
             egui::Frame::new()
                 .fill(palette.elevated)
-                .inner_margin(egui::Margin::symmetric(14, 8))
-                .stroke(egui::Stroke::new(1.0, palette.outline)),
+                .inner_margin(egui::Margin::symmetric(12, 6)),
         )
         .show_inside(ui, |ui| {
             ui.horizontal_centered(|ui| {
@@ -111,31 +111,34 @@ pub fn transport_bar(
     intent
 }
 
-/// The now-playing block: album art (live URL) plus title and artist.
+/// The now-playing block: album art (live URL), title + artist, and a dimmed
+/// bitrate line.
 fn now_playing(ui: &mut egui::Ui, palette: &Palette, playback: &PlaybackState) {
     let art_url = playback.track.as_ref().and_then(|t| t.art_url.as_deref());
-    components::album_art(ui, palette, art_url, 52.0, 4.0);
+    components::album_art(ui, palette, art_url, 48.0, 0.0);
 
     ui.add_space(10.0);
     ui.vertical(|ui| {
-        ui.add_space(8.0);
+        ui.add_space(4.0);
         match &playback.track {
             Some(track) => {
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(&track.title)
                             .family(spottyfi_ui::fonts::medium())
+                            .size(12.5)
                             .color(palette.text),
                     )
                     .truncate(),
                 );
                 ui.add(
-                    egui::Label::new(components::muted(palette, track.artist_line(), 12.0))
+                    egui::Label::new(components::muted(palette, track.artist_line(), 11.0))
                         .truncate(),
                 );
+                ui.label(components::muted(palette, "Ogg Vorbis 320 kbps", 9.5));
             }
             None => {
-                ui.label(components::muted(palette, "Nothing playing", 13.0));
+                ui.label(components::muted(palette, "Nothing playing", 12.5));
             }
         }
     });
@@ -154,44 +157,60 @@ fn centre_controls(
     ui.add_space(2.0);
     ui.horizontal(|ui| {
         // Centre the control cluster horizontally.
-        let cluster_width = 230.0;
+        let cluster_width = 200.0;
         let pad = ((ui.available_width() - cluster_width) * 0.5).max(0.0);
         ui.add_space(pad);
 
-        if components::icon_button(ui, palette, "\u{1f500}", 14.0, ui_state.shuffle, "Shuffle")
-            .clicked()
+        if icons::icon_button(
+            ui,
+            palette,
+            Icon::Shuffle,
+            15.0,
+            ui_state.shuffle,
+            "Shuffle",
+        )
+        .clicked()
         {
             ui_state.shuffle = !ui_state.shuffle;
         }
-        components::icon_button(ui, palette, "\u{23ee}", 15.0, false, "Previous");
+        icons::icon_button(ui, palette, Icon::SkipBack, 16.0, false, "Previous");
 
-        // The play/pause control: a filled accent circle.
-        let glyph = if playback.buffering {
-            "\u{2026}" // ellipsis while loading
-        } else if playback.playing {
-            "\u{23f8}" // pause
-        } else {
-            "\u{25b6}" // play
-        };
-        let play = egui::Button::new(
-            egui::RichText::new(glyph)
-                .size(15.0)
-                .color(egui::Color32::BLACK),
-        )
-        .fill(palette.accent)
-        .corner_radius(18.0)
-        .min_size(egui::vec2(34.0, 34.0));
-        if ui
-            .add_enabled(has_track, play)
+        // The play/pause control: the one accent-green element here.
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(30.0, 30.0),
+            if has_track {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            },
+        );
+        if ui.is_rect_visible(rect) {
+            let fill = if has_track {
+                palette.accent
+            } else {
+                palette.outline
+            };
+            ui.painter().rect_filled(rect, 0, fill);
+            let glyph = if playback.playing {
+                Icon::Pause
+            } else {
+                Icon::Play
+            };
+            let g = 14.0;
+            glyph.image(g, egui::Color32::BLACK).paint_at(
+                ui,
+                egui::Rect::from_center_size(rect.center(), egui::vec2(g, g)),
+            );
+        }
+        if response
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
             intent = Some(TransportIntent::TogglePlayPause);
         }
 
-        components::icon_button(ui, palette, "\u{23ed}", 15.0, false, "Next");
-        if components::icon_button(ui, palette, "\u{1f501}", 14.0, ui_state.repeat, "Repeat")
-            .clicked()
+        icons::icon_button(ui, palette, Icon::SkipForward, 16.0, false, "Next");
+        if icons::icon_button(ui, palette, Icon::Repeat, 15.0, ui_state.repeat, "Repeat").clicked()
         {
             ui_state.repeat = !ui_state.repeat;
         }
@@ -220,7 +239,7 @@ fn centre_controls(
             !duration.is_zero(),
             egui::Slider::new(&mut shown, 0.0..=1.0)
                 .show_value(false)
-                .handle_shape(egui::style::HandleShape::Circle),
+                .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
         );
 
         if slider.drag_started() || slider.dragged() {
@@ -248,22 +267,27 @@ fn right_cluster(
 
     // Volume slider (right-to-left layout, so this lands rightmost).
     let mut volume = playback.volume;
-    ui.spacing_mut().slider_width = 84.0;
+    ui.spacing_mut().slider_width = 80.0;
     let response = ui.add(
         egui::Slider::new(&mut volume, 0.0..=1.0)
             .show_value(false)
-            .handle_shape(egui::style::HandleShape::Circle),
+            .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
     );
     if response.changed() {
         intent = Some(TransportIntent::SetVolume(volume));
     }
-    components::icon_button(ui, palette, "\u{1f50a}", 14.0, false, "Volume");
+    let vol_icon = if playback.volume <= 0.001 {
+        Icon::VolumeMuted
+    } else {
+        Icon::Volume
+    };
+    icons::icon_button(ui, palette, vol_icon, 15.0, false, "Volume");
 
     ui.add_space(2.0);
     // Toggle placeholders — wired in later phases.
-    components::icon_button(ui, palette, "\u{1f5a5}", 13.0, false, "Devices (later)");
-    components::icon_button(ui, palette, "\u{1f4dc}", 13.0, false, "Queue (later)");
-    components::icon_button(ui, palette, "\u{1f3a4}", 13.0, false, "Lyrics (later)");
+    icons::icon_button(ui, palette, Icon::Settings, 15.0, false, "Settings (later)");
+    icons::icon_button(ui, palette, Icon::Devices, 15.0, false, "Devices (later)");
+    icons::icon_button(ui, palette, Icon::Queue, 15.0, false, "Queue (later)");
 
     intent
 }
@@ -280,8 +304,9 @@ pub fn debug_play_control(
 
     egui::Frame::new()
         .fill(palette.card)
-        .corner_radius(8.0)
+        .corner_radius(0)
         .inner_margin(egui::Margin::same(12))
+        .stroke(egui::Stroke::new(1.0, palette.outline))
         .show(ui, |ui| {
             ui.set_max_width(460.0);
             ui.label(

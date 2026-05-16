@@ -37,6 +37,11 @@ pub enum Tab {
     Album(String),
     /// An artist page, keyed by artist id.
     Artist(String),
+    /// The Search page (real search lands in Phase 6).
+    Search,
+    /// A not-yet-built page (Browse, Charts, …). Carries its display name; the
+    /// body is a "coming soon" placeholder until the real page is implemented.
+    Placeholder(String),
     /// The Now Playing album-art panel.
     NowPlayingArt,
     /// The play queue panel.
@@ -60,19 +65,45 @@ impl Tab {
             Tab::Playlist(_) => "Playlist",
             Tab::Album(_) => "Album",
             Tab::Artist(_) => "Artist",
+            Tab::Search => "Search",
+            Tab::Placeholder(_) => "Coming soon",
             Tab::NowPlayingArt => "Now Playing",
             Tab::Queue => "Queue",
             Tab::Debug => "Debug",
         }
     }
 
+    /// The breadcrumb-style tab title shown on the dock tab bar, e.g.
+    /// `spotify/home/` or `spotify/playlist/…`.
+    #[must_use]
+    pub fn breadcrumb(&self, page_title: &str) -> String {
+        match self {
+            Tab::Home => "spotify/home/".to_owned(),
+            Tab::Library => "spotify/library/".to_owned(),
+            Tab::LikedSongs => "spotify/liked/".to_owned(),
+            Tab::Search => "spotify/search/".to_owned(),
+            Tab::Playlist(_) => format!("spotify/playlist/{page_title}"),
+            Tab::Album(_) => format!("spotify/album/{page_title}"),
+            Tab::Artist(_) => format!("spotify/artist/{page_title}"),
+            Tab::Placeholder(name) => format!("spotify/{}/", name.to_lowercase()),
+            Tab::NowPlayingArt => "now-playing/".to_owned(),
+            Tab::Queue => "queue/".to_owned(),
+            Tab::Debug => "debug/".to_owned(),
+        }
+    }
+
     /// Whether this tab is a panel (as opposed to a navigable page).
     ///
     /// Panels are closeable; the Home page is kept open so the dock is never
-    /// empty.
+    /// empty. `Search` and `Placeholder` are self-rendered surfaces — neither
+    /// a registry-backed page nor an auxiliary panel — and are classified as
+    /// panels so the page registry never tries to build them.
     #[must_use]
     pub fn is_panel(&self) -> bool {
-        matches!(self, Tab::NowPlayingArt | Tab::Queue | Tab::Debug)
+        matches!(
+            self,
+            Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Search | Tab::Placeholder(_)
+        )
     }
 
     /// Whether this tab is a navigable page (rendered via the page registry).
@@ -120,11 +151,12 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
     type Tab = Tab;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        if tab.is_page() {
-            self.ctx.pages.title(tab).into()
+        let page_title = if tab.is_page() {
+            self.ctx.pages.title(tab)
         } else {
-            tab.title().into()
-        }
+            tab.title().to_owned()
+        };
+        tab.breadcrumb(&page_title).into()
     }
 
     fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
@@ -146,6 +178,8 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
                 match tab {
                     Tab::NowPlayingArt => now_playing_art_tab(ui, &self.ctx),
                     Tab::Queue => queue_tab(ui, &self.ctx),
+                    Tab::Search => search_tab(ui, &self.ctx),
+                    Tab::Placeholder(name) => placeholder_tab(ui, &self.ctx, name),
                     Tab::Debug => {
                         if let Some(intent) = debug_tab(ui, &mut self.ctx) {
                             self.ctx.intents.push(DockIntent::Transport(intent));
@@ -263,6 +297,44 @@ fn queue_tab(ui: &mut egui::Ui, ctx: &TabContext<'_>) {
         "Next-up and the manual queue arrive in Phase 8.",
         12.0,
     ));
+}
+
+/// The Search page — a placeholder until real catalogue search lands in
+/// Phase 6. The omni-search box is reachable via the sidebar and `Ctrl/Cmd+K`.
+fn search_tab(ui: &mut egui::Ui, ctx: &TabContext<'_>) {
+    coming_soon(
+        ui,
+        &ctx.palette,
+        "Search",
+        "Catalogue search arrives in Phase 6.",
+    );
+}
+
+/// A not-yet-built page (Browse, Charts, New Releases, …).
+fn placeholder_tab(ui: &mut egui::Ui, ctx: &TabContext<'_>, name: &str) {
+    coming_soon(
+        ui,
+        &ctx.palette,
+        name,
+        "This page is part of a later phase and isn't built yet.",
+    );
+}
+
+/// A centred "coming soon" placeholder used by pages that aren't built yet.
+fn coming_soon(ui: &mut egui::Ui, palette: &Palette, title: &str, detail: &str) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(ui.available_height() * 0.34);
+        spottyfi_ui::icons::icon(ui, spottyfi_ui::Icon::Discover, 40.0, palette.text_muted);
+        ui.add_space(10.0);
+        ui.label(
+            egui::RichText::new(title)
+                .family(spottyfi_ui::fonts::semibold())
+                .size(18.0)
+                .color(palette.text),
+        );
+        ui.add_space(4.0);
+        ui.label(spottyfi_ui::components::muted(palette, detail, 12.0));
+    });
 }
 
 /// The Debug panel: the "paste a URI and play" control kept reachable for
