@@ -28,8 +28,10 @@
 mod controller;
 mod engine;
 mod error;
+mod queue;
 mod state;
 
-pub use crate::controller::{PlaybackController, SharedPlaybackState};
+pub use crate::controller::{PlaybackController, SharedPlaybackState, SharedQueueState};
 pub use crate::error::{AudioError, AudioResult};
+pub use crate::queue::{Queue, QueueState, QueueTrack, RepeatMode};
 pub use crate::state::{normalise_uri, parse_playable, PlaybackState, TrackInfo};
