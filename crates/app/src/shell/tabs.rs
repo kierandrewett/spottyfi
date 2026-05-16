@@ -1,40 +1,65 @@
 //! The dock tab model.
 //!
-//! Every surface in the centre dock is a [`Tab`]. Phase 4 ships a small set —
-//! the Home page and the Now Playing Art / Queue / Debug panels — but the enum
-//! is shaped so Phase 5 can add page tabs (`Playlist`, `Album`, `Artist`, …)
-//! by extending the variant list and the `match` in [`TabViewer::ui`].
+//! Every surface in the centre dock is a [`Tab`]. Tabs split into **page tabs**
+//! (navigable content: Home, Library, Liked Songs, Playlist, Album, Artist)
+//! and **panel tabs** (auxiliary surfaces: Now Playing Art, Queue, Debug).
+//!
+//! A `Tab` is only a lightweight, serialisable *key*: the dock
+//! ([`egui_dock::DockState`]) stores `Tab`s so the whole layout round-trips
+//! through RON. The live, stateful [`Page`](crate::page::Page) objects — which
+//! carry the in-flight loads and per-page UI state — live in a
+//! [`PageRegistry`](crate::page::PageRegistry) keyed by `Tab`.
 
 use serde::{Deserialize, Serialize};
 use spottyfi_audio::PlaybackState;
 use spottyfi_ui::theme::Palette;
 
+use crate::page::{PageAction, PageContext, PageRegistry};
 use crate::playback_controller::EngineStatus;
 use crate::transport::{self, TransportIntent, TransportUiState};
 
-/// A single dock tab.
+/// A single dock tab — the serialisable key for one centre-dock surface.
 ///
-/// Tabs split into **page tabs** (navigable content) and **panel tabs**
-/// (auxiliary surfaces). Phase 4 implements one page (`Home`) and three panels;
-/// the remaining page kinds arrive with the page system in Phase 5.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Id-carrying variants ([`Tab::Playlist`], [`Tab::Album`], [`Tab::Artist`])
+/// identify which object the page renders; the bare base-62 Spotify id is
+/// stored, not the full URI.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Tab {
-    /// The Home landing page (placeholder content for now).
+    /// The Home landing page.
     Home,
+    /// The Your Library page (playlists + saved albums).
+    Library,
+    /// The Liked Songs (saved tracks) page.
+    LikedSongs,
+    /// A playlist page, keyed by playlist id.
+    Playlist(String),
+    /// An album page, keyed by album id.
+    Album(String),
+    /// An artist page, keyed by artist id.
+    Artist(String),
     /// The Now Playing album-art panel.
     NowPlayingArt,
-    /// The play queue panel (placeholder for now).
+    /// The play queue panel.
     Queue,
     /// The debug panel: the "paste a URI and play" control.
     Debug,
 }
 
 impl Tab {
-    /// The tab's display title.
+    /// The tab's static fallback title.
+    ///
+    /// Page tabs may show a richer, data-derived title once their page has
+    /// loaded (the playlist's name, say); the registry supplies that. This is
+    /// the label shown before the load resolves.
     #[must_use]
-    pub fn title(self) -> &'static str {
+    pub fn title(&self) -> &'static str {
         match self {
             Tab::Home => "Home",
+            Tab::Library => "Your Library",
+            Tab::LikedSongs => "Liked Songs",
+            Tab::Playlist(_) => "Playlist",
+            Tab::Album(_) => "Album",
+            Tab::Artist(_) => "Artist",
             Tab::NowPlayingArt => "Now Playing",
             Tab::Queue => "Queue",
             Tab::Debug => "Debug",
@@ -44,11 +69,28 @@ impl Tab {
     /// Whether this tab is a panel (as opposed to a navigable page).
     ///
     /// Panels are closeable; the Home page is kept open so the dock is never
-    /// empty. Phase 5 revisits this when real page tabs arrive.
+    /// empty.
     #[must_use]
-    pub fn is_panel(self) -> bool {
-        !matches!(self, Tab::Home)
+    pub fn is_panel(&self) -> bool {
+        matches!(self, Tab::NowPlayingArt | Tab::Queue | Tab::Debug)
     }
+
+    /// Whether this tab is a navigable page (rendered via the page registry).
+    #[must_use]
+    pub fn is_page(&self) -> bool {
+        !self.is_panel()
+    }
+}
+
+/// Something a dock tab raised this frame that the shell must act on.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DockIntent {
+    /// A transport command (e.g. from the debug panel, or a page's play).
+    Transport(TransportIntent),
+    /// Open (navigate to) a page tab, replacing the focused leaf.
+    Open(Tab),
+    /// Copy a string to the system clipboard (a Spotify URI).
+    CopyToClipboard(String),
 }
 
 /// Everything the dock's [`egui_dock::TabViewer`] needs to render a tab's body,
@@ -62,8 +104,10 @@ pub struct TabContext<'a> {
     pub transport_ui: &'a mut TransportUiState,
     /// The audio-engine lifecycle status, for the debug panel.
     pub engine: &'a EngineStatus,
-    /// Any [`TransportIntent`] a tab raised this frame (e.g. debug-play).
-    pub intent: Option<TransportIntent>,
+    /// The live page objects, keyed by tab.
+    pub pages: &'a mut PageRegistry,
+    /// Any [`DockIntent`]s raised this frame, in order.
+    pub intents: Vec<DockIntent>,
 }
 
 /// The `egui_dock` tab viewer: renders tab titles and bodies.
@@ -76,15 +120,20 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
     type Tab = Tab;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        tab.title().into()
+        if tab.is_page() {
+            self.ctx.pages.title(tab).into()
+        } else {
+            tab.title().into()
+        }
     }
 
     fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
-        egui::Id::new(("spottyfi-tab", *tab))
+        egui::Id::new(("spottyfi-tab", tab.clone()))
     }
 
     fn closeable(&mut self, tab: &mut Self::Tab) -> bool {
-        tab.is_panel()
+        // Home stays open so the dock is never empty; everything else closes.
+        !matches!(tab, Tab::Home)
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
@@ -95,12 +144,20 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
                 match tab {
-                    Tab::Home => home_tab(ui, &self.ctx),
                     Tab::NowPlayingArt => now_playing_art_tab(ui, &self.ctx),
                     Tab::Queue => queue_tab(ui, &self.ctx),
                     Tab::Debug => {
                         if let Some(intent) = debug_tab(ui, &mut self.ctx) {
-                            self.ctx.intent = Some(intent);
+                            self.ctx.intents.push(DockIntent::Transport(intent));
+                        }
+                    }
+                    page_tab => {
+                        let page_ctx = PageContext {
+                            palette,
+                            playback: self.ctx.playback,
+                        };
+                        if let Some(action) = self.ctx.pages.ui(page_tab, ui, &page_ctx) {
+                            self.ctx.intents.push(page_action_to_intent(action));
                         }
                     }
                 }
@@ -108,64 +165,13 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
     }
 }
 
-/// The Home page body — placeholder content until Phase 5 wires real data.
-fn home_tab(ui: &mut egui::Ui, ctx: &TabContext<'_>) {
-    let palette = ctx.palette;
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new("Good evening")
-                    .family(spottyfi_ui::fonts::semibold())
-                    .size(28.0)
-                    .color(palette.text),
-            );
-            ui.add_space(4.0);
-            ui.label(spottyfi_ui::components::muted(
-                &palette,
-                "Your library, recommendations and recently played will appear here in Phase 5.",
-                13.0,
-            ));
-            ui.add_space(20.0);
-
-            // Placeholder "shelf" of cards so the layout reads like a real page.
-            spottyfi_ui::components::section_header(ui, &palette, "Jump back in");
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                for label in [
-                    "Liked Songs",
-                    "Discover Weekly",
-                    "Release Radar",
-                    "Daily Mix 1",
-                    "On Repeat",
-                ] {
-                    placeholder_card(ui, &palette, label);
-                }
-            });
-        });
-}
-
-/// A single placeholder content card used on the Home page.
-fn placeholder_card(ui: &mut egui::Ui, palette: &Palette, label: &str) {
-    let size = egui::vec2(150.0, 190.0);
-    egui::Frame::new()
-        .fill(palette.card)
-        .corner_radius(8.0)
-        .inner_margin(egui::Margin::same(10))
-        .show(ui, |ui| {
-            ui.set_min_size(size);
-            ui.set_max_size(size);
-            ui.vertical(|ui| {
-                spottyfi_ui::components::album_art(ui, palette, None, 128.0, 6.0);
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new(label)
-                        .family(spottyfi_ui::fonts::medium())
-                        .size(13.0)
-                        .color(palette.text),
-                );
-            });
-        });
+/// Translate a [`PageAction`] into the shell-level [`DockIntent`].
+fn page_action_to_intent(action: PageAction) -> DockIntent {
+    match action {
+        PageAction::Play(uri) => DockIntent::Transport(TransportIntent::PlayUri(uri)),
+        PageAction::Open(tab) => DockIntent::Open(tab),
+        PageAction::CopyToClipboard(text) => DockIntent::CopyToClipboard(text),
+    }
 }
 
 /// The Now Playing Art panel: the current track's album art, large.
@@ -214,11 +220,7 @@ fn queue_tab(ui: &mut egui::Ui, ctx: &TabContext<'_>) {
     spottyfi_ui::components::section_header(ui, &palette, "Queue");
     match &ctx.playback.track {
         Some(track) => {
-            ui.label(spottyfi_ui::components::muted(
-                &palette,
-                "Now playing",
-                11.0,
-            ));
+            ui.label(spottyfi_ui::components::muted(&palette, "Now playing", 11.0));
             ui.add_space(2.0);
             ui.horizontal(|ui| {
                 spottyfi_ui::components::album_art(
@@ -259,8 +261,8 @@ fn queue_tab(ui: &mut egui::Ui, ctx: &TabContext<'_>) {
     ));
 }
 
-/// The Debug panel: the "paste a URI and play" control kept reachable until
-/// the browsing UI exists (Phase 5).
+/// The Debug panel: the "paste a URI and play" control kept reachable for
+/// quick playback testing.
 fn debug_tab(ui: &mut egui::Ui, ctx: &mut TabContext<'_>) -> Option<TransportIntent> {
     let palette = ctx.palette;
     spottyfi_ui::components::section_header(ui, &palette, "Debug");
