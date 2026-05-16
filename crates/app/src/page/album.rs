@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use spottyfi_api::{ApiError, SpotifyApi};
+use spottyfi_api::ApiError;
 use spottyfi_models::{Album, SimplifiedAlbum, SimplifiedTrack, SpotifyId as _, Track};
 use spottyfi_ui::components;
 use spottyfi_ui::track_table::{self, TrackColumns, TrackRow, TrackTableState};
@@ -23,8 +23,6 @@ struct AlbumData {
 
 /// An album tab: header card plus a track table.
 pub struct AlbumPage {
-    /// The album id this page renders.
-    id: String,
     /// The async load of the album and its tracks.
     data: Loadable<Loaded>,
     /// The track table's sort state.
@@ -39,9 +37,8 @@ impl AlbumPage {
     /// Build the page and kick off the album load.
     #[must_use]
     pub fn new(services: &PageServices, id: String) -> Self {
-        let data = spawn_load(services, id.clone());
+        let data = spawn_load(services, id);
         Self {
-            id,
             data,
             sort: TrackTableState::default(),
             sorted: Vec::new(),

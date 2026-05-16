@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use spottyfi_api::{ApiError, SpotifyApi};
+use spottyfi_api::ApiError;
 use spottyfi_models::{Album, SimplifiedPlaylist, SpotifyId as _};
 use spottyfi_ui::components;
 

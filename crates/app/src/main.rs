@@ -11,6 +11,7 @@ mod auth_controller;
 mod avatar;
 mod cli;
 mod login;
+mod page;
 mod playback_controller;
 mod shell;
 mod transport;

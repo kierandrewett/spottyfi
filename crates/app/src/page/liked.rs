@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use spottyfi_api::{ApiError, SpotifyApi};
+use spottyfi_api::ApiError;
 use spottyfi_models::SpotifyId as _;
 use spottyfi_ui::components;
 use spottyfi_ui::track_table::{self, TrackColumns, TrackRow, TrackTableState};

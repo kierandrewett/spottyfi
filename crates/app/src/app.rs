@@ -36,6 +36,8 @@ pub struct SpottyfiApp {
     avatar_texture: Option<egui::TextureHandle>,
     /// Whether an avatar fetch has already been kicked off for the session.
     avatar_requested: bool,
+    /// Whether the Spotify API has been attached to the shell for the session.
+    api_attached: bool,
 }
 
 impl SpottyfiApp {
@@ -79,7 +81,25 @@ impl SpottyfiApp {
             avatar_image: Arc::new(ArcSwap::from_pointee(None)),
             avatar_texture: None,
             avatar_requested: false,
+            api_attached: false,
         })
+    }
+
+    /// Build the Spotify Web API client from the live session and attach it to
+    /// the shell the first time we see a logged-in session. The shell then
+    /// builds its page registry and loads the sidebar's real playlists.
+    fn ensure_api(&mut self, ctx: &egui::Context) {
+        if self.api_attached {
+            return;
+        }
+        let Some(session) = self.auth.session() else {
+            return;
+        };
+        let client = spottyfi_api::SpotifyClient::new(&session);
+        let api: std::sync::Arc<dyn spottyfi_api::SpotifyApi> = std::sync::Arc::new(client);
+        self.shell
+            .attach_api(api, self._runtime.handle().clone(), ctx.clone());
+        self.api_attached = true;
     }
 
     /// Start the audio engine the first time we see a logged-in session.
@@ -137,6 +157,9 @@ impl SpottyfiApp {
     fn handle_logout(&mut self) {
         self.auth.spawn_logout();
         self.playback.shutdown();
+        // Drop the page registry and sidebar so a future login starts fresh.
+        self.shell.detach_api();
+        self.api_attached = false;
         // Drop the avatar so a future login fetches a fresh one.
         self.avatar_texture = None;
         self.avatar_requested = false;
@@ -155,6 +178,7 @@ impl eframe::App for SpottyfiApp {
         self.ensure_avatar(&ctx);
         self.ensure_avatar_texture(&ctx);
         self.ensure_audio();
+        self.ensure_api(&ctx);
 
         let auth_state = self.auth.state();
 

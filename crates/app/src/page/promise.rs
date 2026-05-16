@@ -18,7 +18,7 @@ use tokio::runtime::Handle;
 ///
 /// `T` is typically a `Result<…, ApiError>`, so a page can render either the
 /// data or an error once the load resolves.
-pub struct Loadable<T> {
+pub struct Loadable<T: Send + 'static> {
     /// The underlying promise. `poll-promise` caches the resolved value, so
     /// [`Promise::ready`] keeps returning it once available.
     promise: Promise<T>,

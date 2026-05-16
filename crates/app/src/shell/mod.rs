@@ -7,15 +7,21 @@
 //! separately by [`crate::transport`].
 
 mod persist;
+mod sidebar;
 mod tabs;
 
+use std::sync::Arc;
+
+use spottyfi_api::SpotifyApi;
 use spottyfi_auth::UserProfile;
 use spottyfi_ui::components::Density;
 use spottyfi_ui::theme::{Palette, Theme};
+use tokio::runtime::Handle;
 
 pub use persist::{default_dock, PersistedShell};
-pub use tabs::Tab;
+pub use tabs::{DockIntent, Tab};
 
+use crate::page::{Loadable, PageRegistry, PageServices};
 use crate::playback_controller::EngineStatus;
 use crate::transport::{TransportIntent, TransportUiState};
 use spottyfi_audio::PlaybackState;
@@ -26,8 +32,19 @@ use tabs::{ShellTabViewer, TabContext};
 pub enum ShellIntent {
     /// Log out and return to the login screen.
     Logout,
-    /// Issue a transport command (e.g. from the debug panel).
+    /// Issue a transport command (e.g. from the debug panel or a page).
     Transport(TransportIntent),
+}
+
+/// The sidebar's playlist list, or the error explaining why it is missing.
+pub(super) type SidebarPlaylists = Result<Vec<spottyfi_models::SimplifiedPlaylist>, String>;
+
+/// The session-scoped services and live page state, attached after login.
+struct ActiveSession {
+    /// The page registry — the live, stateful pages keyed by tab.
+    pages: PageRegistry,
+    /// The async load of the sidebar's playlist list.
+    sidebar_playlists: Loadable<SidebarPlaylists>,
 }
 
 /// Persistent, non-serialised UI state owned by the shell for one session.
@@ -40,6 +57,8 @@ pub struct ShellState {
     search_query: String,
     /// The currently applied theme, tracked so we re-`apply` only on change.
     applied_theme: Option<Theme>,
+    /// The session-scoped page state, present once the API is attached.
+    session: Option<ActiveSession>,
 }
 
 impl ShellState {
@@ -51,7 +70,50 @@ impl ShellState {
             settings_open: false,
             search_query: String::new(),
             applied_theme: None,
+            session: None,
         }
+    }
+
+    /// Attach the Spotify API after login, building the page registry and
+    /// kicking off the sidebar's playlist load.
+    ///
+    /// Idempotent: a second call (e.g. a re-render after login) is ignored.
+    pub fn attach_api(&mut self, api: Arc<dyn SpotifyApi>, runtime: Handle, ctx: egui::Context) {
+        if self.session.is_some() {
+            return;
+        }
+        let services = PageServices {
+            api: Arc::clone(&api),
+            runtime: runtime.clone(),
+            ctx: ctx.clone(),
+        };
+        let sidebar_playlists = Loadable::spawn(&runtime, &ctx, async move {
+            let mut playlists = Vec::new();
+            let mut offset = 0u32;
+            loop {
+                match api.user_playlists(offset, 50).await {
+                    Ok(page) => {
+                        let count = page.items.len() as u32;
+                        playlists.extend(page.items);
+                        if !page.has_next || count == 0 {
+                            break;
+                        }
+                        offset += count;
+                    }
+                    Err(err) => return Err(err.to_string()),
+                }
+            }
+            Ok(playlists)
+        });
+        self.session = Some(ActiveSession {
+            pages: PageRegistry::new(services),
+            sidebar_playlists,
+        });
+    }
+
+    /// Drop the session-scoped state on logout so a future login starts fresh.
+    pub fn detach_api(&mut self) {
+        self.session = None;
     }
 
     /// The active theme.
@@ -74,6 +136,16 @@ impl ShellState {
     }
 }
 
+/// Open `tab` in the dock: focus it if already open, else add it to the
+/// focused leaf.
+fn open_tab(dock: &mut egui_dock::DockState<Tab>, tab: Tab) {
+    if let Some(path) = dock.find_tab(&tab) {
+        let _ = dock.set_active_tab(path);
+    } else {
+        dock.push_to_focused_leaf(tab);
+    }
+}
+
 /// Render the whole logged-in shell, returning any [`ShellIntent`].
 ///
 /// `ui` is eframe's root UI. The shell adds the top bar, sidebar and dock; the
@@ -89,23 +161,39 @@ pub fn shell(
 ) -> Option<ShellIntent> {
     let palette = state.persisted.theme.palette();
     let mut intent = None;
+    // Navigation requests collected this frame, applied to the dock after the
+    // panels have been drawn (the dock and sidebar both borrow `state`).
+    let mut nav: Vec<Tab> = Vec::new();
+    let mut copy_to_clipboard: Option<String> = None;
 
     // Top bar — fixed height, drawn first so panels below dock under it.
-    if let Some(i) = top_bar(ui, state, &palette, profile, avatar) {
+    if let Some(i) = top_bar(ui, state, &palette, profile, avatar, &mut nav) {
         intent = Some(i);
     }
 
-    // Left sidebar — resizable, collapsible.
-    sidebar(ui, state, &palette);
+    // Left sidebar — resizable, collapsible, real playlists.
+    sidebar::sidebar(ui, state, &palette, &mut nav);
 
     // Centre — the dock area fills the remaining space.
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(palette.base))
         .show_inside(ui, |ui| {
-            if let Some(i) = dock(ui, state, &palette, playback, transport_ui, engine) {
-                intent = Some(ShellIntent::Transport(i));
+            for dock_intent in dock(ui, state, &palette, playback, transport_ui, engine) {
+                match dock_intent {
+                    DockIntent::Transport(t) => intent = Some(ShellIntent::Transport(t)),
+                    DockIntent::Open(tab) => nav.push(tab),
+                    DockIntent::CopyToClipboard(text) => copy_to_clipboard = Some(text),
+                }
             }
         });
+
+    // Apply navigation requests gathered from the sidebar, top bar and pages.
+    for tab in nav {
+        open_tab(&mut state.persisted.dock, tab);
+    }
+    if let Some(text) = copy_to_clipboard {
+        ui.ctx().copy_text(text);
+    }
 
     // The settings window floats above everything when open.
     settings_window(ui.ctx(), state, &palette);
@@ -113,13 +201,14 @@ pub fn shell(
     intent
 }
 
-/// The ~28px top bar: navigation, Home, omni-search and the profile menu.
+/// The ~48px top bar: navigation, Home, omni-search and the profile menu.
 fn top_bar(
     ui: &mut egui::Ui,
     state: &mut ShellState,
     palette: &Palette,
     profile: &UserProfile,
     avatar: Option<&egui::TextureHandle>,
+    nav: &mut Vec<Tab>,
 ) -> Option<ShellIntent> {
     let mut intent = None;
 
@@ -138,7 +227,13 @@ fn top_bar(
                     ui, palette, "\u{203a}", 16.0, false, "Forward",
                 );
                 ui.add_space(4.0);
-                spottyfi_ui::components::icon_button(ui, palette, "\u{1f3e0}", 14.0, false, "Home");
+                if spottyfi_ui::components::icon_button(
+                    ui, palette, "\u{1f3e0}", 14.0, false, "Home",
+                )
+                .clicked()
+                {
+                    nav.push(Tab::Home);
+                }
 
                 ui.add_space(6.0);
                 // View menu — dock layout actions.
@@ -187,7 +282,13 @@ fn view_menu(ui: &mut egui::Ui, state: &mut ShellState, palette: &Palette) {
             ui.close();
         }
         ui.separator();
-        for tab in [Tab::Home, Tab::NowPlayingArt, Tab::Queue, Tab::Debug] {
+        for tab in [
+            Tab::Home,
+            Tab::Library,
+            Tab::NowPlayingArt,
+            Tab::Queue,
+            Tab::Debug,
+        ] {
             let present = state.persisted.dock.find_tab(&tab).is_some();
             if ui
                 .add_enabled(!present, egui::Button::new(format!("Open {}", tab.title())))
@@ -247,105 +348,7 @@ fn profile_menu(
     intent
 }
 
-/// The left sidebar: "Your Library", filter chips and hardcoded entries.
-/// Collapsible to an icon-only rail at narrow widths.
-fn sidebar(ui: &mut egui::Ui, state: &mut ShellState, palette: &Palette) {
-    let collapsed = state.persisted.sidebar_collapsed;
-    let width = if collapsed {
-        64.0
-    } else {
-        state.persisted.sidebar_width
-    };
-
-    let panel = egui::Panel::left("sidebar")
-        .frame(
-            egui::Frame::new()
-                .fill(palette.card)
-                .inner_margin(egui::Margin::same(10)),
-        )
-        .resizable(!collapsed)
-        .min_size(if collapsed { 64.0 } else { 240.0 })
-        .max_size(320.0)
-        .default_size(width);
-
-    let response = panel.show_inside(ui, |ui| {
-        // Header: title + collapse toggle.
-        ui.horizontal(|ui| {
-            if !collapsed {
-                ui.label(
-                    egui::RichText::new("Your Library")
-                        .family(spottyfi_ui::fonts::semibold())
-                        .size(14.0)
-                        .color(palette.text),
-                );
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let glyph = if collapsed { "\u{00bb}" } else { "\u{00ab}" };
-                if spottyfi_ui::components::icon_button(
-                    ui,
-                    palette,
-                    glyph,
-                    14.0,
-                    false,
-                    "Collapse sidebar",
-                )
-                .clicked()
-                {
-                    state.persisted.sidebar_collapsed = !collapsed;
-                }
-            });
-        });
-        ui.add_space(8.0);
-
-        if !collapsed {
-            // Filter chips — purely visual placeholders for now.
-            ui.horizontal_wrapped(|ui| {
-                for (i, chip) in ["Playlists", "Artists", "Albums"].iter().enumerate() {
-                    spottyfi_ui::components::filter_chip(ui, palette, chip, i == 0);
-                }
-            });
-            ui.add_space(10.0);
-        }
-
-        // Hardcoded library entries — real playlists arrive in Phase 5.
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                for (glyph, label) in [
-                    ("\u{2665}", "Liked Songs"),
-                    ("\u{1f4c0}", "Discover Weekly"),
-                    ("\u{1f4da}", "Your Library"),
-                ] {
-                    library_entry(ui, palette, glyph, label, collapsed);
-                }
-            });
-    });
-
-    // Persist a user-dragged width.
-    if !collapsed {
-        let w = response.response.rect.width();
-        if (w - state.persisted.sidebar_width).abs() > 0.5 {
-            state.persisted.sidebar_width = w;
-        }
-    }
-}
-
-/// One sidebar library row — icon + label (icon-only when collapsed).
-fn library_entry(ui: &mut egui::Ui, palette: &Palette, glyph: &str, label: &str, collapsed: bool) {
-    let text = if collapsed {
-        egui::RichText::new(glyph).size(18.0)
-    } else {
-        egui::RichText::new(format!("{glyph}   {label}")).size(13.0)
-    };
-    let button = egui::Button::new(text.color(palette.text))
-        .frame(false)
-        .min_size(egui::vec2(ui.available_width(), 34.0));
-    ui.add(button)
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(label);
-}
-
-/// The centre dock area.
+/// The centre dock area. Returns every [`DockIntent`] raised this frame.
 fn dock(
     ui: &mut egui::Ui,
     state: &mut ShellState,
@@ -353,14 +356,33 @@ fn dock(
     playback: &PlaybackState,
     transport_ui: &mut TransportUiState,
     engine: &EngineStatus,
-) -> Option<TransportIntent> {
+) -> Vec<DockIntent> {
+    let Some(session) = state.session.as_mut() else {
+        // No API attached yet (the post-login frame before `attach_api`).
+        ui.centered_and_justified(|ui| {
+            ui.add(egui::Spinner::new().size(28.0).color(palette.accent));
+        });
+        return Vec::new();
+    };
+
+    // Drop pages whose tabs have been closed since the last frame.
+    let open_pages: Vec<Tab> = state
+        .persisted
+        .dock
+        .iter_all_tabs()
+        .filter(|(_, tab)| tab.is_page())
+        .map(|(_, tab)| tab.clone())
+        .collect();
+    session.pages.retain_open(open_pages.iter());
+
     let mut viewer = ShellTabViewer {
         ctx: TabContext {
             palette: *palette,
             playback,
             transport_ui,
             engine,
-            intent: None,
+            pages: &mut session.pages,
+            intents: Vec::new(),
         },
     };
 
@@ -375,7 +397,7 @@ fn dock(
         .show_leaf_collapse_buttons(false)
         .show_inside(ui, &mut viewer);
 
-    viewer.ctx.intent
+    viewer.ctx.intents
 }
 
 /// The settings window: theme + density selection (both persisted) and a
