@@ -115,6 +115,19 @@ pub trait SpotifyApi: Send + Sync {
     /// this endpoint for apps registered after 2024-11-27.
     async fn artist_top_tracks(&self, artist_id: &str) -> ApiResult<Vec<Track>>;
 
+    /// The signed-in user's top artists (`GET /me/top/artists`).
+    ///
+    /// This endpoint is **not** on Spotify's 2024-11-27 deprecation list and
+    /// works for newly-registered apps. Phase 7's `MadeForYouPage` seeds
+    /// Last.fm recommendations from it.
+    async fn current_user_top_artists(&self, limit: u32) -> ApiResult<Vec<Artist>>;
+
+    /// The signed-in user's top tracks (`GET /me/top/tracks`).
+    ///
+    /// Like [`Self::current_user_top_artists`], this endpoint is not
+    /// deprecated and works for newly-registered apps.
+    async fn current_user_top_tracks(&self, limit: u32) -> ApiResult<Vec<Track>>;
+
     /// A multi-type catalogue search (`GET /search`).
     async fn search(
         &self,

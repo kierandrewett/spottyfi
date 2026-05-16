@@ -357,6 +357,24 @@ impl SpotifyApi for SpotifyClient {
     }
 
     #[tracing::instrument(skip(self))]
+    async fn current_user_top_artists(&self, limit: u32) -> ApiResult<Vec<Artist>> {
+        // Not on Spotify's 2024-11-27 deprecation list — works for new apps.
+        let page = self
+            .request(|| self.rspotify.current_user_top_artists_manual(None, Some(limit), Some(0)))
+            .await?;
+        Ok(page.items.iter().map(map::artist).collect())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn current_user_top_tracks(&self, limit: u32) -> ApiResult<Vec<Track>> {
+        // Not on Spotify's 2024-11-27 deprecation list — works for new apps.
+        let page = self
+            .request(|| self.rspotify.current_user_top_tracks_manual(None, Some(limit), Some(0)))
+            .await?;
+        Ok(page.items.iter().map(map::track).collect())
+    }
+
+    #[tracing::instrument(skip(self))]
     async fn search(
         &self,
         query: &str,

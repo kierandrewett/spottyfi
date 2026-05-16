@@ -13,15 +13,18 @@ spottyfi-models = { workspace = true }
 spottyfi-auth = { workspace = true }
 
 rspotify = { workspace = true }
-# Needed only to read the status code / `Retry-After` header off the
-# `reqwest::Response` that rspotify carries inside its HTTP error variant.
-reqwest = { workspace = true }
+# Reads the status code / `Retry-After` header off the `reqwest::Response`
+# rspotify carries inside its HTTP error variant, and is the HTTP client for
+# the Last.fm module's JSON GETs (`json` feature).
+reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
-# Only for the `DeserializeOwned` bound `rspotify::model::Page<T>` requires.
+# `serde` for the `DeserializeOwned` bound `rspotify::model::Page<T>` requires
+# and for the Last.fm response types; `serde_json` parses Last.fm responses.
 serde = { workspace = true }
+serde_json = { workspace = true }
 
 futures = { workspace = true }
 async-stream = { workspace = true }

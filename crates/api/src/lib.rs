@@ -34,6 +34,16 @@
 //! `browse_categories` are *not* on that list and should work. Any 403/404 is
 //! surfaced as [`ApiError::EndpointUnavailable`] rather than a misleading
 //! `NotFound` or empty result. See `docs/questions.md`.
+//!
+//! ## Last.fm
+//!
+//! Because Spotify's discovery endpoints are dead for new apps, Phase 7's
+//! Browse surface sources charts and recommendations from Last.fm — see the
+//! [`lastfm`] module. [`lastfm::LastfmClient`] talks to the Last.fm API;
+//! [`lastfm::LastfmResolver`] maps the artist/track *names* Last.fm returns
+//! back onto Spotify objects via [`SpotifyApi::search`]. Last.fm needs a free
+//! API key in `SPOTTYFI_LASTFM_API_KEY`; with none set the client returns
+//! [`lastfm::LastfmError::NotConfigured`] and Browse degrades gracefully.
 #![warn(missing_docs)]
 // `unwrap`/`expect` are denied in library code but allowed in unit tests,
 // per the workspace convention in `PLAN.md`.
@@ -42,6 +52,7 @@
 mod cache;
 mod client;
 mod error;
+pub mod lastfm;
 mod map;
 mod retry;
 mod traits;
