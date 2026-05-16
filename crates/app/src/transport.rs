@@ -87,7 +87,7 @@ pub fn transport_bar(
                 let centre_width = (ui.available_width() - right_width).max(220.0);
                 ui.allocate_ui_with_layout(
                     egui::vec2(centre_width, TRANSPORT_HEIGHT - 16.0),
-                    egui::Layout::top_down(egui::Align::Center),
+                    egui::Layout::centered_and_justified(egui::Direction::TopDown),
                     |ui| {
                         if let Some(i) = centre_controls(ui, palette, ui_state, playback) {
                             intent = Some(i);
@@ -144,7 +144,8 @@ fn now_playing(ui: &mut egui::Ui, palette: &Palette, playback: &PlaybackState) {
     });
 }
 
-/// The centre block: a control row above a seek scrubber.
+/// The centre block: a control row above a seek scrubber, both centred
+/// horizontally and the pair centred vertically within the transport band.
 fn centre_controls(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -152,71 +153,137 @@ fn centre_controls(
     playback: &PlaybackState,
 ) -> Option<TransportIntent> {
     let mut intent = None;
+
+    // The two stacked rows have a fixed combined height; lay them out in a
+    // top-down block that the enclosing centred-and-justified layout centres
+    // vertically. The block spans the full centre width so the scrubber and
+    // the (horizontally-centred) control row share the same axis.
+    const CONTROL_ROW_H: f32 = 30.0;
+    const SCRUBBER_ROW_H: f32 = 16.0;
+    const ROW_GAP: f32 = 4.0;
+    let block_height = CONTROL_ROW_H + ROW_GAP + SCRUBBER_ROW_H;
+    let width = ui.available_width();
+
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, block_height),
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
+            // The transport control row, centred horizontally.
+            if let Some(i) = control_row(ui, palette, ui_state, playback, CONTROL_ROW_H) {
+                intent = Some(i);
+            }
+            // The seek scrubber row, spanning the full block width.
+            if let Some(i) = scrubber_row(ui, palette, ui_state, playback, width) {
+                intent = Some(i);
+            }
+        },
+    );
+
+    intent
+}
+
+/// The shuffle / prev / play-pause / next / repeat control row, sized to a
+/// fixed height and centred horizontally by the enclosing top-down layout.
+fn control_row(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    ui_state: &mut TransportUiState,
+    playback: &PlaybackState,
+    height: f32,
+) -> Option<TransportIntent> {
+    let mut intent = None;
     let has_track = playback.track.is_some();
 
-    ui.add_space(2.0);
-    ui.horizontal(|ui| {
-        // Centre the control cluster horizontally.
-        let cluster_width = 200.0;
-        let pad = ((ui.available_width() - cluster_width) * 0.5).max(0.0);
-        ui.add_space(pad);
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), height),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            // A horizontally-centred cluster: an inner group whose intrinsic
+            // width egui centres within the row.
+            ui.with_layout(
+                egui::Layout::left_to_right(egui::Align::Center)
+                    .with_main_align(egui::Align::Center),
+                |ui| {
+                    if icons::icon_button(
+                        ui,
+                        palette,
+                        Icon::Shuffle,
+                        15.0,
+                        ui_state.shuffle,
+                        "Shuffle",
+                    )
+                    .clicked()
+                    {
+                        ui_state.shuffle = !ui_state.shuffle;
+                    }
+                    icons::icon_button(ui, palette, Icon::SkipBack, 16.0, false, "Previous");
 
-        if icons::icon_button(
-            ui,
-            palette,
-            Icon::Shuffle,
-            15.0,
-            ui_state.shuffle,
-            "Shuffle",
-        )
-        .clicked()
-        {
-            ui_state.shuffle = !ui_state.shuffle;
-        }
-        icons::icon_button(ui, palette, Icon::SkipBack, 16.0, false, "Previous");
+                    // The play/pause control: the one accent-green element.
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(30.0, 30.0),
+                        if has_track {
+                            egui::Sense::click()
+                        } else {
+                            egui::Sense::hover()
+                        },
+                    );
+                    if ui.is_rect_visible(rect) {
+                        let fill = if has_track {
+                            palette.accent
+                        } else {
+                            palette.outline
+                        };
+                        ui.painter().rect_filled(rect, 0, fill);
+                        let glyph = if playback.playing {
+                            Icon::Pause
+                        } else {
+                            Icon::Play
+                        };
+                        let g = 14.0;
+                        glyph.image(g, egui::Color32::BLACK).paint_at(
+                            ui,
+                            egui::Rect::from_center_size(rect.center(), egui::vec2(g, g)),
+                        );
+                    }
+                    if response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        intent = Some(TransportIntent::TogglePlayPause);
+                    }
 
-        // The play/pause control: the one accent-green element here.
-        let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(30.0, 30.0),
-            if has_track {
-                egui::Sense::click()
-            } else {
-                egui::Sense::hover()
-            },
-        );
-        if ui.is_rect_visible(rect) {
-            let fill = if has_track {
-                palette.accent
-            } else {
-                palette.outline
-            };
-            ui.painter().rect_filled(rect, 0, fill);
-            let glyph = if playback.playing {
-                Icon::Pause
-            } else {
-                Icon::Play
-            };
-            let g = 14.0;
-            glyph.image(g, egui::Color32::BLACK).paint_at(
-                ui,
-                egui::Rect::from_center_size(rect.center(), egui::vec2(g, g)),
+                    icons::icon_button(ui, palette, Icon::SkipForward, 16.0, false, "Next");
+                    if icons::icon_button(
+                        ui,
+                        palette,
+                        Icon::Repeat,
+                        15.0,
+                        ui_state.repeat,
+                        "Repeat",
+                    )
+                    .clicked()
+                    {
+                        ui_state.repeat = !ui_state.repeat;
+                    }
+                },
             );
-        }
-        if response
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
-            intent = Some(TransportIntent::TogglePlayPause);
-        }
+        },
+    );
 
-        icons::icon_button(ui, palette, Icon::SkipForward, 16.0, false, "Next");
-        if icons::icon_button(ui, palette, Icon::Repeat, 15.0, ui_state.repeat, "Repeat").clicked()
-        {
-            ui_state.repeat = !ui_state.repeat;
-        }
-    });
+    intent
+}
 
-    // Seek scrubber with elapsed / total readouts on either side.
+/// The seek scrubber row: elapsed / total readouts flanking a progress slider.
+fn scrubber_row(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    ui_state: &mut TransportUiState,
+    playback: &PlaybackState,
+    width: f32,
+) -> Option<TransportIntent> {
+    let mut intent = None;
+
     let duration = playback
         .track
         .as_ref()
@@ -230,32 +297,39 @@ fn centre_controls(
         playback.position
     };
 
-    ui.horizontal(|ui| {
-        ui.label(components::muted(palette, fmt_duration(position), 10.5));
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, SCRUBBER_HEIGHT),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.label(components::muted(palette, fmt_duration(position), 10.5));
 
-        let track_width = (ui.available_width() - 44.0).max(80.0);
-        ui.spacing_mut().slider_width = track_width;
-        let slider = ui.add_enabled(
-            !duration.is_zero(),
-            egui::Slider::new(&mut shown, 0.0..=1.0)
-                .show_value(false)
-                .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
-        );
+            let track_width = (ui.available_width() - 44.0).max(80.0);
+            ui.spacing_mut().slider_width = track_width;
+            let slider = ui.add_enabled(
+                !duration.is_zero(),
+                egui::Slider::new(&mut shown, 0.0..=1.0)
+                    .show_value(false)
+                    .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
+            );
 
-        if slider.drag_started() || slider.dragged() {
-            ui_state.scrub = Some(shown);
-        }
-        if slider.drag_stopped() || slider.clicked() {
-            let target = Duration::from_secs_f32(shown * duration.as_secs_f32());
-            intent = Some(TransportIntent::Seek(target));
-            ui_state.scrub = None;
-        }
+            if slider.drag_started() || slider.dragged() {
+                ui_state.scrub = Some(shown);
+            }
+            if slider.drag_stopped() || slider.clicked() {
+                let target = Duration::from_secs_f32(shown * duration.as_secs_f32());
+                intent = Some(TransportIntent::Seek(target));
+                ui_state.scrub = None;
+            }
 
-        ui.label(components::muted(palette, fmt_duration(duration), 10.5));
-    });
+            ui.label(components::muted(palette, fmt_duration(duration), 10.5));
+        },
+    );
 
     intent
 }
+
+/// The fixed height of the seek-scrubber row.
+const SCRUBBER_HEIGHT: f32 = 16.0;
 
 /// The right cluster: lyrics/queue/devices toggle placeholders + volume.
 fn right_cluster(
