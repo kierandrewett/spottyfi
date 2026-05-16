@@ -20,6 +20,8 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
+# Only for the `DeserializeOwned` bound `rspotify::model::Page<T>` requires.
+serde = { workspace = true }
 
 futures = { workspace = true }
 async-stream = { workspace = true }
@@ -30,3 +32,5 @@ mockall = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+# Deserialising the rspotify-shaped JSON fixtures in the mapping unit tests.
+serde_json = { workspace = true }

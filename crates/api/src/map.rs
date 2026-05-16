@@ -191,10 +191,7 @@ pub fn playlist_item(src: &rs::PlaylistItem) -> m::PlaylistTrack {
     m::PlaylistTrack {
         track,
         added_at: src.added_at.map(|dt| dt.to_rfc3339()),
-        added_by: src
-            .added_by
-            .as_ref()
-            .map(|u| m::UserId::new(u.id.id())),
+        added_by: src.added_by.as_ref().map(|u| m::UserId::new(u.id.id())),
     }
 }
 

@@ -42,10 +42,8 @@ impl RetryPolicy {
     /// `[0, capped_exponential_delay]`; this spreads a thundering herd of
     /// clients that were rate-limited together.
     #[must_use]
-    pub fn backoff(&self, attempt: u32, rng: &mut impl rand::Rng) -> Duration {
-        let exp = self
-            .base_delay
-            .saturating_mul(2u32.saturating_pow(attempt));
+    pub fn backoff(&self, attempt: u32, rng: &mut impl rand::RngExt) -> Duration {
+        let exp = self.base_delay.saturating_mul(2u32.saturating_pow(attempt));
         let capped = exp.min(self.max_delay);
         // Full jitter in `[0, capped]`.
         capped.mul_f64(rng.random::<f64>())
@@ -73,7 +71,7 @@ pub fn classify(
     err: ClientError,
     attempt: u32,
     policy: &RetryPolicy,
-    rng: &mut impl rand::Rng,
+    rng: &mut impl rand::RngExt,
 ) -> RetryDecision {
     let api_err = map_error(&err);
     let budget_left = attempt < policy.max_retries;
@@ -118,15 +116,7 @@ pub fn map_error(err: &ClientError) -> ApiError {
 fn map_http_error(http: &HttpError) -> ApiError {
     match http {
         HttpError::StatusCode(resp) => {
-            let status = resp.status().as_u16();
-            match status {
-                401 => ApiError::Auth(format!("HTTP {status}")),
-                403 | 404 => ApiError::NotFound(format!("HTTP {status}")),
-                429 => ApiError::RateLimited {
-                    retry_after: retry_after_of(resp),
-                },
-                _ => ApiError::Network(format!("HTTP {status}")),
-            }
+            classify_status(resp.status().as_u16(), retry_after_of(resp))
         }
         HttpError::Client(e) => ApiError::Network(e.to_string()),
     }
@@ -146,9 +136,10 @@ fn retry_after_of(resp: &reqwest::Response) -> Option<Duration> {
 
 /// How the status code of a non-success HTTP response classifies.
 ///
-/// Exposed for unit testing the 403/404/429/401 split without a live server.
+/// 401 → auth, 403/404 → not-found, 429 → rate-limited, anything else →
+/// network. Shared by [`map_http_error`] and the unit tests.
 #[must_use]
-pub fn classify_status(status: u16, retry_after: Option<Duration>) -> ApiError {
+fn classify_status(status: u16, retry_after: Option<Duration>) -> ApiError {
     match status {
         401 => ApiError::Auth(format!("HTTP {status}")),
         403 | 404 => ApiError::NotFound(format!("HTTP {status}")),

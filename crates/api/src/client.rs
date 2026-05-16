@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rspotify::clients::{BaseClient as _, OAuthClient as _};
 use rspotify::model as rs;
-use rspotify::{AuthCodePkceSpotify, ClientError, ClientResult};
+use rspotify::{AuthCodePkceSpotify, ClientResult};
 
 use spottyfi_auth::Session;
 use spottyfi_models::{
@@ -80,10 +80,13 @@ impl SpotifyClient {
             match op().await {
                 Ok(value) => return Ok(value),
                 Err(err) => {
-                    // A fresh RNG per decision keeps `request` free of `&mut`
-                    // state; jitter quality does not need a shared stream.
-                    let mut rng = rand::rng();
-                    match classify(err, attempt, &self.policy, &mut rng) {
+                    // Decide in a tight scope so the `!Send` `ThreadRng` is
+                    // dropped before the `sleep` await below.
+                    let decision = {
+                        let mut rng = rand::rng();
+                        classify(err, attempt, &self.policy, &mut rng)
+                    };
+                    match decision {
                         RetryDecision::Fail(api_err) => return Err(api_err),
                         RetryDecision::RetryAfter(delay) => {
                             tracing::warn!(
@@ -163,11 +166,7 @@ impl SpotifyApi for SpotifyClient {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn user_playlists(
-        &self,
-        offset: u32,
-        limit: u32,
-    ) -> ApiResult<Page<SimplifiedPlaylist>> {
+    async fn user_playlists(&self, offset: u32, limit: u32) -> ApiResult<Page<SimplifiedPlaylist>> {
         let page = self
             .request(|| {
                 self.rspotify
@@ -286,7 +285,10 @@ impl SpotifyApi for SpotifyClient {
         }
         let id = self::album_id(album_id)?;
         let full = self
-            .request(|| self.rspotify.album(id.as_ref(), Some(rs::Market::FromToken)))
+            .request(|| {
+                self.rspotify
+                    .album(id.as_ref(), Some(rs::Market::FromToken))
+            })
             .await?;
         let album = map::album(&full);
         self.cache.put(cache_key, album.clone());
@@ -482,12 +484,6 @@ where
     })
 }
 
-/// Unused trait import guard: keeps `ClientError` referenced even when
-/// `request` is the only consumer, so a future refactor does not silently
-/// drop the import.
-#[allow(dead_code)]
-fn _client_error_is_used(_: &ClientError) {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,11 +499,22 @@ mod tests {
 
     #[test]
     fn invalid_ids_map_to_not_found() {
-        assert!(matches!(track_id(""), Err(ApiError::NotFound(_))));
+        // Non-base-62 characters and a wrong-type URI are both rejected.
         assert!(matches!(
-            artist_id("not a uri at all"),
+            track_id("not a valid id!"),
             Err(ApiError::NotFound(_))
         ));
+        assert!(matches!(
+            artist_id("spotify:track:4y4VO05kYgUTo2bzbox1an"),
+            Err(ApiError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn a_bare_valid_id_is_accepted() {
+        assert!(track_id("4y4VO05kYgUTo2bzbox1an").is_ok());
+        // A correctly-typed URI is also accepted.
+        assert!(album_id("spotify:album:6IcGNaXFRf5Y1jc7QsE9O2").is_ok());
     }
 
     #[tokio::test]

@@ -23,9 +23,9 @@ use spottyfi_models::{
     SimplifiedPlaylist, Track, User,
 };
 
-use crate::error::ApiResult;
 #[cfg(test)]
 use crate::error::ApiError;
+use crate::error::ApiResult;
 
 /// A boxed async stream of paginated items.
 ///
@@ -50,15 +50,14 @@ pub enum SearchType {
 ///
 /// All methods are `async` and fallible with [`ApiError`]. Calls are
 /// `#[tracing::instrument]`-ed in the real implementation.
-#[async_trait]
 #[mockall::automock]
+#[async_trait]
 pub trait SpotifyApi: Send + Sync {
     /// The signed-in user's profile (`GET /me`).
     async fn current_user(&self) -> ApiResult<User>;
 
     /// One page of the signed-in user's playlists (`GET /me/playlists`).
-    async fn user_playlists(&self, offset: u32, limit: u32)
-        -> ApiResult<Page<SimplifiedPlaylist>>;
+    async fn user_playlists(&self, offset: u32, limit: u32) -> ApiResult<Page<SimplifiedPlaylist>>;
 
     /// Every playlist of the signed-in user, as a stream.
     fn user_playlists_stream(&self) -> ItemStream<SimplifiedPlaylist>;
@@ -117,8 +116,12 @@ pub trait SpotifyApi: Send + Sync {
     async fn artist_top_tracks(&self, artist_id: &str) -> ApiResult<Vec<Track>>;
 
     /// A multi-type catalogue search (`GET /search`).
-    async fn search(&self, query: &str, types: &[SearchType], limit: u32)
-        -> ApiResult<SearchResults>;
+    async fn search(
+        &self,
+        query: &str,
+        types: &[SearchType],
+        limit: u32,
+    ) -> ApiResult<SearchResults>;
 
     /// Spotify's featured playlists (`GET /browse/featured-playlists`).
     ///
