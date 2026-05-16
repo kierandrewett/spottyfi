@@ -25,6 +25,54 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
 6. **Audio backend on PipeWire.** `rodio` goes through ALSA; on PipeWire it
    works via the ALSA shim. Confirm acceptable, or plan a `pipewire-rs` backend.
 
+7. **Deprecated Spotify Web API endpoints (affects Phase 3 + Phase 7).**
+   On **2024-11-27** Spotify restricted a set of Web API endpoints to apps
+   that already had *extended quota* before that date. Apps registered
+   **after** 2024-11-27 — which Spottyfi's new app will be — get **403/404**
+   from:
+
+   - **Recommendations** (`GET /recommendations`)
+   - **Get Featured Playlists** (`GET /browse/featured-playlists`)
+   - **Get a Category's Playlists** (`GET /browse/categories/{id}/playlists`)
+   - **Get an Artist's Related Artists** (`GET /artists/{id}/related-artists`)
+   - **Audio Features / Audio Analysis** (`GET /audio-features`, `/audio-analysis`)
+   - 30-second `preview_url`s in multi-get responses; algorithmic and
+     Spotify-owned editorial playlists.
+
+   Sources: [Spotify dev blog, 2024-11-27](https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api),
+   [TechCrunch](https://techcrunch.com/2024/11/27/spotify-cuts-developer-access-to-several-of-its-recommendation-features/).
+
+   **What Phase 3 did about it.** The `api` crate still implements the
+   `SpotifyApi` methods `PLAN.md` lists (`artist_top_tracks`,
+   `featured_playlists`, `browse_categories`, `recommendations`), but a
+   403/404 from any of them is mapped to a dedicated
+   `ApiError::EndpointUnavailable { endpoint }` variant instead of a
+   misleading `NotFound` or an empty result. Note `artist_top_tracks` is
+   marked `#[deprecated]` in rspotify 0.16 but is *not* on Spotify's
+   2024-11-27 list — it is included defensively in case access is uneven.
+
+   **Open decisions for the maintainer / Phase 7 (Browse):**
+   - **Recommendations → Last.fm.** Per the maintainer, Browse should source
+     suggestions/recommendations from the **Last.fm API**
+     (`track.getSimilar`, `artist.getSimilar`, `artist.getTopTracks`,
+     `chart.getTopTracks`, `tag.getTopArtists`) rather than Spotify's dead
+     `/recommendations` endpoint. This needs a **Last.fm API key**
+     (free, https://www.last.fm/api/account/create) — suggest a
+     `SPOTTYFI_LASTFM_API_KEY` env var, mirroring `SPOTTYFI_CLIENT_ID`.
+     Last.fm returns artist/track *names*, not Spotify ids, so Phase 7 must
+     resolve them back to Spotify objects via `api.search(...)`. A thin
+     `lastfm` module (likely inside `api`, or its own crate) is the natural
+     home. **Decide before Phase 7 starts.**
+   - **Featured Playlists / Browse categories** have no Last.fm equivalent.
+     Phase 7's `BrowsePage` will likely fall back to *new releases*
+     (`GET /browse/new-releases` — also `#[deprecated]` in rspotify but not
+     on the 2024-11-27 kill list, so its real status needs a live check once
+     the app is registered) and to Last.fm charts/tags for the genre grid.
+   - **Confirm once the app exists.** All of the above is the *documented*
+     behaviour; the only certain test is to register the app and hit each
+     endpoint. The `EndpointUnavailable` plumbing means that test is a
+     no-risk smoke check rather than something that can crash the client.
+
 ## Resolved
 
 - **librespot auth flow** (was #1) — **`Credentials::with_access_token` works
