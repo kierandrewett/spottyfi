@@ -33,10 +33,11 @@ becomes a sidebar entry and its own page.
 
 ### 2. Tab bar
 Directly under the menu bar, spanning the content area (right of the sidebar).
-Flat, sharp-cornered tabs with **breadcrumb-style titles** — `spotify/home/`,
-`spotify/playlist/…`, `spotify/album/…`, `spotify/browse/…`. A small leading
-icon at the bar's left edge; a single close `✕` at the far right. The active
-tab is a touch lighter; inactive tabs blend into the bar. Minimal chrome.
+Flat, sharp-cornered tabs. Tab titles are **plain, human names** — `Home`,
+the playlist/album/artist name, `Now Playing`, `Queue` — **not** breadcrumb
+paths like `spotify/home/`. A small leading icon at the bar's left edge; a
+close `✕` per tab. The active tab is a touch lighter; inactive tabs blend into
+the bar. Minimal chrome.
 
 ### 3. Tree sidebar
 The headline change. A **collapsible tree**, not a flat list:
