@@ -8,4 +8,21 @@ authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+# The default audio backend. librespot's `rodio` backend goes through ALSA on
+# Linux (and the ALSA shim on PipeWire); it is the only backend Phase 2 wires.
+default = ["rodio-backend"]
+rodio-backend = ["librespot/rodio-backend"]
+
 [dependencies]
+spottyfi-models = { workspace = true }
+spottyfi-auth = { workspace = true }
+
+# librespot: audio streaming + Spotify session. `default-features = false`
+# drops the discovery/Connect mDNS stack and every bundled audio backend; the
+# `rodio-backend` feature above opts the chosen one back in.
+librespot = { version = "0.8", default-features = false }
+
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
