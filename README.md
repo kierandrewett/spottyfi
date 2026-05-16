@@ -24,10 +24,14 @@ the feature surface of the modern client.
 ## Build & run
 
 ```sh
-cargo run -p spottyfi-app
+# Live login needs a Spotify app — set its Client ID first (PKCE, no secret):
+export SPOTTYFI_CLIENT_ID=<your-client-id>
+cargo run
 ```
 
-The binary is named `spottyfi`. Useful flags:
+`cargo run` launches the app (the workspace defaults to the `app` crate).
+Workspace-wide commands still take an explicit `--workspace`. The binary is
+named `spottyfi`. Useful flags:
 
 | Flag | Effect |
 | --- | --- |
@@ -39,7 +43,7 @@ The binary is named `spottyfi`. Useful flags:
 Logging uses [`tracing`]. `RUST_LOG` overrides everything:
 
 ```sh
-RUST_LOG=spottyfi=debug cargo run -p spottyfi-app
+RUST_LOG=spottyfi=debug cargo run
 ```
 
 ## Workspace layout

@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+# So a bare `cargo run` launches the app. Workspace-wide commands still need an
+# explicit `--workspace` (e.g. `cargo test --workspace`), as CI uses.
+default-members = ["crates/app"]
 
 [workspace.package]
 version = "0.1.0"
