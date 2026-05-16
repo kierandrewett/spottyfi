@@ -30,6 +30,28 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
 6. **Audio backend on PipeWire.** `rodio` goes through ALSA; on PipeWire it
    works via the ALSA shim. Confirm acceptable, or plan a `pipewire-rs` backend.
 
+7. **`keyring` 4.x is a different crate from `keyring` 3.x.** PLAN.md pins
+   `keyring = "3"`; Phase 1 was instructed to use `keyring = "4"`. In the 4.x
+   line the `keyring` crate was restructured: it no longer exposes the `Entry`
+   API, and it has no `[features]` for selecting backends. It is now a thin
+   *store-registration* crate (`keyring::use_native_store(...)`), and the
+   credential `Entry` API lives in the separate `keyring-core` crate. Spottyfi
+   therefore depends on **both** `keyring` (to register the platform store at
+   startup) and `keyring-core` (for `Entry::new/get/set/delete`). All OS
+   backends are bundled unconditionally in 4.x, so no per-OS feature flags are
+   needed — it is cross-platform out of the box. On Linux, Spottyfi calls
+   `use_native_store(true)` to select the Secret Service rather than the kernel
+   keyutils store, so tokens survive a reboot.
+   _Decision needed: keep `keyring 4` + `keyring-core 1`, or pin back to
+   `keyring 3` (single crate, classic `Entry` API). Phase 1 went with 4.x as
+   instructed; PLAN.md's `keyring = "3"` line should be updated to match
+   whichever is chosen._
+
+8. **`keyring` 4.x pulls in a large dependency tree.** Its `db-keystore`
+   fallback drags in `turso` (a SQLite reimplementation) and, on Linux, the
+   Secret Service backend vendors OpenSSL. This noticeably increases first-build
+   time. If undesirable, `keyring 3` avoids it. _Tied to question 7._
+
 ## Resolved
 
 - **Product name** — `Spottyfi` (placeholder, may change).
