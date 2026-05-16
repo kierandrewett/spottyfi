@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use spottyfi_api::SpotifyApi;
 use spottyfi_auth::UserProfile;
+use spottyfi_state::ActivityRegistry;
 use spottyfi_ui::components::Density;
 use spottyfi_ui::theme::{Palette, Theme};
 use tokio::runtime::Handle;
@@ -21,7 +22,7 @@ use tokio::runtime::Handle;
 pub use persist::{default_dock, PersistedShell};
 pub use tabs::{DockIntent, Tab};
 
-use crate::page::{Loadable, PageRegistry, PageServices};
+use crate::page::{IncrementalLoad, PageRegistry, PageServices};
 use crate::playback_controller::EngineStatus;
 use crate::transport::{TransportIntent, TransportUiState};
 use spottyfi_audio::PlaybackState;
@@ -36,15 +37,13 @@ pub enum ShellIntent {
     Transport(TransportIntent),
 }
 
-/// The sidebar's playlist list, or the error explaining why it is missing.
-pub(super) type SidebarPlaylists = Result<Vec<spottyfi_models::SimplifiedPlaylist>, String>;
-
 /// The session-scoped services and live page state, attached after login.
 struct ActiveSession {
     /// The page registry — the live, stateful pages keyed by tab.
     pages: PageRegistry,
-    /// The async load of the sidebar's playlist list.
-    sidebar_playlists: Loadable<SidebarPlaylists>,
+    /// The incremental load of the sidebar's playlist list — playlists appear
+    /// as they stream in rather than after every page is collected.
+    sidebar_playlists: IncrementalLoad<spottyfi_models::SimplifiedPlaylist>,
 }
 
 /// Persistent, non-serialised UI state owned by the shell for one session.
@@ -57,6 +56,8 @@ pub struct ShellState {
     applied_theme: Option<Theme>,
     /// The session-scoped page state, present once the API is attached.
     session: Option<ActiveSession>,
+    /// The shared background-activity registry, surfaced in the menu bar.
+    activity: Arc<ActivityRegistry>,
 }
 
 impl ShellState {
@@ -68,6 +69,7 @@ impl ShellState {
             settings_open: false,
             applied_theme: None,
             session: None,
+            activity: ActivityRegistry::new(),
         }
     }
 
@@ -83,25 +85,15 @@ impl ShellState {
             api: Arc::clone(&api),
             runtime: runtime.clone(),
             ctx: ctx.clone(),
+            activity: Arc::clone(&self.activity),
         };
-        let sidebar_playlists = Loadable::spawn(&runtime, &ctx, async move {
-            let mut playlists = Vec::new();
-            let mut offset = 0u32;
-            loop {
-                match api.user_playlists(offset, 50).await {
-                    Ok(page) => {
-                        let count = page.items.len() as u32;
-                        playlists.extend(page.items);
-                        if !page.has_next || count == 0 {
-                            break;
-                        }
-                        offset += count;
-                    }
-                    Err(err) => return Err(err.to_string()),
-                }
-            }
-            Ok(playlists)
-        });
+        let sidebar_playlists = IncrementalLoad::spawn(
+            &runtime,
+            &ctx,
+            &self.activity,
+            "Loading playlists…",
+            api.user_playlists_stream(),
+        );
         self.session = Some(ActiveSession {
             pages: PageRegistry::new(services),
             sidebar_playlists,
@@ -235,6 +227,9 @@ fn menu_bar(
     nav: &mut Vec<Tab>,
 ) -> Option<ShellIntent> {
     let mut intent = None;
+    // A cheap `Arc` clone so the right-side activity indicator can read the
+    // registry without re-borrowing `state` inside the menu closure.
+    let activity = Arc::clone(&state.activity);
 
     egui::Panel::top("menu-bar")
         .exact_size(28.0)
@@ -375,7 +370,8 @@ fn menu_bar(
                     let _ = ui.add_enabled(false, egui::Button::new("Keyboard shortcuts"));
                 });
 
-                // The Home shortcut sits on the far right of the menu bar.
+                // The right side of the menu bar: the Home shortcut, then the
+                // VSCode-style background-activity indicator.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if spottyfi_ui::icons::icon_button(
                         ui,
@@ -389,11 +385,65 @@ fn menu_bar(
                     {
                         nav.push(Tab::Home);
                     }
+                    activity_indicator(ui, palette, &activity);
                 });
             });
         });
 
     intent
+}
+
+/// The VSCode-style background-activity indicator on the right of the menu
+/// bar: a small spinner and a label naming the current activity, with a cancel
+/// affordance for the most recent in-flight task. Renders nothing when idle.
+///
+/// Drawn inside a `right_to_left` layout, so widgets are added rightmost-first.
+fn activity_indicator(ui: &mut egui::Ui, palette: &Palette, activity: &ActivityRegistry) {
+    let activities = activity.snapshot();
+    let Some(current) = activities.last() else {
+        // Idle — show nothing, as specified.
+        return;
+    };
+
+    ui.add_space(8.0);
+
+    // Cancel affordance for the most recent task, when it is cancellable.
+    if current.cancellable {
+        let cancel = spottyfi_ui::icons::icon_button(
+            ui,
+            palette,
+            spottyfi_ui::Icon::Close,
+            12.0,
+            false,
+            "Cancel this task",
+        );
+        if cancel.clicked() {
+            activity.cancel(current.id);
+        }
+        ui.add_space(2.0);
+    }
+
+    // The activity label. When several tasks run at once, append a count.
+    let label = if activities.len() > 1 {
+        format!("{}  (+{})", current.label, activities.len() - 1)
+    } else {
+        current.label.clone()
+    };
+    let elapsed = current.started_at.elapsed().as_secs();
+    let label = if elapsed >= 2 {
+        format!("{label}  {elapsed}s")
+    } else {
+        label
+    };
+    ui.label(spottyfi_ui::components::muted(palette, label, 10.5));
+
+    ui.add_space(4.0);
+    ui.add(egui::Spinner::new().size(12.0).color(palette.accent));
+
+    // The indicator animates the spinner and the elapsed seconds; keep the
+    // menu bar repainting while work is in flight.
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(250));
 }
 
 /// The centre dock area. Returns every [`DockIntent`] raised this frame.
