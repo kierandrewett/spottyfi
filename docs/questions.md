@@ -10,10 +10,11 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
    exchange required? The librespot auth path has moved twice in the last year.
    _Blocks: Phase 1, Phase 2._
 
-2. **Spotify client registration / redirect URI.** What exact redirect URI is
-   registered on the Spotify developer dashboard? Loopback (`127.0.0.1`) with a
-   randomised port, or a fixed port? Spotify's accepted loopback forms have
-   changed. _Blocks: Phase 1._
+2. **Spotify app registration.** Spottyfi needs a Spotify app registered on the
+   developer dashboard (https://developer.spotify.com/dashboard). The maintainer
+   must create it and provide the **Client ID** via the `SPOTTYFI_CLIENT_ID`
+   environment variable (the PKCE flow has no client secret, so the ID is not
+   sensitive). _Blocks live login in Phase 1; the code is built without it._
 
 3. **`egui_dock` state serialisation.** Confirm the pinned `egui_dock` version
    derives `Serialize`/`Deserialize` on `DockState`. _Blocks: Phase 4 layout
@@ -33,3 +34,6 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
 
 - **Product name** — `Spottyfi` (placeholder, may change).
 - **Nix flake** — dropped; use `rustup` with the pinned `rust-toolchain.toml`.
+- **Redirect URI** — fixed loopback `http://127.0.0.1:8888/callback` (port
+  configurable via `SPOTTYFI_REDIRECT_PORT`). A random port can't work: Spotify
+  requires the registered redirect URI to match exactly, port included.
