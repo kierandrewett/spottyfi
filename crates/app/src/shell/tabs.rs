@@ -73,22 +73,18 @@ impl Tab {
         }
     }
 
-    /// The breadcrumb-style tab title shown on the dock tab bar, e.g.
-    /// `spotify/home/` or `spotify/playlist/…`.
+    /// The plain, human-readable tab title shown on the dock tab bar.
+    ///
+    /// For an id-carrying page (playlist / album / artist) this is the
+    /// object's own name, supplied by the page registry once its data has
+    /// loaded; for everything else it is the static label. Never a
+    /// breadcrumb path — see `docs/ui-reference.md`.
     #[must_use]
-    pub fn breadcrumb(&self, page_title: &str) -> String {
+    pub fn display_title(&self, page_title: &str) -> String {
         match self {
-            Tab::Home => "spotify/home/".to_owned(),
-            Tab::Library => "spotify/library/".to_owned(),
-            Tab::LikedSongs => "spotify/liked/".to_owned(),
-            Tab::Search => "spotify/search/".to_owned(),
-            Tab::Playlist(_) => format!("spotify/playlist/{page_title}"),
-            Tab::Album(_) => format!("spotify/album/{page_title}"),
-            Tab::Artist(_) => format!("spotify/artist/{page_title}"),
-            Tab::Placeholder(name) => format!("spotify/{}/", name.to_lowercase()),
-            Tab::NowPlayingArt => "now-playing/".to_owned(),
-            Tab::Queue => "queue/".to_owned(),
-            Tab::Debug => "debug/".to_owned(),
+            Tab::Playlist(_) | Tab::Album(_) | Tab::Artist(_) => page_title.to_owned(),
+            Tab::Placeholder(name) => name.clone(),
+            _ => self.title().to_owned(),
         }
     }
 
@@ -156,7 +152,7 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
         } else {
             tab.title().to_owned()
         };
-        tab.breadcrumb(&page_title).into()
+        tab.display_title(&page_title).into()
     }
 
     fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
