@@ -33,11 +33,13 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
 - [ ] **Live test, blocked on maintainer:** sign in with a Premium account and
       play a `spotify:track:` URI
 
-## Phase 3 — Web API client `[ ]`
+## Phase 3 — Web API client `[x]`
 
-- [ ] `api` wraps `rspotify`
-- [ ] Core endpoints implemented
-- [ ] Rate limiting + pagination
+- [x] `api` wraps `rspotify`; `models` domain types; `SpotifyApi` trait + mock
+- [x] Core endpoints implemented (rspotify → `models` mapping)
+- [x] Rate limiting (`Retry-After` + backoff) + pagination streams + LRU cache
+- Note: several discovery endpoints are dead for new apps — see
+  `docs/questions.md` #7 (affects Phase 7 Browse).
 
 ## Phase 4 — Core UI shell `[ ]`
 

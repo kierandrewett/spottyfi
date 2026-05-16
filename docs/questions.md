@@ -52,17 +52,17 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
    2024-11-27 list — it is included defensively in case access is uneven.
 
    **Open decisions for the maintainer / Phase 7 (Browse):**
-   - **Recommendations → Last.fm.** Per the maintainer, Browse should source
-     suggestions/recommendations from the **Last.fm API**
-     (`track.getSimilar`, `artist.getSimilar`, `artist.getTopTracks`,
-     `chart.getTopTracks`, `tag.getTopArtists`) rather than Spotify's dead
-     `/recommendations` endpoint. This needs a **Last.fm API key**
-     (free, https://www.last.fm/api/account/create) — suggest a
-     `SPOTTYFI_LASTFM_API_KEY` env var, mirroring `SPOTTYFI_CLIENT_ID`.
-     Last.fm returns artist/track *names*, not Spotify ids, so Phase 7 must
-     resolve them back to Spotify objects via `api.search(...)`. A thin
-     `lastfm` module (likely inside `api`, or its own crate) is the natural
-     home. **Decide before Phase 7 starts.**
+   - **Recommendations → a third-party source (proposal — not yet decided).**
+     With Spotify's `/recommendations` dead for new apps, Phase 7's Browse
+     surface needs another source of suggestions. One candidate is the
+     **Last.fm API** (`track.getSimilar`, `artist.getSimilar`,
+     `artist.getTopTracks`, `chart.getTopTracks`, `tag.getTopArtists`), which
+     would need a free **Last.fm API key**
+     (https://www.last.fm/api/account/create) — e.g. a `SPOTTYFI_LASTFM_API_KEY`
+     env var mirroring `SPOTTYFI_CLIENT_ID`. Last.fm returns artist/track
+     *names*, not Spotify ids, so Phase 7 would resolve them back via
+     `api.search(...)`, in a thin `lastfm` module. **Maintainer to decide
+     before Phase 7** — Last.fm, another source, or dropping recommendations.
    - **Featured Playlists / Browse categories** have no Last.fm equivalent.
      Phase 7's `BrowsePage` will likely fall back to *new releases*
      (`GET /browse/new-releases` — also `#[deprecated]` in rspotify but not
