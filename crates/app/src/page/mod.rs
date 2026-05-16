@@ -25,6 +25,8 @@ mod library;
 mod liked;
 mod playlist;
 mod promise;
+mod search;
+mod search_load;
 mod track_view;
 
 use std::collections::HashMap;
@@ -47,6 +49,7 @@ pub use home::HomePage;
 pub use library::LibraryPage;
 pub use liked::LikedSongsPage;
 pub use playlist::PlaylistPage;
+pub use search::SearchPage;
 
 /// Shared services a page needs to load its data.
 ///
@@ -194,8 +197,9 @@ fn build_page(tab: &Tab, services: &PageServices) -> Box<dyn Page> {
         Tab::Playlist(id) => Box::new(PlaylistPage::new(services, id.clone())),
         Tab::Album(id) => Box::new(AlbumPage::new(services, id.clone())),
         Tab::Artist(id) => Box::new(ArtistPage::new(services, id.clone())),
+        Tab::Search => Box::new(SearchPage::new(services)),
         // Panels are not pages; the registry is only consulted for page tabs.
-        Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Search | Tab::Placeholder(_) => {
+        Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Placeholder(_) => {
             Box::new(HomePage::new(services))
         }
     }

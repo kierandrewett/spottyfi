@@ -91,14 +91,15 @@ impl Tab {
     /// Whether this tab is a panel (as opposed to a navigable page).
     ///
     /// Panels are closeable; the Home page is kept open so the dock is never
-    /// empty. `Search` and `Placeholder` are self-rendered surfaces — neither
-    /// a registry-backed page nor an auxiliary panel — and are classified as
-    /// panels so the page registry never tries to build them.
+    /// empty. `Placeholder` is a self-rendered surface — neither a
+    /// registry-backed page nor an auxiliary panel — and is classified as a
+    /// panel so the page registry never tries to build it. `Search` is a
+    /// real, registry-backed page (Phase 6).
     #[must_use]
     pub fn is_panel(&self) -> bool {
         matches!(
             self,
-            Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Search | Tab::Placeholder(_)
+            Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Placeholder(_)
         )
     }
 
@@ -174,7 +175,6 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
                 match tab {
                     Tab::NowPlayingArt => now_playing_art_tab(ui, &self.ctx),
                     Tab::Queue => queue_tab(ui, &self.ctx),
-                    Tab::Search => search_tab(ui, &self.ctx),
                     Tab::Placeholder(name) => placeholder_tab(ui, &self.ctx, name),
                     Tab::Debug => {
                         if let Some(intent) = debug_tab(ui, &mut self.ctx) {
@@ -293,17 +293,6 @@ fn queue_tab(ui: &mut egui::Ui, ctx: &TabContext<'_>) {
         "Next-up and the manual queue arrive in Phase 8.",
         12.0,
     ));
-}
-
-/// The Search page — a placeholder until real catalogue search lands in
-/// Phase 6. The omni-search box is reachable via the sidebar and `Ctrl/Cmd+K`.
-fn search_tab(ui: &mut egui::Ui, ctx: &TabContext<'_>) {
-    coming_soon(
-        ui,
-        &ctx.palette,
-        "Search",
-        "Catalogue search arrives in Phase 6.",
-    );
 }
 
 /// A not-yet-built page (Browse, Charts, New Releases, …).
