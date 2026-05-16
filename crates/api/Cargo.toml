@@ -9,3 +9,24 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+spottyfi-models = { workspace = true }
+spottyfi-auth = { workspace = true }
+
+rspotify = { workspace = true }
+# Needed only to read the status code / `Retry-After` header off the
+# `reqwest::Response` that rspotify carries inside its HTTP error variant.
+reqwest = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+
+futures = { workspace = true }
+async-stream = { workspace = true }
+async-trait = { workspace = true }
+lru = { workspace = true }
+rand = { workspace = true }
+mockall = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

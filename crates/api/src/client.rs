@@ -1,0 +1,569 @@
+//! The real [`SpotifyApi`] implementation, backed by `rspotify`.
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use rspotify::clients::{BaseClient as _, OAuthClient as _};
+use rspotify::model as rs;
+use rspotify::{AuthCodePkceSpotify, ClientError, ClientResult};
+
+use spottyfi_auth::Session;
+use spottyfi_models::{
+    Album, Artist, Category, Page, Playlist, PlaylistTrack, SearchResults, SimplifiedAlbum,
+    SimplifiedPlaylist, Track, User,
+};
+
+use crate::cache::ObjectCache;
+use crate::error::{ApiError, ApiResult};
+use crate::map;
+use crate::retry::{classify, RetryDecision, RetryPolicy};
+use crate::traits::{ItemStream, SearchType, SpotifyApi};
+
+/// The page size used when streaming an unbounded endpoint.
+const STREAM_PAGE_SIZE: u32 = 50;
+
+/// The Spotify Web API client.
+///
+/// Wraps the `rspotify` client from an authenticated [`Session`], adds the
+/// retry / rate-limit policy and the in-memory object cache, and maps every
+/// response onto [`spottyfi_models`] types.
+#[derive(Clone)]
+pub struct SpotifyClient {
+    rspotify: Arc<AuthCodePkceSpotify>,
+    policy: RetryPolicy,
+    cache: ObjectCache,
+}
+
+impl std::fmt::Debug for SpotifyClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpotifyClient")
+            .field("policy", &self.policy)
+            .field("cache", &self.cache)
+            .finish_non_exhaustive()
+    }
+}
+
+impl SpotifyClient {
+    /// Build a client from an authenticated [`Session`].
+    #[must_use]
+    pub fn new(session: &Session) -> Self {
+        Self {
+            rspotify: session.client(),
+            policy: RetryPolicy::default(),
+            cache: ObjectCache::default(),
+        }
+    }
+
+    /// Build a client with an explicit retry policy and cache (for tests and
+    /// tuning).
+    #[must_use]
+    pub fn with_config(session: &Session, policy: RetryPolicy, cache: ObjectCache) -> Self {
+        Self {
+            rspotify: session.client(),
+            policy,
+            cache,
+        }
+    }
+
+    /// Run an `rspotify` call, retrying on 429 / transient failures per the
+    /// [`RetryPolicy`], honouring `Retry-After`.
+    ///
+    /// `op` is invoked afresh for each attempt because `rspotify`'s futures
+    /// are single-use.
+    async fn request<T, F, Fut>(&self, op: F) -> ApiResult<T>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = ClientResult<T>>,
+    {
+        let mut attempt = 0;
+        loop {
+            match op().await {
+                Ok(value) => return Ok(value),
+                Err(err) => {
+                    // A fresh RNG per decision keeps `request` free of `&mut`
+                    // state; jitter quality does not need a shared stream.
+                    let mut rng = rand::rng();
+                    match classify(err, attempt, &self.policy, &mut rng) {
+                        RetryDecision::Fail(api_err) => return Err(api_err),
+                        RetryDecision::RetryAfter(delay) => {
+                            tracing::warn!(
+                                attempt,
+                                delay_ms = delay.as_millis(),
+                                "Spotify request failed; backing off before retry"
+                            );
+                            tokio::time::sleep(delay).await;
+                            attempt += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// As [`Self::request`], but a `NotFound` (HTTP 403/404) is rewritten to
+    /// [`ApiError::EndpointUnavailable`] — used for endpoints Spotify
+    /// deprecated for apps registered after 2024-11-27.
+    async fn request_deprecated<T, F, Fut>(&self, endpoint: &'static str, op: F) -> ApiResult<T>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = ClientResult<T>>,
+    {
+        match self.request(op).await {
+            Err(ApiError::NotFound(_)) => Err(ApiError::EndpointUnavailable { endpoint }),
+            other => other,
+        }
+    }
+}
+
+/// Build a `TrackId` from a bare id or URI, mapping a parse failure onto a
+/// `NotFound` error.
+fn track_id(id: &str) -> ApiResult<rs::TrackId<'static>> {
+    rs::TrackId::from_id_or_uri(id)
+        .map(rs::TrackId::into_static)
+        .map_err(|e| ApiError::NotFound(format!("invalid track id '{id}': {e}")))
+}
+
+/// Build an `AlbumId` from a bare id or URI.
+fn album_id(id: &str) -> ApiResult<rs::AlbumId<'static>> {
+    rs::AlbumId::from_id_or_uri(id)
+        .map(rs::AlbumId::into_static)
+        .map_err(|e| ApiError::NotFound(format!("invalid album id '{id}': {e}")))
+}
+
+/// Build an `ArtistId` from a bare id or URI.
+fn artist_id(id: &str) -> ApiResult<rs::ArtistId<'static>> {
+    rs::ArtistId::from_id_or_uri(id)
+        .map(rs::ArtistId::into_static)
+        .map_err(|e| ApiError::NotFound(format!("invalid artist id '{id}': {e}")))
+}
+
+/// Build a `PlaylistId` from a bare id or URI.
+fn playlist_id(id: &str) -> ApiResult<rs::PlaylistId<'static>> {
+    rs::PlaylistId::from_id_or_uri(id)
+        .map(rs::PlaylistId::into_static)
+        .map_err(|e| ApiError::NotFound(format!("invalid playlist id '{id}': {e}")))
+}
+
+/// Translate a Spottyfi [`SearchType`] to the `rspotify` enum.
+fn search_type(t: SearchType) -> rs::SearchType {
+    match t {
+        SearchType::Track => rs::SearchType::Track,
+        SearchType::Artist => rs::SearchType::Artist,
+        SearchType::Album => rs::SearchType::Album,
+        SearchType::Playlist => rs::SearchType::Playlist,
+    }
+}
+
+#[async_trait]
+impl SpotifyApi for SpotifyClient {
+    #[tracing::instrument(skip(self))]
+    async fn current_user(&self) -> ApiResult<User> {
+        let user = self.request(|| self.rspotify.me()).await?;
+        Ok(map::private_user(&user))
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn user_playlists(
+        &self,
+        offset: u32,
+        limit: u32,
+    ) -> ApiResult<Page<SimplifiedPlaylist>> {
+        let page = self
+            .request(|| {
+                self.rspotify
+                    .current_user_playlists_manual(Some(limit), Some(offset))
+            })
+            .await?;
+        Ok(map::page(&page, map::simplified_playlist))
+    }
+
+    #[tracing::instrument(skip(self))]
+    fn user_playlists_stream(&self) -> ItemStream<SimplifiedPlaylist> {
+        let this = self.clone();
+        paginate(move |offset, limit| {
+            let this = this.clone();
+            async move { this.user_playlists(offset, limit).await }
+        })
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn playlist(&self, playlist_id: &str) -> ApiResult<Playlist> {
+        let id = self::playlist_id(playlist_id)?;
+        let full = self
+            .request(|| {
+                self.rspotify
+                    .playlist(id.as_ref(), None, Some(rs::Market::FromToken))
+            })
+            .await?;
+        Ok(map::playlist(&full))
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn playlist_tracks(
+        &self,
+        playlist_id: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ApiResult<Page<PlaylistTrack>> {
+        let id = self::playlist_id(playlist_id)?;
+        let page = self
+            .request(|| {
+                self.rspotify.playlist_items_manual(
+                    id.as_ref(),
+                    None,
+                    Some(rs::Market::FromToken),
+                    Some(limit),
+                    Some(offset),
+                )
+            })
+            .await?;
+        Ok(map::page(&page, map::playlist_item))
+    }
+
+    #[tracing::instrument(skip(self))]
+    fn playlist_tracks_stream(&self, playlist_id: &str) -> ItemStream<PlaylistTrack> {
+        let this = self.clone();
+        let id = playlist_id.to_owned();
+        paginate(move |offset, limit| {
+            let this = this.clone();
+            let id = id.clone();
+            async move { this.playlist_tracks(&id, offset, limit).await }
+        })
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn saved_tracks(&self, offset: u32, limit: u32) -> ApiResult<Page<Track>> {
+        let page = self
+            .request(|| {
+                self.rspotify.current_user_saved_tracks_manual(
+                    Some(rs::Market::FromToken),
+                    Some(limit),
+                    Some(offset),
+                )
+            })
+            .await?;
+        Ok(map::page(&page, map::saved_track))
+    }
+
+    #[tracing::instrument(skip(self))]
+    fn saved_tracks_stream(&self) -> ItemStream<Track> {
+        let this = self.clone();
+        paginate(move |offset, limit| {
+            let this = this.clone();
+            async move { this.saved_tracks(offset, limit).await }
+        })
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn saved_albums(&self, offset: u32, limit: u32) -> ApiResult<Page<Album>> {
+        let page = self
+            .request(|| {
+                self.rspotify.current_user_saved_albums_manual(
+                    Some(rs::Market::FromToken),
+                    Some(limit),
+                    Some(offset),
+                )
+            })
+            .await?;
+        Ok(map::page(&page, map::saved_album))
+    }
+
+    #[tracing::instrument(skip(self))]
+    fn saved_albums_stream(&self) -> ItemStream<Album> {
+        let this = self.clone();
+        paginate(move |offset, limit| {
+            let this = this.clone();
+            async move { this.saved_albums(offset, limit).await }
+        })
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn album(&self, album_id: &str) -> ApiResult<Album> {
+        let cache_key = format!("album:{album_id}");
+        if let Some(hit) = self.cache.get::<Album>(&cache_key) {
+            tracing::debug!(album_id, "album cache hit");
+            return Ok(hit);
+        }
+        let id = self::album_id(album_id)?;
+        let full = self
+            .request(|| self.rspotify.album(id.as_ref(), Some(rs::Market::FromToken)))
+            .await?;
+        let album = map::album(&full);
+        self.cache.put(cache_key, album.clone());
+        Ok(album)
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn artist(&self, artist_id: &str) -> ApiResult<Artist> {
+        let cache_key = format!("artist:{artist_id}");
+        if let Some(hit) = self.cache.get::<Artist>(&cache_key) {
+            tracing::debug!(artist_id, "artist cache hit");
+            return Ok(hit);
+        }
+        let id = self::artist_id(artist_id)?;
+        let full = self.request(|| self.rspotify.artist(id.as_ref())).await?;
+        let artist = map::artist(&full);
+        self.cache.put(cache_key, artist.clone());
+        Ok(artist)
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn artist_albums(
+        &self,
+        artist_id: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ApiResult<Page<SimplifiedAlbum>> {
+        let id = self::artist_id(artist_id)?;
+        let page = self
+            .request(|| {
+                self.rspotify.artist_albums_manual(
+                    id.as_ref(),
+                    [],
+                    Some(rs::Market::FromToken),
+                    Some(limit),
+                    Some(offset),
+                )
+            })
+            .await?;
+        Ok(map::page(&page, map::simplified_album))
+    }
+
+    #[tracing::instrument(skip(self))]
+    fn artist_albums_stream(&self, artist_id: &str) -> ItemStream<SimplifiedAlbum> {
+        let this = self.clone();
+        let id = artist_id.to_owned();
+        paginate(move |offset, limit| {
+            let this = this.clone();
+            let id = id.clone();
+            async move { this.artist_albums(&id, offset, limit).await }
+        })
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn artist_top_tracks(&self, artist_id: &str) -> ApiResult<Vec<Track>> {
+        let id = self::artist_id(artist_id)?;
+        // Deprecated for apps registered after 2024-11-27 (see docs/questions.md).
+        #[allow(deprecated)]
+        let tracks = self
+            .request_deprecated("artist_top_tracks", || {
+                self.rspotify
+                    .artist_top_tracks(id.as_ref(), Some(rs::Market::FromToken))
+            })
+            .await?;
+        Ok(tracks.iter().map(map::track).collect())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn search(
+        &self,
+        query: &str,
+        types: &[SearchType],
+        limit: u32,
+    ) -> ApiResult<SearchResults> {
+        let rs_types: Vec<rs::SearchType> = types.iter().copied().map(search_type).collect();
+        let result = self
+            .request(|| {
+                self.rspotify.search_multiple(
+                    query,
+                    rs_types.iter().copied(),
+                    Some(rs::Market::FromToken),
+                    None,
+                    Some(limit),
+                    Some(0),
+                )
+            })
+            .await?;
+        Ok(map::search_results(&result))
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn featured_playlists(&self, limit: u32) -> ApiResult<Vec<SimplifiedPlaylist>> {
+        // Deprecated for apps registered after 2024-11-27 (see docs/questions.md).
+        let featured = self
+            .request_deprecated("featured_playlists", || {
+                self.rspotify
+                    .featured_playlists(None, None, None, Some(limit), Some(0))
+            })
+            .await?;
+        Ok(featured
+            .playlists
+            .items
+            .iter()
+            .map(map::simplified_playlist)
+            .collect())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn browse_categories(&self, limit: u32) -> ApiResult<Vec<Category>> {
+        // Deprecated for apps registered after 2024-11-27 (see docs/questions.md).
+        #[allow(deprecated)]
+        let page = self
+            .request_deprecated("browse_categories", || {
+                self.rspotify
+                    .categories_manual(None, None, Some(limit), Some(0))
+            })
+            .await?;
+        Ok(page.items.iter().map(map::category).collect())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn recommendations(
+        &self,
+        seed_artists: &[String],
+        seed_tracks: &[String],
+        seed_genres: &[String],
+        limit: u32,
+    ) -> ApiResult<Vec<Track>> {
+        let artists = seed_artists
+            .iter()
+            .map(|s| artist_id(s))
+            .collect::<ApiResult<Vec<_>>>()?;
+        let tracks = seed_tracks
+            .iter()
+            .map(|s| track_id(s))
+            .collect::<ApiResult<Vec<_>>>()?;
+        let genres: Vec<&str> = seed_genres.iter().map(String::as_str).collect();
+
+        // Deprecated for apps registered after 2024-11-27 — likely to fail
+        // with `EndpointUnavailable`; Phase 7 sources recommendations from
+        // Last.fm instead. See docs/questions.md.
+        let recs = self
+            .request_deprecated("recommendations", || {
+                self.rspotify.recommendations(
+                    [],
+                    Some(artists.iter().map(rs::ArtistId::as_ref)),
+                    Some(genres.iter().copied()),
+                    Some(tracks.iter().map(rs::TrackId::as_ref)),
+                    Some(rs::Market::FromToken),
+                    Some(limit),
+                )
+            })
+            .await?;
+        Ok(recs.tracks.iter().map(map::simplified_to_track).collect())
+    }
+}
+
+/// Build an [`ItemStream`] that drives an offset-paginated endpoint.
+///
+/// `fetch(offset, limit)` returns one [`Page`]; this follows pages until one
+/// reports `has_next == false` or comes back empty. A page error is yielded
+/// and ends the stream. Each page request already carries its own retry /
+/// rate-limit handling inside `fetch`.
+fn paginate<T, F, Fut>(fetch: F) -> ItemStream<T>
+where
+    T: Send + 'static,
+    F: Fn(u32, u32) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ApiResult<Page<T>>> + Send,
+{
+    Box::pin(async_stream::stream! {
+        let mut offset = 0u32;
+        loop {
+            match fetch(offset, STREAM_PAGE_SIZE).await {
+                Ok(page) => {
+                    let count = page.items.len() as u32;
+                    let has_next = page.has_next;
+                    for item in page.items {
+                        yield Ok(item);
+                    }
+                    // Stop on an empty page even if `has_next` was set —
+                    // Spotify occasionally reports both (rspotify issue #492).
+                    if count == 0 || !has_next {
+                        break;
+                    }
+                    offset += count;
+                }
+                Err(err) => {
+                    yield Err(err);
+                    break;
+                }
+            }
+        }
+    })
+}
+
+/// Unused trait import guard: keeps `ClientError` referenced even when
+/// `request` is the only consumer, so a future refactor does not silently
+/// drop the import.
+#[allow(dead_code)]
+fn _client_error_is_used(_: &ClientError) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt as _;
+
+    #[test]
+    fn search_type_maps_each_variant() {
+        assert_eq!(search_type(SearchType::Track), rs::SearchType::Track);
+        assert_eq!(search_type(SearchType::Artist), rs::SearchType::Artist);
+        assert_eq!(search_type(SearchType::Album), rs::SearchType::Album);
+        assert_eq!(search_type(SearchType::Playlist), rs::SearchType::Playlist);
+    }
+
+    #[test]
+    fn invalid_ids_map_to_not_found() {
+        assert!(matches!(track_id(""), Err(ApiError::NotFound(_))));
+        assert!(matches!(
+            artist_id("not a uri at all"),
+            Err(ApiError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn paginate_follows_pages_until_no_next() {
+        // Three pages of two items each; the third reports no next page.
+        let pages = move |offset: u32, _limit: u32| async move {
+            let page = match offset {
+                0 => Page {
+                    items: vec![1, 2],
+                    limit: 2,
+                    offset: 0,
+                    total: 6,
+                    has_next: true,
+                },
+                2 => Page {
+                    items: vec![3, 4],
+                    limit: 2,
+                    offset: 2,
+                    total: 6,
+                    has_next: true,
+                },
+                _ => Page {
+                    items: vec![5, 6],
+                    limit: 2,
+                    offset: 4,
+                    total: 6,
+                    has_next: false,
+                },
+            };
+            Ok::<_, ApiError>(page)
+        };
+        let collected: Vec<i32> = paginate(pages)
+            .map(|r| r.expect("each page ok"))
+            .collect()
+            .await;
+        assert_eq!(collected, vec![1, 2, 3, 4, 5, 6]);
+    }
+
+    #[tokio::test]
+    async fn paginate_stops_and_surfaces_an_error() {
+        let pages = move |offset: u32, _limit: u32| async move {
+            if offset == 0 {
+                Ok(Page {
+                    items: vec![1],
+                    limit: 1,
+                    offset: 0,
+                    total: 2,
+                    has_next: true,
+                })
+            } else {
+                Err(ApiError::Network("boom".to_owned()))
+            }
+        };
+        let results: Vec<ApiResult<i32>> = paginate(pages).collect().await;
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_ok());
+        assert!(matches!(results[1], Err(ApiError::Network(_))));
+    }
+}
