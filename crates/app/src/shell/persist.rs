@@ -16,6 +16,7 @@ use spottyfi_ui::theme::Theme;
 
 use super::dock_model::DockExtras;
 use super::tabs::Tab;
+use crate::settings::AppSettings;
 
 /// A predefined dock layout, selectable from the View menu.
 ///
@@ -88,6 +89,11 @@ pub struct PersistedShell {
     /// so a pre-Phase-10 file loads as [`Layout::Default`].
     #[serde(default)]
     pub layout: Layout,
+    /// The power-user settings shown on the Settings page (audio, equalizer,
+    /// local files). `#[serde(default)]` so a pre-WS5 file loads with the
+    /// settings defaults.
+    #[serde(default)]
+    pub settings: AppSettings,
 }
 
 impl Default for PersistedShell {
@@ -101,6 +107,7 @@ impl Default for PersistedShell {
             collapsed_sections: Vec::new(),
             dock_extras: DockExtras::default(),
             layout: Layout::default(),
+            settings: AppSettings::default(),
         }
     }
 }
@@ -118,8 +125,11 @@ impl PersistedShell {
         };
         match std::fs::read_to_string(&path) {
             Ok(text) => match ron::from_str::<PersistedShell>(&text) {
-                Ok(shell) => {
+                Ok(mut shell) => {
                     tracing::debug!(path = %path.display(), "restored shell layout");
+                    // Clamp any out-of-range persisted settings so a
+                    // hand-edited config can't reach the engine or EQ.
+                    shell.settings.sanitise();
                     shell
                 }
                 Err(err) => {

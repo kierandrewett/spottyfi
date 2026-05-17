@@ -13,6 +13,7 @@ mod cli;
 mod login;
 mod page;
 mod playback_controller;
+mod settings;
 mod shell;
 mod transport;
 
