@@ -54,9 +54,9 @@ one at a time). `[ ]` todo · `[~]` in progress · `[x]` done.
 - [x] General docking-UX cleanup — some interactions are confusing and don't
       make sense with the dock model
 
-## WS7 — Waveform & visualisations `[ ]`
-- [ ] Live waveform scrubber like the internal Spotify client
-- [ ] Live audio visualisations
+## WS7 — Waveform & visualisations `[x]`
+- [x] Live waveform scrubber like the internal Spotify client
+- [x] Live audio visualisations
 - (Both need a custom librespot backend that taps the PCM sample stream.)
 
 ## Notes on the big ones
