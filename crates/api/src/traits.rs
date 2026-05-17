@@ -19,8 +19,8 @@ use async_trait::async_trait;
 use futures::stream::Stream;
 
 use spottyfi_models::{
-    Album, Artist, Category, Device, Page, Playlist, PlaylistTrack, SavedTrack, SearchResults,
-    SimplifiedAlbum, SimplifiedPlaylist, Track, User,
+    Album, Artist, Category, Device, Page, Playlist, PlaylistTrack, RemotePlayback, SavedTrack,
+    SearchResults, SimplifiedAlbum, SimplifiedPlaylist, Track, User,
 };
 
 #[cfg(test)]
@@ -200,6 +200,26 @@ pub trait SpotifyApi: Send + Sync {
     /// Transfer playback to the Connect device `device_id`, beginning
     /// playback when `play` is set (`PUT /me/player`).
     async fn transfer_playback(&self, device_id: &str, play: bool) -> ApiResult<()>;
+
+    /// The user's current playback state across all devices (`GET /me/player`).
+    ///
+    /// `None` when nothing is playing on any device.
+    async fn current_playback(&self) -> ApiResult<Option<RemotePlayback>>;
+
+    /// Pause playback on the user's currently-active device.
+    async fn remote_pause(&self) -> ApiResult<()>;
+
+    /// Resume playback on the user's currently-active device.
+    async fn remote_resume(&self) -> ApiResult<()>;
+
+    /// Skip to the next track on the user's currently-active device.
+    async fn remote_next(&self) -> ApiResult<()>;
+
+    /// Skip to the previous track on the user's currently-active device.
+    async fn remote_previous(&self) -> ApiResult<()>;
+
+    /// Seek the user's currently-active device to `position_ms`.
+    async fn remote_seek(&self, position_ms: u32) -> ApiResult<()>;
 }
 
 #[cfg(test)]

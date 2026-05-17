@@ -278,6 +278,34 @@ pub fn device(src: &rs::Device) -> m::Device {
     }
 }
 
+/// Map an `rspotify` current-playback context onto [`m::RemotePlayback`].
+pub fn remote_playback(src: &rs::CurrentPlaybackContext) -> m::RemotePlayback {
+    let (track_title, artist, duration_ms) = match &src.item {
+        Some(rs::PlayableItem::Track(track)) => (
+            track.name.clone(),
+            track
+                .artists
+                .iter()
+                .map(|a| a.name.clone())
+                .collect::<Vec<_>>()
+                .join(", "),
+            u32::try_from(track.duration.num_milliseconds().max(0)).unwrap_or(0),
+        ),
+        _ => (String::new(), String::new(), 0),
+    };
+    m::RemotePlayback {
+        is_playing: src.is_playing,
+        device_name: src.device.name.clone(),
+        track_title,
+        artist,
+        progress_ms: src
+            .progress
+            .map(|d| u32::try_from(d.num_milliseconds().max(0)).unwrap_or(0))
+            .unwrap_or(0),
+        duration_ms,
+    }
+}
+
 /// Map an `rspotify` device type onto the picker-facing [`m::DeviceKind`].
 fn device_kind(src: &rs::DeviceType) -> m::DeviceKind {
     match src {

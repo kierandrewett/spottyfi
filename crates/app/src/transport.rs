@@ -18,7 +18,7 @@
 use std::time::Duration;
 
 use spottyfi_audio::{PlaybackState, QueueState, RepeatMode};
-use spottyfi_models::Device;
+use spottyfi_models::{Device, RemotePlayback};
 use spottyfi_ui::components;
 use spottyfi_ui::icons::{self, Icon};
 use spottyfi_ui::scrubber::{Scrubber, ScrubberState};
@@ -129,15 +129,9 @@ pub fn transport_bar(
     playback: &PlaybackState,
     queue: &QueueState,
     waveform: &[f32],
-    devices: &[Device],
+    remote: Option<&RemotePlayback>,
 ) -> Option<TransportIntent> {
     let mut intent = None;
-
-    // The active Connect device, when playback is on something other than
-    // this app — surfaced in the now-playing block and the Devices button.
-    let playing_elsewhere = devices
-        .iter()
-        .find(|d| d.is_active && d.name != SPOTTYFI_DEVICE_NAME);
 
     egui::Panel::bottom("transport")
         .exact_size(TRANSPORT_HEIGHT)
@@ -172,7 +166,7 @@ pub fn transport_bar(
                     .max_rect(left_rect)
                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
             );
-            now_playing(&mut left, palette, playback, playing_elsewhere);
+            now_playing(&mut left, palette, playback, remote);
 
             // Centre: the control cluster over the seek scrubber, genuinely
             // centred in the window.
@@ -181,9 +175,15 @@ pub fn transport_bar(
                     .max_rect(centre_rect)
                     .layout(egui::Layout::top_down(egui::Align::Center)),
             );
-            if let Some(i) =
-                centre_controls(&mut centre, palette, ui_state, playback, queue, waveform)
-            {
+            if let Some(i) = centre_controls(
+                &mut centre,
+                palette,
+                ui_state,
+                playback,
+                queue,
+                waveform,
+                remote,
+            ) {
                 intent = Some(i);
             }
 
@@ -193,9 +193,7 @@ pub fn transport_bar(
                     .max_rect(right_rect)
                     .layout(egui::Layout::right_to_left(egui::Align::Center)),
             );
-            if let Some(i) =
-                right_cluster(&mut right, palette, ui_state, playback, playing_elsewhere)
-            {
+            if let Some(i) = right_cluster(&mut right, palette, ui_state, playback, remote) {
                 intent = Some(i);
             }
         });
@@ -217,10 +215,9 @@ pub fn connect_banner(
     ui: &mut egui::Ui,
     palette: &Palette,
     devices: &[Device],
+    remote: Option<&RemotePlayback>,
 ) -> Option<TransportIntent> {
-    let device = devices
-        .iter()
-        .find(|d| d.is_active && d.name != SPOTTYFI_DEVICE_NAME)?;
+    let remote = remote?;
     let mut intent = None;
 
     // This app's own Connect device id, for the "Play here" action.
@@ -228,6 +225,26 @@ pub fn connect_banner(
         .iter()
         .find(|d| d.name == SPOTTYFI_DEVICE_NAME)
         .and_then(|d| d.id.clone());
+
+    // "<track> — <artist>  ·  on <device>", or just the device when the
+    // remote track is unknown.
+    let label = if remote.track_title.is_empty() {
+        format!("Playing on {} · Spotify Connect", remote.device_name)
+    } else if remote.artist.is_empty() {
+        format!("{} · on {}", remote.track_title, remote.device_name)
+    } else {
+        format!(
+            "{} — {} · on {}",
+            remote.track_title, remote.artist, remote.device_name
+        )
+    };
+    let progress = (remote.duration_ms > 0).then(|| {
+        format!(
+            "{} / {}",
+            fmt_duration(Duration::from_millis(u64::from(remote.progress_ms))),
+            fmt_duration(Duration::from_millis(u64::from(remote.duration_ms))),
+        )
+    });
 
     egui::Panel::bottom("connect-banner")
         .exact_size(CONNECT_BANNER_HEIGHT)
@@ -240,11 +257,14 @@ pub fn connect_banner(
             ui.horizontal_centered(|ui| {
                 icons::icon(ui, Icon::Devices, 13.0, egui::Color32::BLACK);
                 ui.add_space(6.0);
-                ui.label(
-                    egui::RichText::new(format!("Playing on {} · Spotify Connect", device.name))
-                        .family(spottyfi_ui::fonts::medium())
-                        .size(11.5)
-                        .color(egui::Color32::BLACK),
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(label)
+                            .family(spottyfi_ui::fonts::medium())
+                            .size(11.5)
+                            .color(egui::Color32::BLACK),
+                    )
+                    .truncate(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(id) = own_id {
@@ -263,6 +283,14 @@ pub fn connect_banner(
                             intent = Some(TransportIntent::TransferToDevice(id));
                         }
                     }
+                    if let Some(progress) = progress {
+                        ui.add_space(10.0);
+                        ui.label(
+                            egui::RichText::new(progress)
+                                .size(10.5)
+                                .color(egui::Color32::from_black_alpha(160)),
+                        );
+                    }
                 });
             });
         });
@@ -279,7 +307,7 @@ fn now_playing(
     ui: &mut egui::Ui,
     palette: &Palette,
     playback: &PlaybackState,
-    playing_elsewhere: Option<&Device>,
+    remote: Option<&RemotePlayback>,
 ) {
     let art_url = playback.track.as_ref().and_then(|t| t.art_url.as_deref());
     components::album_art(ui, palette, art_url, 48.0, 0.0);
@@ -307,18 +335,33 @@ fn now_playing(
                     ui.label(components::muted(palette, codec_line, 9.5));
                 }
             }
-            None => match playing_elsewhere {
-                Some(device) => {
+            None => match remote {
+                Some(remote) => {
+                    let title = if remote.track_title.is_empty() {
+                        format!("Playing on {}", remote.device_name)
+                    } else {
+                        remote.track_title.clone()
+                    };
                     ui.add(
                         egui::Label::new(
-                            egui::RichText::new(format!("Playing on {}", device.name))
+                            egui::RichText::new(title)
                                 .family(spottyfi_ui::fonts::medium())
                                 .size(12.5)
                                 .color(palette.accent),
                         )
                         .truncate(),
                     );
-                    ui.label(components::muted(palette, "Spotify Connect", 11.0));
+                    if !remote.artist.is_empty() {
+                        ui.add(
+                            egui::Label::new(components::muted(palette, &remote.artist, 11.0))
+                                .truncate(),
+                        );
+                    }
+                    ui.label(components::muted(
+                        palette,
+                        format!("Spotify Connect · {}", remote.device_name),
+                        9.5,
+                    ));
                 }
                 None => {
                     ui.label(components::muted(palette, "Nothing playing", 12.5));
@@ -342,6 +385,7 @@ fn centre_controls(
     playback: &PlaybackState,
     queue: &QueueState,
     waveform: &[f32],
+    remote: Option<&RemotePlayback>,
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
@@ -364,11 +408,13 @@ fn centre_controls(
     );
     block.spacing_mut().item_spacing.y = ROW_GAP;
     // The transport control row, centred horizontally.
-    if let Some(i) = control_row(&mut block, palette, playback, queue, CONTROL_ROW_H) {
+    if let Some(i) = control_row(&mut block, palette, playback, queue, CONTROL_ROW_H, remote) {
         intent = Some(i);
     }
     // The seek scrubber row, spanning the full block width.
-    if let Some(i) = scrubber_row(&mut block, palette, ui_state, playback, width, waveform) {
+    if let Some(i) = scrubber_row(
+        &mut block, palette, ui_state, playback, width, waveform, remote,
+    ) {
         intent = Some(i);
     }
 
@@ -387,8 +433,16 @@ fn control_row(
     playback: &PlaybackState,
     queue: &QueueState,
     height: f32,
+    remote: Option<&RemotePlayback>,
 ) -> Option<TransportIntent> {
     let mut intent = None;
+
+    // The effective play state: the remote device's when playback is on
+    // another device, the local engine's otherwise.
+    let (playing, has_track) = match remote {
+        Some(remote) => (remote.is_playing, true),
+        None => (playback.playing, playback.track.is_some()),
+    };
 
     // Lay the row out top-down/centre-aligned and drop the button cluster in
     // as a single `horizontal` child: egui then centres that child by its
@@ -411,7 +465,7 @@ fn control_row(
                     intent = Some(TransportIntent::Previous);
                 }
 
-                if play_button(ui, palette, playback).clicked() {
+                if play_button(ui, palette, playing, has_track).clicked() {
                     intent = Some(TransportIntent::TogglePlayPause);
                 }
 
@@ -465,8 +519,12 @@ fn repeat_button(
 /// This is the one deliberately rounded element in Spottyfi's otherwise sharp,
 /// zero-radius UI — the reference screenshot shows exactly this. It brightens
 /// slightly on hover and dims to the outline colour when no track is loaded.
-fn play_button(ui: &mut egui::Ui, palette: &Palette, playback: &PlaybackState) -> egui::Response {
-    let has_track = playback.track.is_some();
+fn play_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    playing: bool,
+    has_track: bool,
+) -> egui::Response {
     let diameter = PLAY_BUTTON_DIAMETER;
     let sense = if has_track {
         egui::Sense::click()
@@ -486,11 +544,7 @@ fn play_button(ui: &mut egui::Ui, palette: &Palette, playback: &PlaybackState) -
         };
         ui.painter()
             .circle_filled(rect.center(), diameter * 0.5, fill);
-        let glyph = if playback.playing {
-            Icon::Pause
-        } else {
-            Icon::Play
-        };
+        let glyph = if playing { Icon::Pause } else { Icon::Play };
         let g = diameter * 0.42;
         glyph.image(g, egui::Color32::BLACK).paint_at(
             ui,
@@ -527,14 +581,33 @@ fn scrubber_row(
     playback: &PlaybackState,
     width: f32,
     waveform: &[f32],
+    remote: Option<&RemotePlayback>,
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
-    let duration = playback
-        .track
-        .as_ref()
-        .map_or(Duration::ZERO, |t| t.duration);
-    let live_fraction = playback.progress_fraction();
+    // Drive the scrubber from the remote device when playback is remote, from
+    // the local engine otherwise. The waveform is local-only — a remote track
+    // has no decoded envelope, so it falls back to the plain capsule.
+    let (duration, current_position, waveform): (Duration, Duration, &[f32]) = match remote {
+        Some(remote) => (
+            Duration::from_millis(u64::from(remote.duration_ms)),
+            Duration::from_millis(u64::from(remote.progress_ms)),
+            &[],
+        ),
+        None => (
+            playback
+                .track
+                .as_ref()
+                .map_or(Duration::ZERO, |t| t.duration),
+            playback.position,
+            waveform,
+        ),
+    };
+    let live_fraction = if duration.is_zero() {
+        0.0
+    } else {
+        (current_position.as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0)
+    };
 
     ui.allocate_ui_with_layout(
         egui::vec2(width, SCRUBBER_HEIGHT),
@@ -612,7 +685,7 @@ fn scrubber_row(
             let position = if scrub.dragging {
                 Duration::from_secs_f32(scrub.fraction * duration.as_secs_f32())
             } else {
-                playback.position
+                current_position
             };
             let mut elapsed = ui.new_child(
                 egui::UiBuilder::new()
@@ -635,7 +708,7 @@ fn right_cluster(
     palette: &Palette,
     ui_state: &mut TransportUiState,
     playback: &PlaybackState,
-    playing_elsewhere: Option<&Device>,
+    remote: Option<&RemotePlayback>,
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
@@ -678,8 +751,8 @@ fn right_cluster(
     }
     // Devices: opens the Connect device picker; tinted accent and labelled
     // with the device name when playback is on another device.
-    let devices_tooltip = match playing_elsewhere {
-        Some(device) => format!("Playing on {} — switch device", device.name),
+    let devices_tooltip = match remote {
+        Some(remote) => format!("Playing on {} — switch device", remote.device_name),
         None => "Devices".to_owned(),
     };
     if icons::icon_button(
@@ -687,7 +760,7 @@ fn right_cluster(
         palette,
         Icon::Devices,
         15.0,
-        playing_elsewhere.is_some(),
+        remote.is_some(),
         &devices_tooltip,
     )
     .clicked()

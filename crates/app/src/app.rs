@@ -31,6 +31,9 @@ pub struct SpottyfiApp {
     /// The Spotify Connect device list and transfer commands. Present once the
     /// Web API has been attached (post-login).
     devices: Option<crate::devices::DevicesController>,
+    /// Whether Spotify playback is currently on another Connect device. When
+    /// set, the transport's controls drive that device over the Web API.
+    playing_elsewhere: bool,
     /// Per-frame UI state for the transport widgets (scrub drag, debug field).
     transport_ui: TransportUiState,
     /// The persisted + per-session shell state (dock layout, theme, sidebar).
@@ -100,6 +103,7 @@ impl SpottyfiApp {
             auth,
             playback,
             devices: None,
+            playing_elsewhere: false,
             transport_ui: TransportUiState::default(),
             shell,
             avatar_image: Arc::new(ArcSwap::from_pointee(None)),
@@ -264,12 +268,36 @@ impl SpottyfiApp {
     /// Apply a transport intent by dispatching it onto the playback engine.
     fn apply_transport_intent(&mut self, intent: TransportIntent) {
         match intent {
-            TransportIntent::TogglePlayPause => self.playback.toggle_play_pause(),
-            TransportIntent::Seek(position) => self.playback.seek(position),
+            TransportIntent::TogglePlayPause => {
+                if let (true, Some(devices)) = (self.playing_elsewhere, &self.devices) {
+                    devices.remote_play_pause();
+                } else {
+                    self.playback.toggle_play_pause();
+                }
+            }
+            TransportIntent::Seek(position) => {
+                if let (true, Some(devices)) = (self.playing_elsewhere, &self.devices) {
+                    devices.remote_seek(u32::try_from(position.as_millis()).unwrap_or(u32::MAX));
+                } else {
+                    self.playback.seek(position);
+                }
+            }
             TransportIntent::SetVolume(volume) => self.playback.set_volume(volume),
             TransportIntent::PlayUri(uri) => self.playback.play_uri(uri),
-            TransportIntent::Next => self.playback.next(),
-            TransportIntent::Previous => self.playback.previous(),
+            TransportIntent::Next => {
+                if let (true, Some(devices)) = (self.playing_elsewhere, &self.devices) {
+                    devices.remote_next();
+                } else {
+                    self.playback.next();
+                }
+            }
+            TransportIntent::Previous => {
+                if let (true, Some(devices)) = (self.playing_elsewhere, &self.devices) {
+                    devices.remote_previous();
+                } else {
+                    self.playback.previous();
+                }
+            }
             TransportIntent::PlayContext {
                 uri,
                 name,
@@ -377,6 +405,14 @@ impl eframe::App for SpottyfiApp {
                     .as_ref()
                     .map(|d| (*d.snapshot()).clone())
                     .unwrap_or_default();
+                // Remote playback, kept only when it is genuinely on *another*
+                // device ("Spottyfi" is this app's own Connect device name).
+                let remote = self
+                    .devices
+                    .as_ref()
+                    .and_then(|d| d.remote_playback())
+                    .filter(|r| r.device_name != "Spottyfi");
+                self.playing_elsewhere = remote.is_some();
 
                 // The transport panel is added before the shell's central
                 // dock so the dock fills the space above it.
@@ -387,12 +423,13 @@ impl eframe::App for SpottyfiApp {
                     &playback,
                     &queue,
                     &waveform,
-                    &devices,
+                    remote.as_ref(),
                 );
 
                 // The Connect banner sits just above the transport, shown
                 // only while playback is on another device.
-                let banner_intent = transport::connect_banner(ui, &palette, &devices);
+                let banner_intent =
+                    transport::connect_banner(ui, &palette, &devices, remote.as_ref());
 
                 let shell_intent = shell::shell(
                     ui,

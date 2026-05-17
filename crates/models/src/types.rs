@@ -264,3 +264,23 @@ pub struct Device {
     /// The device's current volume as a `0..=100` percentage, if known.
     pub volume_percent: Option<u32>,
 }
+
+/// A snapshot of Spotify playback happening on another Connect device.
+///
+/// Fetched from `GET /me/player`; the transport's Connect banner shows it and
+/// the transport controls drive it while playback is remote.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemotePlayback {
+    /// Whether the remote device is currently playing (vs. paused).
+    pub is_playing: bool,
+    /// The active device's name.
+    pub device_name: String,
+    /// The playing track's title (empty when nothing is loaded).
+    pub track_title: String,
+    /// The playing track's artist line (empty when unknown).
+    pub artist: String,
+    /// Playback progress into the track, in milliseconds.
+    pub progress_ms: u32,
+    /// The track's total duration, in milliseconds (`0` when unknown).
+    pub duration_ms: u32,
+}

@@ -10,8 +10,8 @@ use rspotify::{AuthCodePkceSpotify, ClientResult};
 
 use spottyfi_auth::Session;
 use spottyfi_models::{
-    Album, Artist, Category, Device, Page, Playlist, PlaylistTrack, SavedTrack, SearchResults,
-    SimplifiedAlbum, SimplifiedPlaylist, Track, User,
+    Album, Artist, Category, Device, Page, Playlist, PlaylistTrack, RemotePlayback, SavedTrack,
+    SearchResults, SimplifiedAlbum, SimplifiedPlaylist, Track, User,
 };
 
 use spottyfi_cache::Kind;
@@ -619,6 +619,46 @@ impl SpotifyApi for SpotifyClient {
     #[tracing::instrument(skip(self))]
     async fn transfer_playback(&self, device_id: &str, play: bool) -> ApiResult<()> {
         self.request(|| self.rspotify.transfer_playback(device_id, Some(play)))
+            .await
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn current_playback(&self) -> ApiResult<Option<RemotePlayback>> {
+        let context = self
+            .request(|| {
+                self.rspotify
+                    .current_playback(None, None::<&[rs::AdditionalType]>)
+            })
+            .await?;
+        Ok(context.as_ref().map(map::remote_playback))
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn remote_pause(&self) -> ApiResult<()> {
+        self.request(|| self.rspotify.pause_playback(None)).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn remote_resume(&self) -> ApiResult<()> {
+        self.request(|| self.rspotify.resume_playback(None, None))
+            .await
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn remote_next(&self) -> ApiResult<()> {
+        self.request(|| self.rspotify.next_track(None)).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn remote_previous(&self) -> ApiResult<()> {
+        self.request(|| self.rspotify.previous_track(None)).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn remote_seek(&self, position_ms: u32) -> ApiResult<()> {
+        let position =
+            chrono::Duration::try_milliseconds(i64::from(position_ms)).unwrap_or_default();
+        self.request(|| self.rspotify.seek_track(position, None))
             .await
     }
 }
