@@ -39,7 +39,7 @@ one at a time). `[ ]` todo · `[~]` in progress · `[x]` done.
 ## WS5 — Settings & account UI `[~]`
 - [x] Proper Settings page — audio settings, local files, equalizer, and other
       power-user options
-- [ ] Equalizer (real DSP — needs a custom audio backend tapping PCM; large)
+- [x] Equalizer (real DSP — needs a custom audio backend tapping PCM; large)
 - [x] User avatar + name in the **top-right**; that's the entry point for user
       info, Settings, Log out
 

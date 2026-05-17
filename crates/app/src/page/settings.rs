@@ -58,6 +58,9 @@ pub enum SettingsAction {
     /// The audio engine settings changed; the engine must restart to pick them
     /// up (librespot bakes them in at connect time).
     AudioChanged,
+    /// The equaliser settings changed; the new gains are pushed live to the
+    /// audio engine (no restart — the DSP picks them up on the next packet).
+    EqualizerChanged,
 }
 
 /// Render the Settings page body, returning every [`SettingsAction`] raised.
@@ -74,7 +77,7 @@ pub fn settings_page(ui: &mut egui::Ui, ctx: &mut SettingsContext<'_>) -> Vec<Se
 
             audio_section(ui, &palette, ctx, &mut actions);
             ui.add_space(20.0);
-            equalizer_section(ui, &palette, ctx);
+            equalizer_section(ui, &palette, ctx, &mut actions);
             ui.add_space(20.0);
             local_files_section(ui, &palette, ctx);
             ui.add_space(20.0);
@@ -234,24 +237,33 @@ fn audio_section(
 
 /// The Equalizer section: an on/off toggle, presets and ten band sliders.
 ///
-/// The band gains are persisted; the DSP that applies them is WS7 — see the
-/// `TODO(ws7)` seam in [`crate::settings::EqualizerSettings`].
-fn equalizer_section(ui: &mut egui::Ui, palette: &Palette, ctx: &mut SettingsContext<'_>) {
+/// Every control that mutates the equaliser raises [`SettingsAction::
+/// EqualizerChanged`]; `app` pushes the new gains straight to the running
+/// audio engine — the DSP picks them up on its next decoded packet, no
+/// restart.
+fn equalizer_section(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    ctx: &mut SettingsContext<'_>,
+    actions: &mut Vec<SettingsAction>,
+) {
     section(
         ui,
         palette,
         "Equalizer",
-        "A 10-band graphic equalizer. The DSP arrives with a later workstream.",
+        "A 10-band graphic equalizer applied live to the audio stream.",
         |ui| {
             let eq = &mut ctx.settings.equalizer;
+            let mut changed = false;
 
             ui.horizontal(|ui| {
-                ui.checkbox(&mut eq.enabled, "Enable equalizer");
+                changed |= ui.checkbox(&mut eq.enabled, "Enable equalizer").changed();
                 ui.add_space(16.0);
                 ui.label(components::muted(palette, "Preset", 11.5));
                 for preset in EqPreset::all() {
                     if components::filter_chip(ui, palette, preset.label(), false).clicked() {
                         eq.apply_preset(preset);
+                        changed = true;
                     }
                 }
             });
@@ -264,14 +276,16 @@ fn equalizer_section(ui: &mut egui::Ui, palette: &Palette, ctx: &mut SettingsCon
                     for (index, freq) in EQ_BAND_FREQUENCIES_HZ.iter().enumerate() {
                         ui.vertical(|ui| {
                             ui.set_width(54.0);
-                            ui.add(
-                                egui::Slider::new(
-                                    &mut eq.band_gains_db[index],
-                                    -EQ_GAIN_LIMIT_DB..=EQ_GAIN_LIMIT_DB,
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut eq.band_gains_db[index],
+                                        -EQ_GAIN_LIMIT_DB..=EQ_GAIN_LIMIT_DB,
+                                    )
+                                    .vertical()
+                                    .show_value(false),
                                 )
-                                .vertical()
-                                .show_value(false),
-                            );
+                                .changed();
                             ui.vertical_centered(|ui| {
                                 ui.label(
                                     egui::RichText::new(format!("{:+.0}", eq.band_gains_db[index]))
@@ -292,14 +306,19 @@ fn equalizer_section(ui: &mut egui::Ui, palette: &Palette, ctx: &mut SettingsCon
             ui.add_space(8.0);
             if ui.button("Reset bands to flat").clicked() {
                 eq.apply_preset(EqPreset::Flat);
+                changed = true;
             }
             ui.add_space(4.0);
             ui.label(components::muted(
                 palette,
-                "Band gains are saved and ready for the equalizer DSP, which \
-                 needs a custom audio backend (later workstream).",
+                "Band gains apply live; the equalizer is a bank of biquad \
+                 peaking filters in the custom audio backend.",
                 10.5,
             ));
+
+            if changed {
+                actions.push(SettingsAction::EqualizerChanged);
+            }
         },
     );
 }

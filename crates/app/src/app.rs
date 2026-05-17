@@ -109,8 +109,13 @@ impl SpottyfiApp {
     /// connect time.
     fn ensure_audio(&mut self) {
         if let Some(session) = self.auth.session() {
-            let config = self.shell.persisted.settings.audio.engine_config();
-            self.playback.ensure_started(&session, config);
+            let settings = &self.shell.persisted.settings;
+            let config = settings.audio.engine_config();
+            let eq = settings.equalizer;
+            // The engine starts with the user's persisted equaliser; both
+            // arguments are only consumed on the one start that actually runs.
+            self.playback
+                .ensure_started(&session, config, (eq.enabled, eq.band_gains_db));
         }
     }
 
@@ -244,6 +249,12 @@ impl eframe::App for SpottyfiApp {
                         // apply the new audio settings.
                         let config = self.shell.persisted.settings.audio.engine_config();
                         self.playback.restart_with(config);
+                    }
+                    Some(ShellIntent::EqualizerChanged) => {
+                        // The equaliser applies live — the custom backend's DSP
+                        // picks the new gains up on its next decoded packet.
+                        let eq = self.shell.persisted.settings.equalizer;
+                        self.playback.set_equalizer(eq.enabled, eq.band_gains_db);
                     }
                     None => {}
                 }

@@ -8,10 +8,10 @@
 //!   **start-time** settings: librespot bakes bitrate and normalisation into
 //!   its `PlayerConfig` when the session connects, so a change takes effect on
 //!   the next engine start (a logout/login). The Settings page says so.
-//! - [`EqualizerSettings`] — a 10-band graphic EQ. The band gains are persisted
-//!   and ready to drive a DSP stage, but **no audio DSP is wired yet** — that
-//!   needs a custom librespot backend tapping the PCM stream (WS7). See the
-//!   `TODO(ws7)` seam in [`EqualizerSettings::band_gains_db`].
+//! - [`EqualizerSettings`] — a 10-band graphic EQ. The on/off flag and band
+//!   gains are persisted and drive the live DSP in the custom audio backend
+//!   (WS7a): a bank of biquad peaking filters in `spottyfi-audio`. Unlike the
+//!   audio settings the equaliser applies live — no engine restart.
 //! - [`LocalFilesSettings`] — the list of local-music folders. The folder list
 //!   persists here; scanning and playback of local files are out of scope.
 //!
@@ -179,18 +179,12 @@ impl EqualizerSettings {
     /// Clamp every band gain into the legal ±[`EQ_GAIN_LIMIT_DB`] range.
     ///
     /// Called after loading a persisted config so a hand-edited or
-    /// out-of-range value can never drive the (future) DSP stage.
+    /// out-of-range value can never drive the DSP stage.
     pub fn clamp_bands(&mut self) {
         for gain in &mut self.band_gains_db {
             *gain = gain.clamp(-EQ_GAIN_LIMIT_DB, EQ_GAIN_LIMIT_DB);
         }
     }
-
-    // TODO(ws7): the band gains above are the seam for the equalizer DSP. Once
-    // a custom librespot backend taps the PCM sample stream, a biquad filter
-    // bank built from `band_gains_db` (and bypassed when `!enabled`) applies
-    // them before output. The values are persisted and clamped here so that
-    // workstream only needs to consume them — no UI or config change.
 }
 
 /// The list of local-music folders the user has registered.

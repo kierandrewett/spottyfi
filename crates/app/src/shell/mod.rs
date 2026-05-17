@@ -42,6 +42,9 @@ pub enum ShellIntent {
     /// the engine so librespot picks up the new `PlayerConfig` (bitrate /
     /// normalisation are baked in at connect and cannot change live).
     AudioSettingsChanged,
+    /// The equaliser settings changed on the Settings page. `app` pushes the
+    /// new gains straight to the running audio engine — no restart.
+    EqualizerChanged,
 }
 
 /// The session-scoped services and live page state, attached after login.
@@ -343,6 +346,9 @@ pub fn shell(
             }
             crate::page::SettingsAction::AudioChanged => {
                 intent = Some(ShellIntent::AudioSettingsChanged);
+            }
+            crate::page::SettingsAction::EqualizerChanged => {
+                intent = Some(ShellIntent::EqualizerChanged);
             }
         }
     }

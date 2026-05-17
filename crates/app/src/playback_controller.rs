@@ -56,6 +56,10 @@ pub struct PlaybackControllerHandle {
     session: Option<Session>,
     /// The engine config the running engine was started with.
     engine_config: EngineConfig,
+    /// The most recent equaliser settings, applied to the engine the moment it
+    /// becomes ready. Held here so a start (or restart) always begins with the
+    /// user's persisted EQ rather than the engine default (a flat bypass).
+    equalizer: (bool, [f32; spottyfi_audio::EQ_BAND_COUNT]),
 }
 
 impl PlaybackControllerHandle {
@@ -75,6 +79,7 @@ impl PlaybackControllerHandle {
             start_requested: false,
             session: None,
             engine_config: EngineConfig::default(),
+            equalizer: (false, [0.0; spottyfi_audio::EQ_BAND_COUNT]),
         }
     }
 
@@ -99,13 +104,21 @@ impl PlaybackControllerHandle {
     /// start is already in flight. The engine authenticates librespot with the
     /// session's current OAuth access token and applies `config` (stream
     /// quality, normalisation) — those are baked into librespot's
-    /// `PlayerConfig` at connect time.
-    pub fn ensure_started(&mut self, session: &Session, config: EngineConfig) {
+    /// `PlayerConfig` at connect time. `equalizer` is the persisted EQ to
+    /// apply the moment the engine is ready; it can still be changed live
+    /// afterwards via [`Self::set_equalizer`].
+    pub fn ensure_started(
+        &mut self,
+        session: &Session,
+        config: EngineConfig,
+        equalizer: (bool, [f32; spottyfi_audio::EQ_BAND_COUNT]),
+    ) {
         if self.audio_disabled || self.start_requested {
             return;
         }
         self.session = Some(session.clone());
         self.engine_config = config;
+        self.equalizer = equalizer;
         self.start_requested = true;
         self.spawn_start(session.clone(), config);
     }
@@ -141,6 +154,7 @@ impl PlaybackControllerHandle {
         let status = Arc::clone(&self.status);
         let state_slot = Arc::clone(&self.state);
         let queue_slot = Arc::clone(&self.queue_state);
+        let (eq_enabled, eq_gains) = self.equalizer;
 
         Self::publish_status(&status, &egui_ctx, EngineStatus::Starting);
 
@@ -156,6 +170,11 @@ impl PlaybackControllerHandle {
 
             match PlaybackController::start(&token.access_token, config).await {
                 Ok(controller) => {
+                    // Apply the persisted equaliser before the engine goes
+                    // live, so the first track plays with the user's EQ.
+                    if let Err(err) = controller.set_equalizer(eq_enabled, eq_gains).await {
+                        tracing::warn!(%err, "applying startup equaliser failed");
+                    }
                     // Mirror the engine's playback and queue state into our
                     // shared slots, waking the UI whenever either changes.
                     Self::bridge_snapshot(&runtime, &egui_ctx, controller.state(), state_slot);
@@ -314,6 +333,28 @@ impl PlaybackControllerHandle {
         self.dispatch(move |controller| async move {
             if let Err(err) = controller.set_volume(volume).await {
                 tracing::warn!(%err, "set_volume failed");
+            }
+        });
+    }
+
+    /// Push the 10-band equaliser configuration to the audio engine.
+    ///
+    /// Unlike the start-time audio settings, the equaliser applies live: the
+    /// custom audio backend's DSP picks the new gains up on its next decoded
+    /// packet. Called on engine start and whenever the EQ settings change.
+    ///
+    /// The settings are also remembered so a later engine (re)start re-applies
+    /// them — if the engine is not yet running the live push is a no-op but the
+    /// stored value is replayed by [`Self::spawn_start`] once it is ready.
+    pub fn set_equalizer(
+        &mut self,
+        enabled: bool,
+        band_gains_db: [f32; spottyfi_audio::EQ_BAND_COUNT],
+    ) {
+        self.equalizer = (enabled, band_gains_db);
+        self.dispatch(move |controller| async move {
+            if let Err(err) = controller.set_equalizer(enabled, band_gains_db).await {
+                tracing::warn!(%err, "set_equalizer failed");
             }
         });
     }
