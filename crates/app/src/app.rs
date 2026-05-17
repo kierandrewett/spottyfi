@@ -390,6 +390,10 @@ impl eframe::App for SpottyfiApp {
                     &devices,
                 );
 
+                // The Connect banner sits just above the transport, shown
+                // only while playback is on another device.
+                let banner_intent = transport::connect_banner(ui, &palette, &devices);
+
                 let shell_intent = shell::shell(
                     ui,
                     &mut self.shell,
@@ -403,6 +407,9 @@ impl eframe::App for SpottyfiApp {
                     &devices,
                 );
 
+                if let Some(intent) = banner_intent {
+                    self.apply_transport_intent(intent);
+                }
                 if let Some(intent) = transport_intent {
                     self.apply_transport_intent(intent);
                 }

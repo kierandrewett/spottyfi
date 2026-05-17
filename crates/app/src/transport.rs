@@ -203,6 +203,73 @@ pub fn transport_bar(
     intent
 }
 
+/// Height of the Spotify Connect banner shown above the transport while
+/// playback is on another device.
+pub const CONNECT_BANNER_HEIGHT: f32 = 26.0;
+
+/// A thin banner, drawn just above the transport **only** while Spotify
+/// playback is on another Connect device. It names the device and offers a
+/// one-click "Play here" to pull playback back to Spottyfi.
+///
+/// Returns a [`TransportIntent::TransferToDevice`] when "Play here" is clicked.
+/// Renders nothing (and adds no panel) when playback is local.
+pub fn connect_banner(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    devices: &[Device],
+) -> Option<TransportIntent> {
+    let device = devices
+        .iter()
+        .find(|d| d.is_active && d.name != SPOTTYFI_DEVICE_NAME)?;
+    let mut intent = None;
+
+    // This app's own Connect device id, for the "Play here" action.
+    let own_id = devices
+        .iter()
+        .find(|d| d.name == SPOTTYFI_DEVICE_NAME)
+        .and_then(|d| d.id.clone());
+
+    egui::Panel::bottom("connect-banner")
+        .exact_size(CONNECT_BANNER_HEIGHT)
+        .frame(
+            egui::Frame::new()
+                .fill(palette.accent_dark)
+                .inner_margin(egui::Margin::symmetric(12, 0)),
+        )
+        .show_inside(ui, |ui| {
+            ui.horizontal_centered(|ui| {
+                icons::icon(ui, Icon::Devices, 13.0, egui::Color32::BLACK);
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(format!("Playing on {} · Spotify Connect", device.name))
+                        .family(spottyfi_ui::fonts::medium())
+                        .size(11.5)
+                        .color(egui::Color32::BLACK),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(id) = own_id {
+                        let button = egui::Button::new(
+                            egui::RichText::new("Play here")
+                                .size(11.0)
+                                .color(egui::Color32::BLACK),
+                        )
+                        .fill(egui::Color32::from_black_alpha(40))
+                        .corner_radius(0);
+                        if ui
+                            .add(button)
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            intent = Some(TransportIntent::TransferToDevice(id));
+                        }
+                    }
+                });
+            });
+        });
+
+    intent
+}
+
 /// The fixed width of the centred transport region (controls + scrubber).
 const CENTRE_WIDTH: f32 = 520.0;
 

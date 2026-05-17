@@ -477,14 +477,6 @@ fn menu_bar(
                         ui.close();
                     }
                     ui.separator();
-                    // Account actions live in the top-right account menu —
-                    // this is just a pointer so the File menu is not a dead
-                    // end for someone who looks here first.
-                    ui.add_enabled(
-                        false,
-                        egui::Button::new("Account: see the avatar, top-right"),
-                    );
-                    ui.separator();
                     if ui.button("Quit").clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                         ui.close();
