@@ -11,11 +11,16 @@
 //!
 //! # Why the controller owns the queue
 //!
-//! librespot's `Player` plays a single track and has no queue of its own — the
-//! queue lives in Spotify Connect's `spirc`, which Spottyfi does not use. So
+//! librespot's `Player` plays a single track and has no queue of its own. So
 //! the controller owns a [`Queue`] behind a mutex, and a background task
 //! subscribed to the player's event stream **auto-advances** it when a track
 //! ends. See `queue.rs`.
+//!
+//! Spottyfi *is* registered as a Spotify Connect device (WS4), but the queue
+//! above stays authoritative: each track the queue picks is handed to the
+//! Connect device (`Spirc`) as a one-track load, so `Spirc` drives the player
+//! and reports the play to Spotify (listening history / scrobble) without
+//! owning the ordering. See [`crate::connect`].
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -130,11 +135,13 @@ impl PlaybackController {
     /// playlist (those need a context — see [`Self::play_context`]).
     #[tracing::instrument(skip(self))]
     pub async fn play_uri(&self, uri: &str) -> AudioResult<()> {
-        let parsed = state::parse_playable(uri)?;
+        // Validate playability up front (`parse_playable` rejects albums,
+        // artists and playlists), then load by canonical URI string.
+        state::parse_playable(uri)?;
         let canonical = state::normalise_uri(uri)?;
         tracing::info!(%uri, "loading single track");
         lock(&self.queue).play_single(QueueTrack {
-            uri: canonical,
+            uri: canonical.clone(),
             title: String::new(),
             artists: Vec::new(),
             album: String::new(),
@@ -142,7 +149,7 @@ impl PlaybackController {
             duration: Duration::ZERO,
         });
         self.publish_queue();
-        self.engine.player().load(parsed, true, 0);
+        self.engine.load(&canonical, 0)?;
         Ok(())
     }
 
@@ -383,12 +390,17 @@ impl PlaybackController {
         Ok(())
     }
 
-    /// Load `track` into the librespot player and start it playing.
+    /// Load `track` into the player and start it playing.
+    ///
+    /// The load is routed through the Spotify Connect device so the play is
+    /// reported to Spotify (listening history / scrobble); see
+    /// [`crate::connect`]. The URI is validated for playability first so an
+    /// album/artist/playlist URI fails fast with [`AudioError::NotPlayable`].
     fn load_track(&self, track: &QueueTrack) -> AudioResult<()> {
-        let parsed = state::parse_playable(&track.uri)?;
+        let canonical = state::normalise_uri(&track.uri)?;
+        state::parse_playable(&canonical)?;
         tracing::info!(uri = %track.uri, "loading queued track");
-        self.engine.player().load(parsed, true, 0);
-        Ok(())
+        self.engine.load(&canonical, 0)
     }
 
     /// Swap a fresh queue snapshot into the shared `ArcSwap`.
@@ -405,7 +417,7 @@ impl PlaybackController {
     /// `EndOfTrack`, advances the queue and loads the next track.
     fn spawn_auto_advance(&self) {
         let mut events = self.engine.player().get_player_event_channel();
-        let player = self.engine.player();
+        let loader = self.engine.connect_loader();
         let queue = Arc::clone(&self.queue);
         let queue_state = Arc::clone(&self.queue_state);
 
@@ -416,10 +428,14 @@ impl PlaybackController {
                 }
                 let next = lock(&queue).advance();
                 match next {
-                    Some(track) => match state::parse_playable(&track.uri) {
-                        Ok(parsed) => {
-                            tracing::info!(uri = %track.uri, "auto-advancing to next track");
-                            player.load(parsed, true, 0);
+                    Some(track) => match state::normalise_uri(&track.uri) {
+                        Ok(uri) => {
+                            tracing::info!(%uri, "auto-advancing to next track");
+                            // Route through the Connect device so the next
+                            // play is reported to Spotify (history / scrobble).
+                            if let Err(err) = loader.load_track(&uri, 0) {
+                                tracing::warn!(%err, %uri, "auto-advance: load failed");
+                            }
                         }
                         Err(err) => {
                             tracing::warn!(%err, uri = %track.uri, "auto-advance: unplayable");

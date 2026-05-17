@@ -29,6 +29,7 @@
 #![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
 
 mod config;
+mod connect;
 mod controller;
 mod dsp;
 mod engine;

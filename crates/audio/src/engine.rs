@@ -16,7 +16,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
-use librespot::core::authentication::Credentials;
 use librespot::core::config::SessionConfig;
 use librespot::core::session::Session;
 use librespot::metadata::audio::{AudioItem, UniqueFields};
@@ -27,6 +26,7 @@ use librespot::playback::mixer::{Mixer, MixerConfig};
 use librespot::playback::player::{Player, PlayerEvent};
 
 use crate::config::EngineConfig;
+use crate::connect::ConnectDevice;
 use crate::error::{AudioError, AudioResult};
 use crate::sink::{EqParams, SharedEqParams, TappedSink};
 use crate::state::{PlaybackState, TrackInfo};
@@ -109,6 +109,10 @@ pub(crate) struct Engine {
     player: Arc<Player>,
     /// The software mixer driving output volume.
     mixer: Arc<dyn Mixer>,
+    /// The Spotify Connect device. `Spirc` owns the player for the purpose of
+    /// loading tracks and reporting state; track loads route through it so
+    /// plays land in Spotify's listening history. See [`crate::connect`].
+    connect: ConnectDevice,
     /// The published playback snapshot, read by the UI each frame.
     state: Arc<ArcSwap<PlaybackState>>,
     /// The user's chosen volume as a `0.0..=1.0` fraction, independent of any
@@ -159,13 +163,11 @@ impl Engine {
             ..PlayerConfig::default()
         };
 
+        // Build the session but do **not** connect it here: the Spotify
+        // Connect device (`Spirc`) performs the single `Session::connect`
+        // handshake itself, after registering its dealer listeners — the
+        // order librespot 0.8 requires. See `crate::connect`.
         let session = Session::new(session_config, None);
-        let credentials = Credentials::with_access_token(access_token);
-        session
-            .connect(credentials, false)
-            .await
-            .map_err(|err| AudioError::Connect(err.to_string()))?;
-        tracing::info!("librespot session connected");
 
         // Drive the mixer with a plain linear control: Spottyfi applies its own
         // perceptual curve in `volume_to_u16`, so the mixer must not map again.
@@ -187,13 +189,30 @@ impl Engine {
         let tap = AudioTap::new();
         let sink_params = Arc::clone(&eq_params);
         let sink_tap = tap.clone();
+        // `Spirc` needs its own handle to the same session; `Session` is an
+        // `Arc` inside, so the clone is cheap and shares one connection.
+        let connect_session = session.clone();
         let player = Player::new(player_config, session, soft_volume, move || {
             let inner = backend(None, audio_format);
             Box::new(TappedSink::new(inner, Arc::clone(&sink_params), &sink_tap))
         });
 
-        // Publish the mixer's starting volume so the UI's slider is correct.
+        // Register the Spotify Connect device. This connects the session and
+        // becomes the active device, so track loads route through it and
+        // plays land in Spotify's listening history. `Spirc` shares the
+        // player and mixer the engine just built.
         let initial_volume = volume_from_u16(mixer.volume());
+        let connect = ConnectDevice::start(
+            connect_session,
+            access_token,
+            Arc::clone(&player),
+            Arc::clone(&mixer),
+            mixer.volume(),
+        )
+        .await?;
+        tracing::info!("librespot session connected via spotify connect");
+
+        // Publish the mixer's starting volume so the UI's slider is correct.
         let initial = PlaybackState {
             volume: initial_volume,
             bitrate_kbps: bitrate_kbps(bitrate),
@@ -205,6 +224,7 @@ impl Engine {
         let engine = Self {
             player,
             mixer,
+            connect,
             state,
             target_volume: Arc::new(AtomicU32::new(initial_volume.to_bits())),
             fade_generation: Arc::new(AtomicU64::new(0)),
@@ -218,6 +238,28 @@ impl Engine {
     /// The librespot player handle.
     pub(crate) fn player(&self) -> Arc<Player> {
         Arc::clone(&self.player)
+    }
+
+    /// Load and start playing a single track by canonical Spotify URI.
+    ///
+    /// The load is routed through the Spotify Connect device (`Spirc`) rather
+    /// than calling `Player::load` directly: `Spirc` then drives the player,
+    /// reports the now-playing state to Spotify and the play lands in the
+    /// account's listening history. See [`crate::connect`].
+    ///
+    /// `position_ms` seeks within the track on load (normally `0`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::Connect`] if the Connect device has shut down.
+    pub(crate) fn load(&self, uri: &str, position_ms: u32) -> AudioResult<()> {
+        self.connect.load_track(uri, position_ms)
+    }
+
+    /// A cheap cloneable handle for loading tracks through the Connect device
+    /// from a background task (the queue auto-advance loop).
+    pub(crate) fn connect_loader(&self) -> crate::connect::ConnectLoader {
+        self.connect.loader()
     }
 
     /// The post-EQ sample tap the UI reads for waveform/visualisations (WS7b).
@@ -350,6 +392,16 @@ impl Engine {
             // Stop referencing the player only when the loop ends.
             drop(player);
         });
+    }
+}
+
+impl Drop for Engine {
+    /// Deregister the Spotify Connect device when the engine is torn down
+    /// (logout, or an engine restart for a changed [`EngineConfig`]). This
+    /// pauses playback and ends the `Spirc` task so the device disappears
+    /// from the account's device list promptly.
+    fn drop(&mut self) {
+        self.connect.shutdown();
     }
 }
 
