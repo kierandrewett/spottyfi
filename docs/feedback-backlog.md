@@ -22,14 +22,14 @@ one at a time). `[ ]` todo · `[~]` in progress · `[x]` done.
 - [ ] Fix the gap below the tab bar / align the tab bar — *needs a maintainer
       screenshot to pin down; a blind agent couldn't locate it precisely*
 
-## WS3 — Audio engine: playback feel `[ ]`
-- [ ] Fix pause latency — press-to-pause has a noticeable delay
-- [ ] Fade audio in/out on play/pause
-- [ ] Volume: instant (currently ~1s lag) and logarithmic
-- [ ] Real bitrate/codec readout in the transport (replace hardcoded
+## WS3 — Audio engine: playback feel `[x]`
+- [x] Fix pause latency — press-to-pause has a noticeable delay
+- [x] Fade audio in/out on play/pause
+- [x] Volume: instant (currently ~1s lag) and logarithmic
+- [x] Real bitrate/codec readout in the transport (replace hardcoded
       "Ogg Vorbis xxx")
-- [ ] Shuffle support
-- [ ] Repeat: off / repeat-all / repeat-one
+- [x] Shuffle support
+- [x] Repeat: off / repeat-all / repeat-one
 
 ## WS4 — Spotify Connect device `[ ]`
 - [ ] Register Spottyfi as a Spotify Connect device so plays land in Spotify
