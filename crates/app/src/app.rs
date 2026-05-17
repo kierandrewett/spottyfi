@@ -13,6 +13,8 @@ use tokio::runtime::Runtime;
 use crate::auth_controller::AuthController;
 use crate::avatar::{self, SharedAvatar};
 use crate::login::{self, LoginIntent};
+use crate::media::single_instance::InstanceGuard;
+use crate::media::{self, MediaBridge, MediaCommand};
 use crate::playback_controller::PlaybackControllerHandle;
 use crate::shell::{self, ShellIntent, ShellState};
 use crate::transport::{self, TransportIntent, TransportUiState};
@@ -38,6 +40,20 @@ pub struct SpottyfiApp {
     avatar_requested: bool,
     /// Whether the Spotify API has been attached to the shell for the session.
     api_attached: bool,
+    /// The single-instance lock — held for the process lifetime so a second
+    /// launch is detected. Never read; kept purely for its `Drop`.
+    _instance: InstanceGuard,
+    /// The desktop-integration hub: the MPRIS / tray / media-key command
+    /// channel and the shared playback snapshot they read.
+    media: MediaBridge,
+    /// Whether the desktop-integration tasks (MPRIS, tray, media keys) have
+    /// been started — done once, lazily, on the first frame.
+    media_started: bool,
+    /// Fires a desktop notification on track change when the user opted in.
+    notifier: media::notify::TrackChangeNotifier,
+    /// Whether the window is currently shown (toggled by the tray's
+    /// Show/Hide). Tracked so `ToggleWindow` knows which way to flip.
+    window_visible: bool,
 }
 
 impl SpottyfiApp {
@@ -47,7 +63,11 @@ impl SpottyfiApp {
     /// loaders, restores the persisted shell layout / theme, spawns the
     /// startup session-restore, and prepares the audio engine. `no_audio`
     /// reflects the `--no-audio` CLI flag.
-    pub fn new(cc: &eframe::CreationContext<'_>, no_audio: bool) -> anyhow::Result<Self> {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        no_audio: bool,
+        instance: InstanceGuard,
+    ) -> anyhow::Result<Self> {
         tracing::debug!("constructing SpottyfiApp");
 
         // Fonts + image loaders. `egui_extras` provides the stock byte/decode
@@ -82,7 +102,85 @@ impl SpottyfiApp {
             avatar_texture: None,
             avatar_requested: false,
             api_attached: false,
+            _instance: instance,
+            media: MediaBridge::new(),
+            media_started: false,
+            notifier: media::notify::TrackChangeNotifier::new(),
+            window_visible: true,
         })
+    }
+
+    /// Start the desktop-integration surfaces once, on the first frame.
+    ///
+    /// MPRIS runs on the tokio runtime; the tray and the media-key fallback
+    /// each get their own thread. Every one is best-effort — a surface that
+    /// cannot start logs and is skipped.
+    fn ensure_media(&mut self) {
+        if self.media_started {
+            return;
+        }
+        self.media_started = true;
+
+        let snapshot = self.media.snapshot();
+        let sender = self.media.sender();
+
+        // MPRIS2 D-Bus interface — desktop media controls and indicators.
+        media::mpris::spawn(self._runtime.handle(), snapshot.clone(), sender.clone());
+        // System tray icon + menu.
+        media::tray::spawn(snapshot, sender.clone());
+        // Global media-key fallback, registered against the persisted hotkeys.
+        media::media_keys::spawn(sender, &self.shell.persisted.settings.hotkeys);
+    }
+
+    /// Apply one [`MediaCommand`] from MPRIS, the tray or a media key.
+    fn apply_media_command(&mut self, ctx: &egui::Context, command: MediaCommand) {
+        match command {
+            MediaCommand::PlayPause => self.playback.toggle_play_pause(),
+            MediaCommand::Play => {
+                if !self.playback.state().playing {
+                    self.playback.toggle_play_pause();
+                }
+            }
+            MediaCommand::Pause | MediaCommand::Stop => {
+                if self.playback.state().playing {
+                    self.playback.toggle_play_pause();
+                }
+            }
+            MediaCommand::Next => self.playback.next(),
+            MediaCommand::Previous => self.playback.previous(),
+            MediaCommand::SeekTo(position) => self.playback.seek(position),
+            MediaCommand::SeekBy(offset_us) => {
+                // Translate a signed microsecond offset into an absolute seek
+                // against the live position, clamped at the track bounds.
+                let state = self.playback.state();
+                let current = state.position.as_micros() as i64;
+                let target = (current + offset_us).max(0) as u64;
+                let target = std::time::Duration::from_micros(target);
+                let clamped = match &state.track {
+                    Some(track) if !track.duration.is_zero() => target.min(track.duration),
+                    _ => target,
+                };
+                self.playback.seek(clamped);
+            }
+            MediaCommand::SetVolume(volume) => self.playback.set_volume(volume),
+            MediaCommand::SetShuffle(shuffle) => self.playback.set_shuffle(shuffle),
+            MediaCommand::SetRepeat(mode) => self.playback.set_repeat(mode),
+            MediaCommand::RaiseWindow => {
+                self.window_visible = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+            MediaCommand::ToggleWindow => {
+                self.window_visible = !self.window_visible;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(self.window_visible));
+                if self.window_visible {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+            }
+            MediaCommand::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+        }
     }
 
     /// Build the Spotify Web API client from the live session and attach it to
@@ -192,6 +290,12 @@ impl SpottyfiApp {
         self.avatar_texture = None;
         self.avatar_requested = false;
         self.avatar_image.store(Arc::new(None));
+        // Reset the notifier so a fresh login's first track is not a "change".
+        self.notifier.reset();
+        self.media.publish(
+            &spottyfi_audio::PlaybackState::default(),
+            &spottyfi_audio::QueueState::default(),
+        );
     }
 }
 
@@ -207,6 +311,13 @@ impl eframe::App for SpottyfiApp {
         self.ensure_avatar_texture(&ctx);
         self.ensure_audio();
         self.ensure_api(&ctx);
+        self.ensure_media();
+
+        // Apply any commands queued by MPRIS, the tray or a media key since
+        // the last frame, before drawing this one.
+        for command in self.media.drain() {
+            self.apply_media_command(&ctx, command);
+        }
 
         let auth_state = self.auth.state();
 
@@ -215,6 +326,15 @@ impl eframe::App for SpottyfiApp {
                 let playback = self.playback.state();
                 let queue = self.playback.queue_state();
                 let engine = self.playback.status();
+
+                // Publish the live state for the desktop integrations, and
+                // fire a track-change notification if the user opted in.
+                self.media.publish(&playback, &queue);
+                let snapshot = media::MediaSnapshot::from_engine(&playback, &queue);
+                self.notifier.observe(
+                    &snapshot,
+                    self.shell.persisted.settings.notifications.track_change,
+                );
 
                 // The live post-EQ audio envelope for the waveform scrubber —
                 // a single lock-free atomic load, empty before the engine has

@@ -216,5 +216,38 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
   and build with `--features spottyfi-api/musixmatch`. See `docs/questions.md`
   #12.
 
-## Phase 12 — Platform polish `[ ]`
+## Phase 12 — Platform polish `[x]`
+
+- [x] **MPRIS2** — `org.mpris.MediaPlayer2` + `…Player` D-Bus interface via
+      `mpris-server`: publishes title / artist / album / art / position /
+      playback status, accepts Play/Pause/Next/Previous/Stop/Seek/Raise/Quit;
+      driven from the live `PlaybackState`, commands routed into the existing
+      `PlaybackController`. A background task emits `PropertiesChanged` /
+      `Seeked` so GNOME/KDE indicators stay in sync.
+- [x] **Media keys** — `global-hotkey` registers the XF86Audio* keys plus the
+      user's transport hotkeys system-wide, a fallback for WMs that do not
+      route media keys through MPRIS. Events pumped on a background thread.
+- [x] **System tray** — a `tray-icon` tray (own GTK thread) with a
+      Play/Pause / Next / Previous / Show-Hide / Quit menu; the Play/Pause
+      label and tooltip track the live playback state.
+- [x] **Single-instance** — a `single-instance` lock; a second launch asks the
+      running instance to raise its window over MPRIS `Raise`, then exits.
+- [x] **Hotkey customisation** — shortcuts are a rebindable, RON-persisted
+      `HotkeyMap`; the Settings page's Hotkeys section has a capture-the-next-
+      keypress editor with conflict detection and reset-to-defaults.
+- [x] **Track-change notifications** — `notify-rust` desktop notification on
+      track change, **off by default**, toggled in Settings ▸ Notifications.
+- [x] Tray / media-key event channels integrated with the egui loop via a
+      `MediaCommand` channel drained each frame; MPRIS runs on the tokio
+      runtime.
+- [x] CI: `libgtk-3-dev`, `libayatana-appindicator3-dev`, `libdbus-1-dev`
+      added to the apt step. `tray-icon` built with `default-features = false`
+      + `gtk` so no `libxdo` dev package is needed.
+- Notes: most of this needs a real desktop session to verify (D-Bus name
+  claim, indicators, tray rendering, media-key grabs, the raise-on-second-
+  launch hop). See `docs/questions.md` #5. Windows SMTC / macOS MediaPlayer
+  are explicitly out of scope. The Settings page (theme/density/audio/EQ)
+  already existed from WS5; Phase 12 only added its Notifications and editable
+  Hotkeys sections.
+
 ## Phase 13 — Packaging `[ ]`

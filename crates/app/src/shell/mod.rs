@@ -69,6 +69,9 @@ pub struct ShellState {
     /// The draft folder path being typed in the Settings page's Local Files
     /// section — non-persisted, scoped to this session.
     local_folder_draft: String,
+    /// The transient "capture a new shortcut" state for the Settings page's
+    /// Hotkeys section — non-persisted, scoped to this session.
+    hotkey_capture: crate::hotkeys::HotkeyCapture,
 }
 
 impl ShellState {
@@ -81,6 +84,7 @@ impl ShellState {
             session: None,
             activity: ActivityRegistry::new(),
             local_folder_draft: String::new(),
+            hotkey_capture: crate::hotkeys::HotkeyCapture::default(),
         }
     }
 
@@ -243,33 +247,43 @@ fn nav_button(
     }
 }
 
-/// Apply the `Cmd/Ctrl+W` / `+T` / `+Shift+T` keyboard shortcuts.
+/// Apply the rebindable keyboard shortcuts.
 ///
-/// Returns any [`NavRequest`] raised (a new Home tab), already handled close
-/// and reopen mutate the dock directly.
-fn apply_shortcuts(ui: &egui::Ui, persisted: &mut PersistedShell) {
-    let (close, new_tab, reopen) = ui.input(|i| {
-        let cmd = i.modifiers.command || i.modifiers.ctrl;
-        (
-            cmd && i.key_pressed(egui::Key::W),
-            cmd && !i.modifiers.shift && i.key_pressed(egui::Key::T),
-            cmd && i.modifiers.shift && i.key_pressed(egui::Key::T),
-        )
-    });
-    if close {
-        if let Some(tab) = nav::focused_tab(&persisted.dock) {
-            let PersistedShell {
-                dock, dock_extras, ..
-            } = persisted;
-            nav::close_tab(dock, dock_extras, &tab);
+/// The bindings come from the persisted [`HotkeyMap`](crate::hotkeys::
+/// HotkeyMap); at most one action fires per frame. Close / new-tab / reopen
+/// mutate the dock directly; the search-open and transport actions are
+/// reported back so the caller can route them.
+///
+/// Returns the [`HotkeyAction`] triggered this frame, if any, for the
+/// search-open and transport bindings the shell does not itself handle.
+fn apply_shortcuts(
+    ui: &egui::Ui,
+    persisted: &mut PersistedShell,
+) -> Option<crate::hotkeys::HotkeyAction> {
+    use crate::hotkeys::HotkeyAction;
+
+    let action = ui.input(|i| persisted.settings.hotkeys.triggered(i))?;
+    match action {
+        HotkeyAction::CloseTab => {
+            if let Some(tab) = nav::focused_tab(&persisted.dock) {
+                let PersistedShell {
+                    dock, dock_extras, ..
+                } = persisted;
+                nav::close_tab(dock, dock_extras, &tab);
+            }
+            None
         }
-    }
-    if new_tab {
-        // A new tab belongs in the centre tab group, not a side panel.
-        nav::open_new_tab_main(&mut persisted.dock, Tab::Home);
-    }
-    if reopen {
-        nav::reopen_last_closed(&mut persisted.dock, &mut persisted.dock_extras);
+        HotkeyAction::NewTab => {
+            // A new tab belongs in the centre tab group, not a side panel.
+            nav::open_new_tab_main(&mut persisted.dock, Tab::Home);
+            None
+        }
+        HotkeyAction::ReopenTab => {
+            nav::reopen_last_closed(&mut persisted.dock, &mut persisted.dock_extras);
+            None
+        }
+        // OpenSearch and the transport actions are routed by the caller.
+        other => Some(other),
     }
 }
 
@@ -300,19 +314,29 @@ pub fn shell(
     let mut settings_actions: Vec<crate::page::SettingsAction> = Vec::new();
     let mut copy_to_clipboard: Option<String> = None;
 
-    // `Cmd/Ctrl+W` / `+T` / `+Shift+T` — close, new Home tab, reopen closed.
-    apply_shortcuts(ui, &mut state.persisted);
+    // The rebindable keyboard shortcuts — close / new tab / reopen are handled
+    // in place; search-open and the transport actions are routed here.
+    if let Some(action) = apply_shortcuts(ui, &mut state.persisted) {
+        use crate::hotkeys::HotkeyAction;
+        match action {
+            HotkeyAction::OpenSearch => nav.push(NavRequest::replace(Tab::Search)),
+            HotkeyAction::PlayPause => {
+                intent = Some(ShellIntent::Transport(TransportIntent::TogglePlayPause));
+            }
+            HotkeyAction::NextTrack => {
+                intent = Some(ShellIntent::Transport(TransportIntent::Next));
+            }
+            HotkeyAction::PreviousTrack => {
+                intent = Some(ShellIntent::Transport(TransportIntent::Previous));
+            }
+            // The dock-mutating actions are handled inside `apply_shortcuts`.
+            HotkeyAction::CloseTab | HotkeyAction::NewTab | HotkeyAction::ReopenTab => {}
+        }
+    }
 
     // Menu bar — fixed height, drawn first so panels below dock under it.
     if let Some(i) = menu_bar(ui, state, &palette, profile, avatar, playback, &mut nav) {
         intent = Some(i);
-    }
-
-    // Ctrl/Cmd+K opens the Search page (the search box moved to the sidebar).
-    let open_search =
-        ui.input(|i| i.key_pressed(egui::Key::K) && (i.modifiers.command || i.modifiers.ctrl));
-    if open_search {
-        nav.push(NavRequest::replace(Tab::Search));
     }
 
     // Left sidebar — resizable, collapsible, real playlists.
@@ -363,6 +387,12 @@ pub fn shell(
             }
             crate::page::SettingsAction::EqualizerChanged => {
                 intent = Some(ShellIntent::EqualizerChanged);
+            }
+            crate::page::SettingsAction::HotkeysChanged => {
+                // The rebound shortcuts are persisted with the shell and read
+                // live by `apply_shortcuts`; nothing to dispatch to the
+                // engine. The global media-key registration refreshes on the
+                // next launch.
             }
         }
     }
@@ -757,6 +787,7 @@ fn dock(
         persisted,
         session,
         local_folder_draft,
+        hotkey_capture,
         ..
     } = state;
     let Some(session) = session.as_mut() else {
@@ -809,6 +840,7 @@ fn dock(
                 layout: *layout,
                 settings,
                 local_folder_draft,
+                hotkey_capture,
             },
             pinned: &dock_extras.pinned,
             intents: Vec::new(),

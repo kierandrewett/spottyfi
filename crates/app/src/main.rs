@@ -10,7 +10,9 @@ mod app;
 mod auth_controller;
 mod avatar;
 mod cli;
+mod hotkeys;
 mod login;
+mod media;
 mod page;
 mod playback_controller;
 mod settings;
@@ -28,6 +30,16 @@ fn main() -> anyhow::Result<()> {
     init_tracing(&cli);
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting Spottyfi");
+
+    // Single-instance: a second launch raises the running window and exits.
+    let instance = match crate::media::single_instance::check() {
+        crate::media::single_instance::InstanceCheck::Primary(guard) => guard,
+        crate::media::single_instance::InstanceCheck::AlreadyRunning => {
+            tracing::info!("Spottyfi is already running; raised its window and exiting");
+            return Ok(());
+        }
+    };
+
     if cli.no_audio {
         tracing::warn!("--no-audio: audio engine will not be started");
     }
@@ -55,7 +67,7 @@ fn main() -> anyhow::Result<()> {
         "Spottyfi",
         native_options,
         Box::new(move |cc| {
-            SpottyfiApp::new(cc, cli.no_audio)
+            SpottyfiApp::new(cc, cli.no_audio, instance)
                 .map(|app| Box::new(app) as Box<dyn eframe::App>)
                 .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { err.into() })
         }),

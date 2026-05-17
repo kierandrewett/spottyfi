@@ -105,8 +105,33 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
    environment variable (the PKCE flow has no client secret, so the ID is not
    sensitive). _Blocks live login in Phase 1; the code is built without it._
 
-5. **MPRIS2 + Wayland.** Smoke-test the MPRIS2 D-Bus interface on the target
-   NixOS/Wayland setup early (Phase 4), not at Phase 12.
+5. **MPRIS2 + Wayland — Phase 12 platform integration needs a live desktop.**
+   Phase 12 implemented the desktop integration; all of it builds and unit-
+   tests green, but the parts that touch the session bus / compositor / tray
+   can only be confirmed on a real Linux desktop session (CI is headless):
+
+   - **MPRIS2** — Spottyfi publishes `org.mpris.MediaPlayer2.spottyfi` via
+     `mpris-server` (zbus, on the tokio runtime). Confirm `playerctl status`
+     / `playerctl metadata` see the now-playing track, that the GNOME/KDE
+     media indicator and lock-screen widget show it and drive transport, and
+     that `Raise` / `Quit` work.
+   - **Media keys** — `global-hotkey` registers the XF86Audio* keys and the
+     user's transport hotkeys. On a full desktop the WM usually grabs the
+     XF86Audio* keys already (so registration fails harmlessly and MPRIS does
+     the work); the fallback matters on minimal/tiling WMs — verify there.
+   - **System tray** — `tray-icon` on its own GTK thread. Needs an
+     appindicator host (GNOME needs the AppIndicator extension; KDE/most
+     others have a native tray). Confirm the icon appears and the menu drives
+     playback. `libappindicator` is loaded at runtime via `dlopen`, so a
+     missing library degrades gracefully (logged, no tray) rather than
+     failing the build.
+   - **Single-instance** — a second `spottyfi` launch should raise the first
+     window (via MPRIS `Raise`) and exit. Verify the timing is not racy
+     (the MPRIS name is claimed a moment after startup).
+   - **Notifications** — off by default; enable Settings ▸ Notifications ▸
+     Track change and confirm the freedesktop notification daemon shows them.
+
+   Windows SMTC and macOS MediaPlayer remain explicitly out of scope.
 
 6. **Audio backend on PipeWire.** `rodio` goes through ALSA; on PipeWire it
    works via the ALSA shim. Confirm acceptable, or plan a `pipewire-rs` backend.
