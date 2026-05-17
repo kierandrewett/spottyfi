@@ -216,6 +216,15 @@ impl eframe::App for SpottyfiApp {
                 let queue = self.playback.queue_state();
                 let engine = self.playback.status();
 
+                // The live post-EQ audio envelope for the waveform scrubber —
+                // a single lock-free atomic load, empty before the engine has
+                // produced any audio (WS7).
+                let waveform = self
+                    .playback
+                    .audio_tap()
+                    .map(|tap| tap.snapshot().waveform.clone())
+                    .unwrap_or_default();
+
                 // The transport panel is added before the shell's central
                 // dock so the dock fills the space above it.
                 let transport_intent = transport::transport_bar(
@@ -224,6 +233,7 @@ impl eframe::App for SpottyfiApp {
                     &mut self.transport_ui,
                     &playback,
                     &queue,
+                    &waveform,
                 );
 
                 let shell_intent = shell::shell(
@@ -235,6 +245,7 @@ impl eframe::App for SpottyfiApp {
                     &queue,
                     &mut self.transport_ui,
                     &engine,
+                    &self.playback.spectrum(),
                 );
 
                 if let Some(intent) = transport_intent {

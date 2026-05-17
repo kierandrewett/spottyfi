@@ -184,6 +184,22 @@ impl SpectrumAnalyzer {
         runtime.spawn(analyzer.clone().run(tap, wake));
         analyzer
     }
+
+    /// Spawn an analysis loop that publishes into an *existing* analyser.
+    ///
+    /// Use this when the read handle must be created up front (so the UI has a
+    /// stable handle) but the analysis task can only start once the audio tap
+    /// exists — i.e. when the engine is started or restarted. The new task
+    /// publishes into `analyzer`; an earlier task left running simply stops
+    /// having any visible effect once this one takes over the snapshot.
+    pub fn spawn_into(
+        analyzer: &Self,
+        runtime: &tokio::runtime::Handle,
+        tap: AudioTap,
+        wake: impl Fn() + Send + 'static,
+    ) {
+        runtime.spawn(analyzer.clone().run(tap, wake));
+    }
 }
 
 impl Default for SpectrumAnalyzer {

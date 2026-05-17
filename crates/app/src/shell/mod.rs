@@ -28,7 +28,7 @@ pub use tabs::{DockIntent, Tab, TabCommand};
 use crate::page::{IncrementalLoad, PageRegistry, PageServices};
 use crate::playback_controller::EngineStatus;
 use crate::transport::{TransportIntent, TransportUiState};
-use spottyfi_audio::{PlaybackState, QueueState};
+use spottyfi_audio::{PlaybackState, QueueState, SpectrumAnalyzer};
 use tabs::{NavRequest, ShellTabViewer, TabContext};
 
 /// Something the user asked the shell to do this frame.
@@ -283,6 +283,7 @@ pub fn shell(
     queue: &QueueState,
     transport_ui: &mut TransportUiState,
     engine: &EngineStatus,
+    spectrum: &SpectrumAnalyzer,
 ) -> Option<ShellIntent> {
     let palette = state.persisted.theme.palette();
     let mut intent = None;
@@ -317,7 +318,16 @@ pub fn shell(
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(palette.base))
         .show_inside(ui, |ui| {
-            for dock_intent in dock(ui, state, &palette, playback, queue, transport_ui, engine) {
+            for dock_intent in dock(
+                ui,
+                state,
+                &palette,
+                playback,
+                queue,
+                transport_ui,
+                engine,
+                spectrum,
+            ) {
                 match dock_intent {
                     DockIntent::Transport(t) => intent = Some(ShellIntent::Transport(t)),
                     DockIntent::Open(tab) => nav.push(NavRequest::replace(tab)),
@@ -457,7 +467,7 @@ fn menu_bar(
                         }
                     });
                     ui.separator();
-                    for tab in [Tab::NowPlayingArt, Tab::Queue, Tab::Debug] {
+                    for tab in [Tab::NowPlayingArt, Tab::Queue, Tab::Visualiser, Tab::Debug] {
                         let present = state.persisted.dock.find_tab(&tab).is_some();
                         if ui
                             .add_enabled(
@@ -728,6 +738,7 @@ fn dock(
     queue: &QueueState,
     transport_ui: &mut TransportUiState,
     engine: &EngineStatus,
+    spectrum: &SpectrumAnalyzer,
 ) -> Vec<DockIntent> {
     // Borrow the session and the persisted state as disjoint fields so the
     // page registry, the dock tree, the dock extras and the Settings view can
@@ -768,6 +779,7 @@ fn dock(
         dock_extras,
         layout,
         settings,
+        visualiser_mode,
         ..
     } = persisted;
 
@@ -779,6 +791,8 @@ fn dock(
             transport_ui,
             engine,
             pages: &mut session.pages,
+            spectrum,
+            visualiser_mode,
             settings_view: tabs::SettingsView {
                 theme,
                 density,

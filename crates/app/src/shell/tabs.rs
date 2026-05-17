@@ -11,8 +11,9 @@
 //! [`PageRegistry`](crate::page::PageRegistry) keyed by `Tab`.
 
 use serde::{Deserialize, Serialize};
-use spottyfi_audio::{PlaybackState, QueueState, QueueTrack};
+use spottyfi_audio::{PlaybackState, QueueState, QueueTrack, SpectrumAnalyzer};
 use spottyfi_ui::theme::Palette;
+use spottyfi_ui::visualiser::VisualiserMode;
 
 use spottyfi_ui::components::Density;
 use spottyfi_ui::theme::Theme;
@@ -65,6 +66,8 @@ pub enum Tab {
     NowPlayingArt,
     /// The play queue panel.
     Queue,
+    /// The audio visualiser panel: a live FFT spectrum analyser.
+    Visualiser,
     /// The debug panel: the "paste a URI and play" control.
     Debug,
 }
@@ -94,6 +97,7 @@ impl Tab {
             Tab::Placeholder(_) => "Coming soon",
             Tab::NowPlayingArt => "Now Playing",
             Tab::Queue => "Queue",
+            Tab::Visualiser => "Visualiser",
             Tab::Debug => "Debug",
         }
     }
@@ -128,7 +132,12 @@ impl Tab {
     pub fn is_panel(&self) -> bool {
         matches!(
             self,
-            Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Placeholder(_) | Tab::Settings
+            Tab::NowPlayingArt
+                | Tab::Queue
+                | Tab::Visualiser
+                | Tab::Debug
+                | Tab::Placeholder(_)
+                | Tab::Settings
         )
     }
 
@@ -256,6 +265,10 @@ pub struct TabContext<'a> {
     pub engine: &'a EngineStatus,
     /// The live page objects, keyed by tab.
     pub pages: &'a mut PageRegistry,
+    /// The off-thread spectrum analyser the visualiser panel reads.
+    pub spectrum: &'a SpectrumAnalyzer,
+    /// The selected visualiser mode, toggled from within the panel.
+    pub visualiser_mode: &'a mut VisualiserMode,
     /// The mutable shell state the Settings tab renders against.
     pub settings_view: SettingsView<'a>,
     /// A read-only view of the pinned-tab set, so the right-click menu can
@@ -371,6 +384,7 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
                             self.ctx.intents.push(DockIntent::Transport(intent));
                         }
                     }
+                    Tab::Visualiser => visualiser_tab(ui, &mut self.ctx),
                     Tab::Placeholder(name) => placeholder_tab(ui, &self.ctx, name),
                     Tab::Settings => {
                         let view = &mut self.ctx.settings_view;
@@ -475,6 +489,71 @@ fn now_playing_art_tab(ui: &mut egui::Ui, ctx: &TabContext<'_>) {
             }
         }
     });
+}
+
+/// The audio-visualiser panel (WS7): a live FFT spectrum analyser, with an
+/// oscilloscope mode toggle.
+///
+/// The FFT runs off the UI thread — this panel only reads the analyser's
+/// published [`SpectrumSnapshot`](spottyfi_audio::SpectrumSnapshot) (a single
+/// lock-free load) and draws it via the `spottyfi_ui::visualiser` painters.
+/// When nothing is playing the snapshot reports idle and the painters degrade
+/// to a calm flat baseline.
+fn visualiser_tab(ui: &mut egui::Ui, ctx: &mut TabContext<'_>) {
+    use spottyfi_ui::visualiser::{self, VisualiserMode};
+
+    let palette = ctx.palette;
+    let snapshot = ctx.spectrum.snapshot();
+
+    // The mode toggle row — a pair of flat segmented buttons.
+    ui.horizontal(|ui| {
+        spottyfi_ui::components::section_header(ui, &palette, "Visualiser");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            for mode in VisualiserMode::all().into_iter().rev() {
+                let selected = *ctx.visualiser_mode == mode;
+                if ui.selectable_label(selected, mode.label()).clicked() {
+                    *ctx.visualiser_mode = mode;
+                }
+            }
+        });
+    });
+    ui.add_space(6.0);
+
+    // The visualisation fills the rest of the panel.
+    let rect = ui.available_rect_before_wrap();
+    if rect.width() > 1.0 && rect.height() > 1.0 {
+        let painter = ui.painter_at(rect);
+        // A flat near-black backdrop, matching the dense reference look.
+        painter.rect_filled(rect, 0.0, palette.base);
+        let inner = rect.shrink(6.0);
+        match *ctx.visualiser_mode {
+            VisualiserMode::Spectrum => {
+                visualiser::spectrum_bars(&painter, &palette, inner, &snapshot.bands);
+            }
+            VisualiserMode::Oscilloscope => {
+                visualiser::oscilloscope(&painter, &palette, inner, &snapshot.scope);
+            }
+        }
+        ui.allocate_rect(rect, egui::Sense::hover());
+
+        // An "idle" hint when there is no live audio, so a frozen-looking
+        // panel reads as deliberate rather than broken.
+        if !snapshot.active {
+            let hint = ui.painter_at(rect);
+            hint.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "No audio playing",
+                egui::FontId::new(12.0, spottyfi_ui::fonts::medium()),
+                palette.text_muted,
+            );
+        }
+    }
+
+    // While audio is live the analyser wakes the UI on each publish; nudge a
+    // repaint anyway so the bars keep decaying smoothly right after a stop.
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(33));
 }
 
 /// The fixed height of a queue-panel row — dense and flat.

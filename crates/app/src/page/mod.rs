@@ -239,8 +239,11 @@ fn build_page(tab: &Tab, services: &PageServices) -> Box<dyn Page> {
         Tab::MadeForYou => Box::new(MadeForYouPage::new(services)),
         // Panels are not pages; the registry is only consulted for page tabs.
         // `Settings` is self-rendered by the shell, not registry-backed.
-        Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Placeholder(_) | Tab::Settings => {
-            Box::new(HomePage::new(services))
-        }
+        Tab::NowPlayingArt
+        | Tab::Queue
+        | Tab::Visualiser
+        | Tab::Debug
+        | Tab::Placeholder(_)
+        | Tab::Settings => Box::new(HomePage::new(services)),
     }
 }

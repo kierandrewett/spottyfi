@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use spottyfi_ui::components::Density;
 use spottyfi_ui::theme::Theme;
+use spottyfi_ui::visualiser::VisualiserMode;
 
 use super::dock_model::DockExtras;
 use super::tabs::Tab;
@@ -94,6 +95,10 @@ pub struct PersistedShell {
     /// settings defaults.
     #[serde(default)]
     pub settings: AppSettings,
+    /// The selected audio-visualiser mode (spectrum / oscilloscope).
+    /// `#[serde(default)]` so a pre-WS7 file loads with the spectrum default.
+    #[serde(default)]
+    pub visualiser_mode: VisualiserMode,
 }
 
 impl Default for PersistedShell {
@@ -108,6 +113,7 @@ impl Default for PersistedShell {
             dock_extras: DockExtras::default(),
             layout: Layout::default(),
             settings: AppSettings::default(),
+            visualiser_mode: VisualiserMode::default(),
         }
     }
 }
@@ -179,7 +185,7 @@ fn config_path() -> Option<PathBuf> {
 
 /// Build the first-launch dock layout from `docs/docking.md`:
 /// a centre group with one Home tab, and a right column with the Now Playing
-/// Art panel above the Queue panel.
+/// Art panel above a Queue / Visualiser tab group.
 #[must_use]
 pub fn default_dock() -> egui_dock::DockState<Tab> {
     use egui_dock::{NodeIndex, SurfaceIndex};
@@ -189,8 +195,9 @@ pub fn default_dock() -> egui_dock::DockState<Tab> {
 
     // Right column: take 26% of the width for the panel stack.
     let [_, right] = dock[surface].split_right(NodeIndex::root(), 0.74, vec![Tab::NowPlayingArt]);
-    // Stack the Queue below the Now Playing Art panel.
-    dock[surface].split_below(right, 0.55, vec![Tab::Queue]);
+    // Stack the Queue and the audio Visualiser as a tab group below the Now
+    // Playing Art panel — the Visualiser is one tab over from the Queue.
+    dock[surface].split_below(right, 0.55, vec![Tab::Queue, Tab::Visualiser]);
 
     dock
 }

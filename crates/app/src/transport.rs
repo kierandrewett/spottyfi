@@ -115,6 +115,7 @@ pub fn transport_bar(
     ui_state: &mut TransportUiState,
     playback: &PlaybackState,
     queue: &QueueState,
+    waveform: &[f32],
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
@@ -160,7 +161,9 @@ pub fn transport_bar(
                     .max_rect(centre_rect)
                     .layout(egui::Layout::top_down(egui::Align::Center)),
             );
-            if let Some(i) = centre_controls(&mut centre, palette, ui_state, playback, queue) {
+            if let Some(i) =
+                centre_controls(&mut centre, palette, ui_state, playback, queue, waveform)
+            {
                 intent = Some(i);
             }
 
@@ -230,14 +233,16 @@ fn centre_controls(
     ui_state: &mut TransportUiState,
     playback: &PlaybackState,
     queue: &QueueState,
+    waveform: &[f32],
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
     // The two stacked rows have a fixed combined height; centre the block
-    // vertically within the band, then lay the rows top-down inside it.
+    // vertically within the band, then lay the rows top-down inside it. The
+    // scrubber row is tall enough for the live waveform to read clearly.
     const CONTROL_ROW_H: f32 = PLAY_BUTTON_DIAMETER;
-    const SCRUBBER_ROW_H: f32 = 14.0;
-    const ROW_GAP: f32 = 4.0;
+    const SCRUBBER_ROW_H: f32 = 18.0;
+    const ROW_GAP: f32 = 2.0;
     let block_height = CONTROL_ROW_H + ROW_GAP + SCRUBBER_ROW_H;
     let band = ui.available_rect_before_wrap();
     let width = band.width();
@@ -255,7 +260,7 @@ fn centre_controls(
         intent = Some(i);
     }
     // The seek scrubber row, spanning the full block width.
-    if let Some(i) = scrubber_row(&mut block, palette, ui_state, playback, width) {
+    if let Some(i) = scrubber_row(&mut block, palette, ui_state, playback, width, waveform) {
         intent = Some(i);
     }
 
@@ -403,10 +408,16 @@ fn play_button(ui: &mut egui::Ui, palette: &Palette, playback: &PlaybackState) -
 }
 
 /// The fixed height of the seek-scrubber row.
-const SCRUBBER_HEIGHT: f32 = 14.0;
+const SCRUBBER_HEIGHT: f32 = 18.0;
 
 /// The seek scrubber row: elapsed / total readouts flanking the custom
 /// [`Scrubber`] widget.
+///
+/// The scrubber is drawn as a **live rolling waveform** — the post-EQ audio
+/// envelope from the engine's tap, played portion accent-filled, like the
+/// internal Spotify client's waveform seek bar. With no audio (paused,
+/// pre-playback) the envelope is empty and the widget falls back to the plain
+/// capsule. Hover-preview and click/drag-to-seek work identically either way.
 ///
 /// The displayed elapsed time follows the dragged position while a drag is in
 /// progress; the actual [`TransportIntent::Seek`] is emitted only on release
@@ -417,6 +428,7 @@ fn scrubber_row(
     ui_state: &mut TransportUiState,
     playback: &PlaybackState,
     width: f32,
+    waveform: &[f32],
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
@@ -441,11 +453,17 @@ fn scrubber_row(
             ui.add_space(READOUT_W);
 
             let track_width = (ui.available_width() - READOUT_W).max(60.0);
+            // The waveform only reads while a track is actually playing; when
+            // paused or stopped the envelope is fed empty so the scrubber
+            // degrades to the plain capsule rather than freezing on stale audio.
+            let live_waveform: &[f32] = if playback.playing { waveform } else { &[] };
             let scrub = Scrubber::new(palette, "transport-seek")
                 .width(track_width)
-                .track_thickness(4.0)
-                .knob_radius(6.0)
+                .height(SCRUBBER_HEIGHT)
+                .track_thickness(3.0)
+                .knob_radius(5.0)
                 .enabled(!duration.is_zero())
+                .waveform(live_waveform)
                 .show(ui, &mut ui_state.seek, live_fraction);
 
             if let Some(fraction) = scrub.committed {

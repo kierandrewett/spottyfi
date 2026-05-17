@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use spottyfi_audio::{
-    EngineConfig, PlaybackController, PlaybackState, QueueState, QueueTrack, SharedPlaybackState,
-    SharedQueueState,
+    AudioTap, EngineConfig, PlaybackController, PlaybackState, QueueState, QueueTrack,
+    SharedPlaybackState, SharedQueueState, SpectrumAnalyzer,
 };
 use spottyfi_auth::Session;
 use tokio::runtime::Handle;
@@ -60,6 +60,13 @@ pub struct PlaybackControllerHandle {
     /// becomes ready. Held here so a start (or restart) always begins with the
     /// user's persisted EQ rather than the engine default (a flat bypass).
     equalizer: (bool, [f32; spottyfi_audio::EQ_BAND_COUNT]),
+    /// The post-EQ audio tap, published once the engine is ready. The UI's
+    /// waveform scrubber reads it; `None` before the engine starts.
+    tap: Arc<ArcSwap<Option<AudioTap>>>,
+    /// The off-thread spectrum analyser the visualiser panel reads. Created
+    /// once up front so its handle is stable; its analysis task is (re)spawned
+    /// against the live tap each time the engine starts.
+    spectrum: SpectrumAnalyzer,
 }
 
 impl PlaybackControllerHandle {
@@ -80,7 +87,26 @@ impl PlaybackControllerHandle {
             session: None,
             engine_config: EngineConfig::default(),
             equalizer: (false, [0.0; spottyfi_audio::EQ_BAND_COUNT]),
+            tap: Arc::new(ArcSwap::from_pointee(None)),
+            spectrum: SpectrumAnalyzer::new(),
         }
+    }
+
+    /// The post-EQ audio tap, once the engine is running.
+    ///
+    /// The transport's waveform scrubber snapshots this each frame; `None`
+    /// before the audio engine has started (pre-login, `--no-audio`, or a
+    /// restart in flight).
+    pub fn audio_tap(&self) -> Option<AudioTap> {
+        self.tap.load_full().as_ref().clone()
+    }
+
+    /// The shared spectrum-analyser handle the visualiser panel reads.
+    ///
+    /// The handle is stable for the controller's lifetime; the analysis task
+    /// behind it is (re)spawned when the engine starts.
+    pub fn spectrum(&self) -> SpectrumAnalyzer {
+        self.spectrum.clone()
     }
 
     /// The current playback-state snapshot.
@@ -142,6 +168,9 @@ impl PlaybackControllerHandle {
         self.controller.store(Arc::new(None));
         self.state.store(Arc::new(PlaybackState::default()));
         self.queue_state.store(Arc::new(QueueState::default()));
+        // Drop the stale tap; `spawn_start` publishes the new engine's tap and
+        // re-spawns the analyser against it once the engine is ready.
+        self.tap.store(Arc::new(None));
         self.spawn_start(session, config);
     }
 
@@ -154,6 +183,8 @@ impl PlaybackControllerHandle {
         let status = Arc::clone(&self.status);
         let state_slot = Arc::clone(&self.state);
         let queue_slot = Arc::clone(&self.queue_state);
+        let tap_slot = Arc::clone(&self.tap);
+        let spectrum = self.spectrum.clone();
         let (eq_enabled, eq_gains) = self.equalizer;
 
         Self::publish_status(&status, &egui_ctx, EngineStatus::Starting);
@@ -175,6 +206,17 @@ impl PlaybackControllerHandle {
                     if let Err(err) = controller.set_equalizer(eq_enabled, eq_gains).await {
                         tracing::warn!(%err, "applying startup equaliser failed");
                     }
+                    // Publish the post-EQ audio tap and spawn the off-thread
+                    // spectrum analyser against it — the transport waveform
+                    // and the visualiser panel read these (WS7).
+                    let tap = controller.audio_tap();
+                    {
+                        let ctx = egui_ctx.clone();
+                        SpectrumAnalyzer::spawn_into(&spectrum, &runtime, tap.clone(), move || {
+                            ctx.request_repaint();
+                        });
+                    }
+                    tap_slot.store(Arc::new(Some(tap)));
                     // Mirror the engine's playback and queue state into our
                     // shared slots, waking the UI whenever either changes.
                     Self::bridge_snapshot(&runtime, &egui_ctx, controller.state(), state_slot);
@@ -200,6 +242,7 @@ impl PlaybackControllerHandle {
         self.controller.store(Arc::new(None));
         self.state.store(Arc::new(PlaybackState::default()));
         self.queue_state.store(Arc::new(QueueState::default()));
+        self.tap.store(Arc::new(None));
         self.status.store(Arc::new(EngineStatus::Idle));
         self.start_requested = false;
         self.session = None;
