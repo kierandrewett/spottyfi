@@ -479,7 +479,16 @@ fn scrubber_row(
                 )
                 .gap(12.0)
                 .show(|ui| {
-                    ui.label(fmt_duration(at));
+                    // Extend, not wrap — without this the narrow tooltip box
+                    // breaks "3:54" onto one character per line.
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(fmt_duration(at))
+                                .size(11.0)
+                                .color(palette.text),
+                        )
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                    );
                 });
             }
 
