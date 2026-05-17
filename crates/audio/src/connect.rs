@@ -163,7 +163,10 @@ impl ConnectDevice {
             .activate()
             .map_err(|err| AudioError::Connect(err.to_string()))?;
 
-        tracing::info!(device = DEVICE_NAME, "registered as a spotify connect device");
+        tracing::info!(
+            device = DEVICE_NAME,
+            "registered as a spotify connect device"
+        );
         Ok(Self { spirc })
     }
 

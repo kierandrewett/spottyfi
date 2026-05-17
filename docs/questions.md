@@ -5,6 +5,48 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
 
 ## Open
 
+11. **Spotify Connect device — scope & limitations (WS4).** Spottyfi now
+    registers as a real Spotify Connect device ("Spottyfi", a *computer*
+    device type) via librespot 0.8's `librespot-connect` / `Spirc`. The
+    integration is deliberately narrow, to avoid rewriting Phase 8's queue:
+
+    - **What works.** The device is visible in the account's Connect picker.
+      Spottyfi's own queue (`queue.rs`) stays authoritative — it still decides
+      ordering, next/prev, shuffle and repeat. Each track the queue picks is
+      handed to `Spirc` as a **one-track load** (`LoadRequest::from_tracks`,
+      the same shape as the Web API's "play these URIs" call). `Spirc` then
+      drives the librespot `Player`, tracks play/pause/position from the
+      player-event stream, and reports the now-playing state to Spotify — so
+      **plays land in listening history and scrobble**. Pause / resume / seek
+      / volume stay as direct `Player`/mixer calls; `Spirc` observes the
+      resulting `PlayerEvent`s and folds them into the state it reports.
+    - **Known limitations / tradeoffs.**
+      1. **No transfer / remote control.** Transferring playback *to*
+         Spottyfi from another device, or driving Spottyfi's queue from the
+         phone/web app, is **not wired**. Spottyfi calls `Spirc::activate()`
+         to become the active device, but it does not handle inbound transfer
+         state or remote `next`/`prev`/`load` commands against its own queue
+         (those would need Phase 8's queue to be driven by `Spirc`, the
+         rewrite WS4 was scoped to avoid). Remote *volume* changes from
+         another device are reflected, because they flow through the shared
+         mixer.
+      2. **One-track context.** Because each load is a single track, the
+         Connect "up next" list shown on *other* devices reflects only the
+         current track, not Spottyfi's full queue. Spottyfi's own queue panel
+         is unaffected and remains complete.
+      3. **Autoplay log noise.** When a one-track context ends, `Spirc` may
+         attempt to resolve an autoplay context for the synthetic
+         `spotify:web-api` context URI and fail (logged as an error by
+         librespot). This is harmless — Spottyfi's auto-advance loads the
+         next queue track regardless — but it is visible in `RUST_LOG`.
+    - **Needs a live Premium account to verify.** Device visibility, history
+      and scrobble can only be confirmed against a real account: check the
+      device appears in the Spotify app's device list, that played tracks
+      show up under "Recently played", and (if Last.fm scrobbling is wired to
+      the account) that they scrobble. librespot rejects free accounts at the
+      AP handshake, so this is Premium-only — the same constraint as Phase 2
+      playback.
+
 10. **Podcast / audiobook search (Phase 6).** The Search page ships with a
     **Podcasts** category tab, but it currently renders an explanatory note
     instead of results: the `api` crate's `SearchType` enum

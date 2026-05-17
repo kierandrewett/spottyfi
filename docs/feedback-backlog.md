@@ -31,10 +31,14 @@ one at a time). `[ ]` todo · `[~]` in progress · `[x]` done.
 - [x] Shuffle support
 - [x] Repeat: off / repeat-all / repeat-one
 
-## WS4 — Spotify Connect device `[ ]`
-- [ ] Register Spottyfi as a Spotify Connect device so plays land in Spotify
+## WS4 — Spotify Connect device `[x]`
+- [x] Register Spottyfi as a Spotify Connect device so plays land in Spotify
       listening history / scrobble. (Significant — librespot-connect / spirc;
-      Phase 2 deliberately deferred this.)
+      Phase 2 deliberately deferred this.) Implemented via librespot 0.8
+      `Spirc`: the device is visible to the account and each track the queue
+      picks is loaded through `Spirc` so plays report to Spotify. Phase 8's
+      queue stays authoritative; transfer/remote-control is out of scope —
+      see `docs/questions.md` #11.
 
 ## WS5 — Settings & account UI `[~]`
 - [x] Proper Settings page — audio settings, local files, equalizer, and other
