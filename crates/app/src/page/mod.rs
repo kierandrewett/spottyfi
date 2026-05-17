@@ -27,6 +27,7 @@ mod home;
 mod incremental;
 mod library;
 mod liked;
+mod lyrics;
 mod made_for_you;
 mod new_releases;
 mod playlist;
@@ -40,6 +41,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use spottyfi_api::lastfm::LastfmClient;
+use spottyfi_api::lyrics::LyricsService;
 use spottyfi_api::SpotifyApi;
 use spottyfi_audio::PlaybackState;
 use spottyfi_state::ActivityRegistry;
@@ -59,6 +61,7 @@ pub use charts::ChartsPage;
 pub use home::HomePage;
 pub use library::LibraryPage;
 pub use liked::LikedSongsPage;
+pub use lyrics::LyricsPanel;
 pub use made_for_you::MadeForYouPage;
 pub use new_releases::NewReleasesPage;
 pub use playlist::PlaylistPage;
@@ -79,6 +82,12 @@ pub struct PageServices {
     /// gracefully, showing the Spotify category grid and a calm "set the key"
     /// note in place of the Last.fm-backed sections.
     pub lastfm: Option<LastfmClient>,
+    /// The lyrics source layer used by the Lyrics panel.
+    ///
+    /// Always present, but reports no source when neither the `musixmatch`
+    /// feature + key nor `SPOTTYFI_LYRICS_TOKEN` is configured — in which case
+    /// the Lyrics panel shows a calm "no lyrics source configured" state.
+    pub lyrics: LyricsService,
     /// The tokio runtime the async loads are spawned onto.
     pub runtime: Handle,
     /// The egui context, woken when a load resolves.
@@ -115,6 +124,8 @@ pub enum PageAction {
     PlayNext(spottyfi_audio::QueueTrack),
     /// Add a track to the end of the manual queue.
     Enqueue(spottyfi_audio::QueueTrack),
+    /// Seek the current track to the given position (a lyric-line click).
+    Seek(std::time::Duration),
     /// Open (navigate to) another page tab.
     Open(Tab),
     /// Copy a string (a Spotify URI) to the system clipboard.
@@ -237,6 +248,9 @@ fn build_page(tab: &Tab, services: &PageServices) -> Box<dyn Page> {
         Tab::Charts => Box::new(ChartsPage::new(services)),
         Tab::NewReleases => Box::new(NewReleasesPage::new(services)),
         Tab::MadeForYou => Box::new(MadeForYouPage::new(services)),
+        // The Lyrics panel is registry-backed (it needs `PageServices` to
+        // fetch lyrics) even though it is docked like an auxiliary panel.
+        Tab::Lyrics => Box::new(LyricsPanel::new(services)),
         // Panels are not pages; the registry is only consulted for page tabs.
         // `Settings` is self-rendered by the shell, not registry-backed.
         Tab::NowPlayingArt

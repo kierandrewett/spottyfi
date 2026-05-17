@@ -68,6 +68,8 @@ pub enum Tab {
     Queue,
     /// The audio visualiser panel: a live FFT spectrum analyser.
     Visualiser,
+    /// The lyrics panel: synced/plain lyrics for the current track.
+    Lyrics,
     /// The debug panel: the "paste a URI and play" control.
     Debug,
 }
@@ -98,6 +100,7 @@ impl Tab {
             Tab::NowPlayingArt => "Now Playing",
             Tab::Queue => "Queue",
             Tab::Visualiser => "Visualiser",
+            Tab::Lyrics => "Lyrics",
             Tab::Debug => "Debug",
         }
     }
@@ -445,6 +448,7 @@ fn page_action_to_intent(action: PageAction, new_tab: bool) -> DockIntent {
         }),
         PageAction::PlayNext(track) => DockIntent::Transport(TransportIntent::PlayNext(track)),
         PageAction::Enqueue(track) => DockIntent::Transport(TransportIntent::Enqueue(track)),
+        PageAction::Seek(pos) => DockIntent::Transport(TransportIntent::Seek(pos)),
         PageAction::Open(tab) if new_tab => DockIntent::OpenInNewTab(tab),
         PageAction::Open(tab) => DockIntent::Open(tab),
         PageAction::CopyToClipboard(text) => DockIntent::CopyToClipboard(text),

@@ -30,8 +30,8 @@ pub enum Layout {
     /// Now Playing Art over Queue.
     #[default]
     Default,
-    /// Compact, table-dense: the Queue (and Lyrics, once Phase 11 ships it)
-    /// docked in a right column, density nudged to compact.
+    /// Compact, table-dense: the Lyrics panel over the Queue, docked in a
+    /// right column, density nudged to compact.
     PowerUser,
     /// A single centre tab, no right-hand panel column.
     Minimal,
@@ -202,14 +202,12 @@ pub fn default_dock() -> egui_dock::DockState<Tab> {
     dock
 }
 
-/// Build the **Power user** layout: a centre Home tab with the Queue docked in
-/// a slim right column.
+/// Build the **Power user** layout: a centre Home tab with the Lyrics panel
+/// stacked over the Queue in a slim right column.
 ///
-/// The Lyrics panel lands in Phase 11; this layout is forward-compatible —
-/// once a `Tab::Lyrics` variant exists it can be stacked above the Queue here.
-/// Until then the layout degrades gracefully to Queue-only, exactly as
-/// specified. Switching to this layout also nudges the density to compact (see
-/// [`Layout::PowerUser`] handling in the View menu).
+/// Phase 11 wired the Lyrics panel into the forward-compat slot this layout
+/// reserved for it. Switching to this layout also nudges the density to
+/// compact (see [`Layout::PowerUser`] handling in the View menu).
 #[must_use]
 pub fn power_user_dock() -> egui_dock::DockState<Tab> {
     use egui_dock::{NodeIndex, SurfaceIndex};
@@ -217,9 +215,10 @@ pub fn power_user_dock() -> egui_dock::DockState<Tab> {
     let mut dock = egui_dock::DockState::new(vec![Tab::Home]);
     let surface = SurfaceIndex::main();
 
-    // A slim right column for the Queue panel — narrower than Default's, so
-    // the dense centre tables get more width.
-    dock[surface].split_right(NodeIndex::root(), 0.8, vec![Tab::Queue]);
+    // A slim right column — narrower than Default's, so the dense centre
+    // tables get more width. Lyrics on top, the Queue stacked below it.
+    let [_, right] = dock[surface].split_right(NodeIndex::root(), 0.8, vec![Tab::Lyrics]);
+    dock[surface].split_below(right, 0.55, vec![Tab::Queue]);
 
     dock
 }

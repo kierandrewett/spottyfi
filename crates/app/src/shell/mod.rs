@@ -101,9 +101,13 @@ impl ShellState {
                 None
             }
         };
+        // The lyrics source layer. With no provider configured this still
+        // builds — the Lyrics panel then shows a calm "no source" note.
+        let lyrics = spottyfi_api::lyrics::LyricsService::from_env();
         let services = PageServices {
             api: Arc::clone(&api),
             lastfm,
+            lyrics,
             runtime: runtime.clone(),
             ctx: ctx.clone(),
             activity: Arc::clone(&self.activity),
@@ -467,7 +471,13 @@ fn menu_bar(
                         }
                     });
                     ui.separator();
-                    for tab in [Tab::NowPlayingArt, Tab::Queue, Tab::Visualiser, Tab::Debug] {
+                    for tab in [
+                        Tab::NowPlayingArt,
+                        Tab::Queue,
+                        Tab::Visualiser,
+                        Tab::Lyrics,
+                        Tab::Debug,
+                    ] {
                         let present = state.persisted.dock.find_tab(&tab).is_some();
                         if ui
                             .add_enabled(

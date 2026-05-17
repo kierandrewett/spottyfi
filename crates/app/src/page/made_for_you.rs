@@ -233,6 +233,7 @@ mod tests {
         let services = PageServices {
             api: Arc::new(MockSpotifyApi::new()),
             lastfm: None,
+            lyrics: Default::default(),
             runtime: runtime.handle().clone(),
             ctx: egui::Context::default(),
             activity: spottyfi_state::ActivityRegistry::new(),
