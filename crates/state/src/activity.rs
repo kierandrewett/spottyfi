@@ -34,7 +34,10 @@ pub struct Activity {
 /// The interior of one activity entry, including its cancel hook.
 struct Entry {
     activity: Activity,
-    /// Invoked when the user cancels the activity; aborts the underlying task.
+    /// Invoked when the user cancels the activity. It should signal the
+    /// underlying task to stop — typically by tripping a shared cancel flag
+    /// the task observes — rather than aborting it outright, so a task that
+    /// owns a `poll_promise` `Sender` is never dropped mid-flight.
     cancel: Option<Box<dyn FnOnce() + Send>>,
 }
 
@@ -76,8 +79,11 @@ impl ActivityRegistry {
     /// Register a new activity that the user may cancel.
     ///
     /// `cancel` is invoked at most once — when the user clicks the cancel
-    /// affordance, or never if the activity finishes first. It should abort the
-    /// underlying task (drop its `JoinHandle`, trip a token, …).
+    /// affordance, or never if the activity finishes first. It should signal
+    /// the underlying task to stop, typically by tripping a shared cancel flag
+    /// the task observes. It must **not** abort a task that owns a
+    /// `poll_promise` `Sender`: dropping that `Sender` unsent panics the next
+    /// poll of the owning `Promise`.
     pub fn register_cancellable(
         &self,
         label: impl Into<String>,

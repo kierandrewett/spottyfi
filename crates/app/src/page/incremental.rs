@@ -11,7 +11,15 @@
 //!
 //! Like [`Loadable`](super::Loadable) it registers a cancellable activity in
 //! the shared [`ActivityRegistry`] so the menu-bar indicator reflects the load.
+//!
+//! ## Cancellation
+//!
+//! Like [`Loadable`](super::Loadable), cancelling trips a shared
+//! [`AtomicBool`] rather than aborting the task. The streaming task observes
+//! the flag between items and stops; the snapshot exposes `cancelled` so the
+//! page can render a calm cancelled state instead of an endless spinner.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use futures::stream::Stream;
@@ -46,12 +54,17 @@ pub struct LoadSnapshot<'a, T> {
     pub done: bool,
     /// `Some(err)` if the stream ended on a page error.
     pub error: Option<&'a ApiError>,
+    /// `true` once the user has cancelled the load. The streaming task stops
+    /// promptly; `items` holds whatever arrived before the cancellation.
+    pub cancelled: bool,
 }
 
 /// A paginated load that streams its items into shared state incrementally.
 pub struct IncrementalLoad<T: Send + 'static> {
     /// The shared state the runtime task appends to and the UI reads.
     shared: Arc<Mutex<Shared<T>>>,
+    /// Tripped by the activity-cancel hook; observed by the streaming task.
+    cancelled: Arc<AtomicBool>,
 }
 
 impl<T: Send + 'static> IncrementalLoad<T> {
@@ -73,9 +86,13 @@ impl<T: Send + 'static> IncrementalLoad<T> {
         let shared: Arc<Mutex<Shared<T>>> = Arc::new(Mutex::new(Shared::default()));
         let task_shared = Arc::clone(&shared);
         let ctx = ctx.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
 
         let registry_finish = Arc::clone(registry);
 
+        // The task observes the cancel flag between items and stops cleanly
+        // rather than being aborted, so it never leaves shared state torn.
+        let task_cancelled = Arc::clone(&cancelled);
         let handle = runtime.spawn(async move {
             futures::pin_mut!(stream);
             let mut outcome = Ok(());
@@ -84,21 +101,36 @@ impl<T: Send + 'static> IncrementalLoad<T> {
             let mut since_repaint = 0usize;
             const REPAINT_EVERY: usize = 50;
 
-            while let Some(item) = stream.next().await {
-                match item {
-                    Ok(value) => {
-                        if let Ok(mut shared) = task_shared.lock() {
-                            shared.items.push(value);
-                        }
-                        since_repaint += 1;
-                        if since_repaint >= REPAINT_EVERY {
-                            since_repaint = 0;
-                            ctx.request_repaint();
+            loop {
+                if task_cancelled.load(Ordering::SeqCst) {
+                    // Cancelled: leave `outcome` unset so the snapshot reports
+                    // neither done nor errored, just cancelled.
+                    ctx.request_repaint();
+                    return;
+                }
+                tokio::select! {
+                    item = stream.next() => {
+                        let Some(item) = item else { break };
+                        match item {
+                            Ok(value) => {
+                                if let Ok(mut shared) = task_shared.lock() {
+                                    shared.items.push(value);
+                                }
+                                since_repaint += 1;
+                                if since_repaint >= REPAINT_EVERY {
+                                    since_repaint = 0;
+                                    ctx.request_repaint();
+                                }
+                            }
+                            Err(err) => {
+                                outcome = Err(err);
+                                break;
+                            }
                         }
                     }
-                    Err(err) => {
-                        outcome = Err(err);
-                        break;
+                    () = wait_for_flag(&task_cancelled) => {
+                        ctx.request_repaint();
+                        return;
                     }
                 }
             }
@@ -108,15 +140,18 @@ impl<T: Send + 'static> IncrementalLoad<T> {
             ctx.request_repaint();
         });
 
-        // Register a cancellable activity; cancelling aborts the stream task.
-        let abort = handle.abort_handle();
-        let id = registry.register_cancellable(label, move || abort.abort());
+        // Register a cancellable activity; cancelling trips the flag so the
+        // streaming task stops without an abort.
+        let hook_cancelled = Arc::clone(&cancelled);
+        let id = registry.register_cancellable(label, move || {
+            hook_cancelled.store(true, Ordering::SeqCst);
+        });
         runtime.spawn(async move {
             let _ = handle.await;
             registry_finish.finish(id);
         });
 
-        Self { shared }
+        Self { shared, cancelled }
     }
 
     /// Run `f` with a snapshot of the load's current state.
@@ -132,6 +167,7 @@ impl<T: Send + 'static> IncrementalLoad<T> {
             items: &shared.items,
             done: shared.outcome.is_some(),
             error: shared.outcome.as_ref().and_then(|o| o.as_ref().err()),
+            cancelled: self.cancelled.load(Ordering::SeqCst),
         };
         f(snapshot)
     }
@@ -141,11 +177,12 @@ impl<T: Send + 'static> IncrementalLoad<T> {
     pub fn len(&self) -> usize {
         self.with(|s| s.items.len())
     }
+}
 
-    /// Whether the load has fully completed.
-    #[must_use]
-    pub fn is_done(&self) -> bool {
-        self.with(|s| s.done)
+/// Resolve once `flag` becomes `true`, polling it on a short interval.
+async fn wait_for_flag(flag: &AtomicBool) {
+    while !flag.load(Ordering::SeqCst) {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 }
 
@@ -168,7 +205,7 @@ mod tests {
             IncrementalLoad::spawn(runtime.handle(), &ctx, &registry, "Streaming…", stream);
 
         for _ in 0..200 {
-            if load.is_done() {
+            if load.with(|s| s.done) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -200,7 +237,7 @@ mod tests {
             IncrementalLoad::spawn(runtime.handle(), &ctx, &registry, "Streaming…", stream);
 
         for _ in 0..200 {
-            if load.is_done() {
+            if load.with(|s| s.done) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -209,5 +246,41 @@ mod tests {
             assert_eq!(s.items, &[1, 2]);
             assert!(s.error.is_some());
         });
+    }
+
+    #[test]
+    fn cancelling_reports_cancelled_and_stops_the_stream() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let ctx = egui::Context::default();
+        let registry = ActivityRegistry::new();
+
+        // A stream that never ends on its own — only cancellation stops it.
+        let stream = futures::stream::pending::<Result<i32, ApiError>>();
+        let load: IncrementalLoad<i32> =
+            IncrementalLoad::spawn(runtime.handle(), &ctx, &registry, "Streaming…", stream);
+        assert!(!load.with(|s| s.cancelled));
+
+        let id = registry.snapshot()[0].id;
+        registry.cancel(id);
+
+        assert!(load.with(|s| s.cancelled));
+        load.with(|s| {
+            assert!(s.cancelled, "snapshot reports cancelled");
+            assert!(!s.done, "a cancelled load is not 'done'");
+        });
+
+        // The streaming task winds down and the activity deregisters.
+        for _ in 0..200 {
+            if !registry.is_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!registry.is_busy());
+        assert!(load.with(|s| s.cancelled));
     }
 }
