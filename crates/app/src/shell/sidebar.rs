@@ -345,7 +345,9 @@ fn playlists(
     });
 }
 
-/// One playlist row: a music-note icon and the playlist name.
+/// One playlist row: the playlist's real cover image as a small thumbnail
+/// (falling back to a music-note icon while it loads or when there is no
+/// image) and the playlist name.
 ///
 /// Returns the same `Some(new_tab)` click signal as [`row`].
 fn playlist_row(
@@ -354,7 +356,10 @@ fn playlist_row(
     playlist: &SimplifiedPlaylist,
     collapsed: bool,
 ) -> Option<bool> {
-    row(ui, palette, Icon::Queue, &playlist.name, collapsed)
+    // Spotify orders playlist cover images largest-first; the last is the
+    // smallest and cheapest to decode for a tiny sidebar thumbnail.
+    let art = playlist.images.last().map(|i| i.url.as_str());
+    row_with_leading(ui, palette, Leading::Art(art), &playlist.name, collapsed)
 }
 
 /// Build a [`NavRequest`] for a sidebar click.
@@ -371,6 +376,15 @@ fn nav_request(tab: Tab, new_tab: bool) -> NavRequest {
     request.in_main_pane()
 }
 
+/// What a sidebar row draws at its left edge.
+enum Leading<'a> {
+    /// A monochrome line icon (the static navigation entries).
+    Icon(Icon),
+    /// A network image URL — a playlist cover thumbnail — with a music-note
+    /// fallback while it loads or when `None`.
+    Art(Option<&'a str>),
+}
+
 /// Draw one tight sidebar row — a leading line icon and a label — with a flat
 /// full-width hover highlight.
 ///
@@ -385,7 +399,21 @@ fn row(
     label: &str,
     collapsed: bool,
 ) -> Option<bool> {
-    let height = 26.0;
+    row_with_leading(ui, palette, Leading::Icon(icon), label, collapsed)
+}
+
+/// Draw one tight sidebar row with an explicit [`Leading`] visual.
+///
+/// Shared by the static navigation rows (a line icon) and the playlist rows
+/// (the playlist's real cover thumbnail). See [`row`] for the return value.
+fn row_with_leading(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    leading: Leading<'_>,
+    label: &str,
+    collapsed: bool,
+) -> Option<bool> {
+    let height = 28.0;
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
 
@@ -398,15 +426,34 @@ fn row(
         } else {
             palette.text_muted
         };
-        let icon_size = 15.0;
-        let icon_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.left() + 6.0 + icon_size / 2.0, rect.center().y),
-            egui::vec2(icon_size, icon_size),
+        // The leading visual occupies a fixed 18pt box so labels stay aligned
+        // whether the row shows a line icon or a cover thumbnail.
+        let lead_size = 18.0;
+        let lead_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + 5.0 + lead_size / 2.0, rect.center().y),
+            egui::vec2(lead_size, lead_size),
         );
-        icon.image(icon_size, color).paint_at(ui, icon_rect);
+        match leading {
+            Leading::Icon(icon) => {
+                let glyph = 15.0;
+                let glyph_rect =
+                    egui::Rect::from_center_size(lead_rect.center(), egui::vec2(glyph, glyph));
+                icon.image(glyph, color).paint_at(ui, glyph_rect);
+            }
+            Leading::Art(url) => {
+                // The network image loader resolves the URL; a flat
+                // music-note placeholder shows while it loads or if absent.
+                let mut child = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(lead_rect)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                spottyfi_ui::components::album_art(&mut child, palette, url, lead_size, 0.0);
+            }
+        }
         if !collapsed {
             ui.painter().text(
-                egui::pos2(icon_rect.right() + 9.0, rect.center().y),
+                egui::pos2(lead_rect.right() + 9.0, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 label,
                 egui::FontId::proportional(12.5),
