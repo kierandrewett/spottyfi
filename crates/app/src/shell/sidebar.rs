@@ -357,14 +357,18 @@ fn playlist_row(
     row(ui, palette, Icon::Queue, &playlist.name, collapsed)
 }
 
-/// Build a [`NavRequest`] for a sidebar click — a plain click replaces the
-/// focused tab, a Ctrl/Cmd-held click opens a new tab.
+/// Build a [`NavRequest`] for a sidebar click.
+///
+/// A plain click replaces the main pane's active tab; a Ctrl/Cmd-held click
+/// opens a new tab. Either way the navigation is forced into the centre tab
+/// group — a sidebar entry never opens inside a side-panel leaf.
 fn nav_request(tab: Tab, new_tab: bool) -> NavRequest {
-    if new_tab {
+    let request = if new_tab {
         NavRequest::new_tab(tab)
     } else {
         NavRequest::replace(tab)
-    }
+    };
+    request.in_main_pane()
 }
 
 /// Draw one tight sidebar row — a leading line icon and a label — with a flat

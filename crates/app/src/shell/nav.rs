@@ -23,6 +23,54 @@ use super::tabs::Tab;
 /// The Home tab is never replaced — replacing it would lose the always-open
 /// anchor — so navigating from a focused Home falls back to opening a new tab.
 pub fn navigate_replace(dock: &mut DockState<Tab>, extras: &mut DockExtras, tab: Tab) {
+    navigate_replace_in(dock, extras, tab, NavTarget::Focused);
+}
+
+/// Open `tab` in the **main (centre) pane**, replacing the main pane's active
+/// tab — the rule for sidebar navigation.
+///
+/// A sidebar entry must always open a page in the centre tab group, never
+/// inside a side-panel leaf, regardless of which leaf currently has focus.
+/// This resolves the main leaf (the one holding the always-open Home anchor)
+/// and replaces its active tab there.
+pub fn navigate_replace_main(dock: &mut DockState<Tab>, extras: &mut DockExtras, tab: Tab) {
+    navigate_replace_in(dock, extras, tab, NavTarget::Main);
+}
+
+/// Open `tab` in a new tab inside the **main (centre) pane** — the Ctrl/Cmd
+/// -click rule for sidebar navigation.
+pub fn open_new_tab_main(dock: &mut DockState<Tab>, tab: Tab) {
+    let leaf = main_leaf_path(dock);
+    insert_new_tab(dock, leaf, tab);
+}
+
+/// Which leaf a navigation should target.
+#[derive(Clone, Copy)]
+enum NavTarget {
+    /// The currently-focused leaf (in-page links, the menu bar).
+    Focused,
+    /// The main (centre) pane — the leaf holding the Home anchor.
+    Main,
+}
+
+/// The node path of the **main pane**: the leaf containing the Home tab.
+///
+/// Home is the always-open anchor of the centre tab group, so the leaf that
+/// holds it *is* the main pane. Falls back to the focused (or first) leaf if
+/// Home somehow is not present, so navigation always resolves somewhere sane.
+fn main_leaf_path(dock: &DockState<Tab>) -> Option<egui_dock::NodePath> {
+    dock.find_tab(&Tab::Home)
+        .map(|path| path.node_path())
+        .or_else(|| active_leaf_path(dock))
+}
+
+/// Shared replace-navigation, parameterised by which leaf to target.
+fn navigate_replace_in(
+    dock: &mut DockState<Tab>,
+    extras: &mut DockExtras,
+    tab: Tab,
+    target: NavTarget,
+) {
     // Already open — just focus it.
     if let Some(path) = dock.find_tab(&tab) {
         dock.set_focused_node_and_surface(path.node_path());
@@ -30,9 +78,14 @@ pub fn navigate_replace(dock: &mut DockState<Tab>, extras: &mut DockExtras, tab:
         return;
     }
 
-    // Resolve the focused leaf and its active-tab slot — the surface there is
+    let leaf = match target {
+        NavTarget::Focused => active_leaf_path(dock),
+        NavTarget::Main => main_leaf_path(dock),
+    };
+
+    // Resolve the target leaf and its active-tab slot — the surface there is
     // the one being replaced.
-    let replaced = active_leaf_path(dock).and_then(|leaf_path| {
+    let replaced = leaf.and_then(|leaf_path| {
         if let Ok(egui_dock::Node::Leaf(leaf)) = dock.node(leaf_path) {
             let active = leaf.active.0;
             leaf.tabs
@@ -63,9 +116,13 @@ pub fn navigate_replace(dock: &mut DockState<Tab>, extras: &mut DockExtras, tab:
         }
     }
 
-    // No replaceable focused tab (focused Home, a pinned tab, or nothing) —
-    // open `tab` as a new tab in the focused leaf.
-    open_new_tab(dock, tab);
+    // No replaceable tab in the target leaf (Home, a pinned tab, or nothing) —
+    // open `tab` as a new tab in that same leaf.
+    let leaf = match target {
+        NavTarget::Focused => None,
+        NavTarget::Main => main_leaf_path(dock),
+    };
+    insert_new_tab(dock, leaf, tab);
 }
 
 /// Open `tab` in a brand-new tab (the Ctrl/Cmd-click rule), focusing it.
@@ -74,7 +131,25 @@ pub fn navigate_replace(dock: &mut DockState<Tab>, extras: &mut DockExtras, tab:
 /// already open elsewhere — Ctrl/Cmd-click is an explicit "give me another
 /// one" gesture.
 pub fn open_new_tab(dock: &mut DockState<Tab>, tab: Tab) {
-    dock.push_to_focused_leaf(tab.clone());
+    insert_new_tab(dock, None, tab);
+}
+
+/// Insert `tab` as a new tab and focus it.
+///
+/// When `leaf` is `Some`, the tab is pushed into that exact leaf (used to keep
+/// sidebar navigation in the main pane); when `None`, it goes to the focused
+/// leaf, `egui_dock`'s default.
+fn insert_new_tab(dock: &mut DockState<Tab>, leaf: Option<egui_dock::NodePath>, tab: Tab) {
+    match leaf {
+        Some(leaf_path) => {
+            if let Ok(egui_dock::Node::Leaf(node)) = dock.node_mut(leaf_path) {
+                node.append_tab(tab.clone());
+            } else {
+                dock.push_to_focused_leaf(tab.clone());
+            }
+        }
+        None => dock.push_to_focused_leaf(tab.clone()),
+    }
     if let Some(path) = dock.find_tab(&tab) {
         // Focus the leaf the tab landed in, then make it the active tab —
         // `set_active_tab` alone does not move the *leaf* focus, which Back /
@@ -282,6 +357,55 @@ mod tests {
         assert!(!tabs.contains(&Tab::Album("a".into())));
         // The replaced album is now reachable via Back.
         assert!(extras.can_go_back(&Tab::Artist("z".into())));
+    }
+
+    #[test]
+    fn sidebar_navigation_lands_in_the_main_pane() {
+        use egui_dock::{NodeIndex, SurfaceIndex};
+        // A two-leaf dock: Home in the centre, a Queue panel in a right leaf.
+        let mut dock = dock_with(vec![Tab::Home]);
+        let surface = SurfaceIndex::main();
+        dock[surface].split_right(NodeIndex::root(), 0.7, vec![Tab::Queue]);
+        let mut extras = DockExtras::default();
+
+        // Focus the side-panel leaf — as if the user last clicked the Queue.
+        let queue_leaf = dock.find_tab(&Tab::Queue).expect("queue tab").node_path();
+        dock.set_focused_node_and_surface(queue_leaf);
+
+        // A sidebar click navigates to Browse via the main-pane rule.
+        navigate_replace_main(&mut dock, &mut extras, Tab::Browse);
+
+        // Browse must have replaced Home in the *centre* leaf, leaving the
+        // Queue panel untouched in its own leaf.
+        let main_leaf = main_leaf_path(&dock);
+        let browse_leaf = dock.find_tab(&Tab::Browse).map(|p| p.node_path());
+        assert_eq!(browse_leaf, main_leaf, "Browse opened in the main pane");
+        let queue_still = dock.find_tab(&Tab::Queue).map(|p| p.node_path());
+        assert_eq!(
+            queue_still,
+            Some(queue_leaf),
+            "the Queue panel leaf is left alone"
+        );
+    }
+
+    #[test]
+    fn sidebar_new_tab_lands_in_the_main_pane() {
+        use egui_dock::{NodeIndex, SurfaceIndex};
+        let mut dock = dock_with(vec![Tab::Home]);
+        let surface = SurfaceIndex::main();
+        dock[surface].split_right(NodeIndex::root(), 0.7, vec![Tab::Queue]);
+
+        // Focus the side panel, then Ctrl/Cmd-click a sidebar entry.
+        let queue_leaf = dock.find_tab(&Tab::Queue).expect("queue").node_path();
+        dock.set_focused_node_and_surface(queue_leaf);
+        open_new_tab_main(&mut dock, Tab::Charts);
+
+        // Charts lands in the Home (main) leaf, not the focused panel leaf.
+        let home_leaf = dock.find_tab(&Tab::Home).expect("home").node_path();
+        assert_eq!(
+            dock.find_tab(&Tab::Charts).map(|p| p.node_path()),
+            Some(home_leaf),
+        );
     }
 
     #[test]

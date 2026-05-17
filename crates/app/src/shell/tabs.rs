@@ -149,13 +149,16 @@ pub enum DockIntent {
 ///
 /// `new_tab` carries the Ctrl/Cmd modifier: a plain navigation **replaces**
 /// the focused tab (the `docs/docking.md` rule), Ctrl/Cmd-held **opens a new
-/// tab**. The rule is identical for the sidebar, in-page links and search.
+/// tab**. `main_pane` is set for sidebar navigation, which must always land in
+/// the centre tab group rather than whichever leaf happens to be focused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavRequest {
     /// The tab to navigate to.
     pub tab: Tab,
     /// Whether to open a new tab (Ctrl/Cmd-held) rather than replace.
     pub new_tab: bool,
+    /// Whether to force the navigation into the main (centre) pane.
+    pub main_pane: bool,
 }
 
 impl NavRequest {
@@ -165,13 +168,26 @@ impl NavRequest {
         Self {
             tab,
             new_tab: false,
+            main_pane: false,
         }
     }
 
     /// A Ctrl/Cmd-held navigation: open a new tab.
     #[must_use]
     pub fn new_tab(tab: Tab) -> Self {
-        Self { tab, new_tab: true }
+        Self {
+            tab,
+            new_tab: true,
+            main_pane: false,
+        }
+    }
+
+    /// Force this navigation into the main (centre) pane — used by the sidebar
+    /// so a click always opens a page in the centre tab group.
+    #[must_use]
+    pub fn in_main_pane(mut self) -> Self {
+        self.main_pane = true;
+        self
     }
 }
 

@@ -156,12 +156,18 @@ impl ShellState {
 /// Apply one [`NavRequest`] to the persisted dock.
 ///
 /// A plain request replaces the focused tab (recording history); a
-/// Ctrl/Cmd-held request opens a new tab. See [`nav`].
+/// Ctrl/Cmd-held request opens a new tab. A `main_pane` request (sidebar
+/// navigation) always targets the centre tab group instead of the focused
+/// leaf. See [`nav`].
 fn apply_nav(persisted: &mut PersistedShell, request: NavRequest) {
-    if request.new_tab {
-        nav::open_new_tab(&mut persisted.dock, request.tab);
-    } else {
-        nav::navigate_replace(&mut persisted.dock, &mut persisted.dock_extras, request.tab);
+    let PersistedShell {
+        dock, dock_extras, ..
+    } = persisted;
+    match (request.new_tab, request.main_pane) {
+        (false, false) => nav::navigate_replace(dock, dock_extras, request.tab),
+        (true, false) => nav::open_new_tab(dock, request.tab),
+        (false, true) => nav::navigate_replace_main(dock, dock_extras, request.tab),
+        (true, true) => nav::open_new_tab_main(dock, request.tab),
     }
 }
 
