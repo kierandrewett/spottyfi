@@ -161,7 +161,39 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
   gracefully (in-memory-only / network-only, with a warning) if the
   platform cache directory cannot be resolved.
 
-## Phase 10 — Docking power features `[ ]`
+## Phase 10 — Docking power features `[x]`
+
+- [x] Tab pinning — pin/unpin via the right-click menu; a pinned tab keeps no
+      close button and is spared by "Close others" / "Close to the right";
+      pin state persists with the layout (`DockExtras.pinned`)
+- [x] Per-tab browser-style history — each tab has its own back/forward stack;
+      replacing a tab's content (plain navigation) pushes history; a fresh
+      navigation clears the forward stack
+- [x] Back / forward buttons in the menu bar reflect availability for the
+      focused tab and are disabled when its history is empty
+- [x] Navigation rules — plain click/navigation **replaces** the focused tab;
+      `Ctrl/Cmd-click` a sidebar entry or an in-page link **opens a new tab**;
+      consistent across the sidebar, page links and search results
+- [x] Middle-click a tab closes it
+- [x] `Cmd/Ctrl+W` close tab, `Cmd/Ctrl+T` new Home tab,
+      `Cmd/Ctrl+Shift+T` reopen last closed (bounded closed-tab stack);
+      "Reopen closed tab" also in the Tools menu
+- [x] Tab right-click menu: Close, Close others, Close to the right,
+      Duplicate, Pin/Unpin
+- [x] Predefined layouts in the View menu — Default, Power user (compact
+      density + Queue docked right; Lyrics added in Phase 11), Minimal
+      (single centre tab); Reset layout still works
+- [x] Layout schema extended with `#[serde(default)]` fields so a
+      pre-Phase-10 `layout.ron` still loads
+- [x] Unit tests for the history stack, the closed-tab stack and the
+      pin-aware close logic
+- Notes: egui_dock 0.19 supplied the per-tab `context_menu` hook, the
+  `on_tab_button` hook (middle-click) and `is_closeable`; pinning, per-tab
+  history, the closed-tab stack and predefined layouts are all app-layer
+  state in `shell/dock_model.rs` + `shell/nav.rs`, keyed by `Tab`. The
+  back/forward buttons live in the menu bar — Phase 4 replaced the Phase-0
+  top bar with the menu bar, so there is no separate top bar to host them.
+
 ## Phase 11 — Lyrics `[ ]`
 ## Phase 12 — Platform polish `[ ]`
 ## Phase 13 — Packaging `[ ]`
