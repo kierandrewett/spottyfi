@@ -274,6 +274,7 @@ fn build_page(tab: &Tab, services: &PageServices) -> Box<dyn Page> {
         Tab::NowPlayingArt
         | Tab::Queue
         | Tab::Visualiser
+        | Tab::Devices
         | Tab::Debug
         | Tab::Placeholder(_)
         | Tab::Settings => Box::new(HomePage::new(services)),

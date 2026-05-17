@@ -29,6 +29,7 @@ use crate::page::{IncrementalLoad, PageRegistry, PageServices};
 use crate::playback_controller::EngineStatus;
 use crate::transport::{TransportIntent, TransportUiState};
 use spottyfi_audio::{PlaybackState, QueueState, SpectrumAnalyzer};
+use spottyfi_models::Device;
 use tabs::{NavRequest, ShellTabViewer, TabContext};
 
 /// Something the user asked the shell to do this frame.
@@ -335,6 +336,7 @@ pub fn shell(
     transport_ui: &mut TransportUiState,
     engine: &EngineStatus,
     spectrum: &SpectrumAnalyzer,
+    devices: &[Device],
 ) -> Option<ShellIntent> {
     let palette = state.persisted.theme.palette();
     let mut intent = None;
@@ -388,6 +390,7 @@ pub fn shell(
                 transport_ui,
                 engine,
                 spectrum,
+                devices,
             ) {
                 match dock_intent {
                     DockIntent::Transport(t) => intent = Some(ShellIntent::Transport(t)),
@@ -539,6 +542,7 @@ fn menu_bar(
                         Tab::Queue,
                         Tab::Visualiser,
                         Tab::Lyrics,
+                        Tab::Devices,
                         Tab::Debug,
                     ] {
                         let present = state.persisted.dock.find_tab(&tab).is_some();
@@ -812,6 +816,7 @@ fn dock(
     transport_ui: &mut TransportUiState,
     engine: &EngineStatus,
     spectrum: &SpectrumAnalyzer,
+    devices: &[Device],
 ) -> Vec<DockIntent> {
     // Borrow the session and the persisted state as disjoint fields so the
     // page registry, the dock tree, the dock extras and the Settings view can
@@ -876,6 +881,7 @@ fn dock(
                 hotkey_capture,
             },
             pinned: &dock_extras.pinned,
+            devices,
             intents: Vec::new(),
         },
     };

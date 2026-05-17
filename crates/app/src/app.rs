@@ -28,6 +28,9 @@ pub struct SpottyfiApp {
     auth: AuthController,
     /// Drives the audio engine and holds the playback state snapshot.
     playback: PlaybackControllerHandle,
+    /// The Spotify Connect device list and transfer commands. Present once the
+    /// Web API has been attached (post-login).
+    devices: Option<crate::devices::DevicesController>,
     /// Per-frame UI state for the transport widgets (scrub drag, debug field).
     transport_ui: TransportUiState,
     /// The persisted + per-session shell state (dock layout, theme, sidebar).
@@ -96,6 +99,7 @@ impl SpottyfiApp {
             _runtime: runtime,
             auth,
             playback,
+            devices: None,
             transport_ui: TransportUiState::default(),
             shell,
             avatar_image: Arc::new(ArcSwap::from_pointee(None)),
@@ -195,6 +199,12 @@ impl SpottyfiApp {
         };
         let client = spottyfi_api::SpotifyClient::new(&session);
         let api: std::sync::Arc<dyn spottyfi_api::SpotifyApi> = std::sync::Arc::new(client);
+        // The Connect device list controller shares the same API client.
+        self.devices = Some(crate::devices::DevicesController::new(
+            std::sync::Arc::clone(&api),
+            self._runtime.handle().clone(),
+            ctx.clone(),
+        ));
         self.shell
             .attach_api(api, self._runtime.handle().clone(), ctx.clone());
         self.api_attached = true;
@@ -277,6 +287,16 @@ impl SpottyfiApp {
             TransportIntent::SetShuffle(shuffle) => self.playback.set_shuffle(shuffle),
             TransportIntent::SetRepeat(mode) => self.playback.set_repeat(mode),
             TransportIntent::ShowTab(tab) => self.shell.reveal_tab(tab),
+            TransportIntent::TransferToDevice(id) => {
+                if let Some(devices) = &self.devices {
+                    devices.transfer(id);
+                }
+            }
+            TransportIntent::RefreshDevices => {
+                if let Some(devices) = &self.devices {
+                    devices.refresh();
+                }
+            }
         }
     }
 
@@ -287,6 +307,8 @@ impl SpottyfiApp {
         // Drop the page registry and sidebar so a future login starts fresh.
         self.shell.detach_api();
         self.api_attached = false;
+        // Drop the device-list controller so its poller stops.
+        self.devices = None;
         // Drop the avatar so a future login fetches a fresh one.
         self.avatar_texture = None;
         self.avatar_requested = false;
@@ -348,6 +370,14 @@ impl eframe::App for SpottyfiApp {
                     .map(|w| w.envelope.clone())
                     .unwrap_or_default();
 
+                // The live Connect device list — empty until the controller's
+                // first fetch lands. Cloned per frame; the list is tiny.
+                let devices = self
+                    .devices
+                    .as_ref()
+                    .map(|d| (*d.snapshot()).clone())
+                    .unwrap_or_default();
+
                 // The transport panel is added before the shell's central
                 // dock so the dock fills the space above it.
                 let transport_intent = transport::transport_bar(
@@ -357,6 +387,7 @@ impl eframe::App for SpottyfiApp {
                     &playback,
                     &queue,
                     &waveform,
+                    &devices,
                 );
 
                 let shell_intent = shell::shell(
@@ -369,6 +400,7 @@ impl eframe::App for SpottyfiApp {
                     &mut self.transport_ui,
                     &engine,
                     &self.playback.spectrum(),
+                    &devices,
                 );
 
                 if let Some(intent) = transport_intent {

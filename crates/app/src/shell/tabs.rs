@@ -12,6 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 use spottyfi_audio::{PlaybackState, QueueState, QueueTrack, SpectrumAnalyzer};
+use spottyfi_models::{Device, DeviceKind};
 use spottyfi_ui::theme::Palette;
 use spottyfi_ui::visualiser::VisualiserMode;
 
@@ -70,6 +71,8 @@ pub enum Tab {
     Visualiser,
     /// The lyrics panel: synced/plain lyrics for the current track.
     Lyrics,
+    /// The Spotify Connect devices panel: move playback between devices.
+    Devices,
     /// The debug panel: the "paste a URI and play" control.
     Debug,
 }
@@ -101,6 +104,7 @@ impl Tab {
             Tab::Queue => "Queue",
             Tab::Visualiser => "Visualiser",
             Tab::Lyrics => "Lyrics",
+            Tab::Devices => "Devices",
             Tab::Debug => "Debug",
         }
     }
@@ -138,6 +142,7 @@ impl Tab {
             Tab::NowPlayingArt
                 | Tab::Queue
                 | Tab::Visualiser
+                | Tab::Devices
                 | Tab::Debug
                 | Tab::Placeholder(_)
                 | Tab::Settings
@@ -280,6 +285,8 @@ pub struct TabContext<'a> {
     /// show Pin vs Unpin. The dock cannot be mutated mid-draw, so pin toggles
     /// are raised as [`TabCommand`]s and applied afterwards.
     pub pinned: &'a [Tab],
+    /// The live Spotify Connect device list, rendered by the Devices panel.
+    pub devices: &'a [Device],
     /// Any [`DockIntent`]s raised this frame, in order.
     pub intents: Vec<DockIntent>,
 }
@@ -390,6 +397,11 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
                         }
                     }
                     Tab::Visualiser => visualiser_tab(ui, &mut self.ctx),
+                    Tab::Devices => {
+                        for intent in devices_tab(ui, &self.ctx) {
+                            self.ctx.intents.push(DockIntent::Transport(intent));
+                        }
+                    }
                     Tab::Placeholder(name) => placeholder_tab(ui, &self.ctx, name),
                     Tab::Settings => {
                         let view = &mut self.ctx.settings_view;
@@ -798,6 +810,135 @@ fn manual_row(
             ui.close();
         }
     });
+}
+
+/// The fixed height of a devices-panel row.
+const DEVICE_ROW_HEIGHT: f32 = 46.0;
+
+/// The Spotify Connect devices panel: every Connect device, with the active
+/// one marked; click a device to move playback to it.
+fn devices_tab(ui: &mut egui::Ui, ctx: &TabContext<'_>) -> Vec<TransportIntent> {
+    let palette = ctx.palette;
+    let mut intents = Vec::new();
+
+    ui.horizontal(|ui| {
+        spottyfi_ui::components::section_header(ui, &palette, "Connect devices");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Refresh").clicked() {
+                intents.push(TransportIntent::RefreshDevices);
+            }
+        });
+    });
+    ui.add_space(4.0);
+
+    if ctx.devices.is_empty() {
+        ui.label(spottyfi_ui::components::muted(
+            &palette,
+            "No Spotify Connect devices found. Open Spotify on another device, \
+             or start playing something here.",
+            12.0,
+        ));
+        return intents;
+    }
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            for device in ctx.devices {
+                if let Some(intent) = device_row(ui, &palette, device) {
+                    intents.push(intent);
+                }
+            }
+        });
+
+    intents
+}
+
+/// Render one Connect device row. Returns a transfer intent when a
+/// transferable device is clicked.
+fn device_row(ui: &mut egui::Ui, palette: &Palette, device: &Device) -> Option<TransportIntent> {
+    let transferable = device.id.is_some() && !device.is_restricted && !device.is_active;
+    let sense = if transferable {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), DEVICE_ROW_HEIGHT), sense);
+    if !ui.is_rect_visible(rect) {
+        return None;
+    }
+
+    if device.is_active {
+        let a = palette.accent;
+        ui.painter().rect_filled(
+            rect,
+            0,
+            egui::Color32::from_rgba_unmultiplied(a.r(), a.g(), a.b(), 42),
+        );
+    } else if response.hovered() && transferable {
+        ui.painter().rect_filled(rect, 0, palette.hover);
+    }
+
+    let accent = device.is_active;
+    let mut content = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(egui::vec2(8.0, 4.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    spottyfi_ui::icons::icon(
+        &mut content,
+        device_icon(device.kind),
+        20.0,
+        if accent {
+            palette.accent
+        } else {
+            palette.text_muted
+        },
+    );
+    content.add_space(10.0);
+    content.vertical(|ui| {
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(&device.name)
+                    .family(spottyfi_ui::fonts::medium())
+                    .size(13.0)
+                    .color(if accent { palette.accent } else { palette.text }),
+            )
+            .truncate(),
+        );
+        let detail = if device.is_active {
+            "Playing here".to_owned()
+        } else if device.is_restricted {
+            "Restricted — can't be controlled from here".to_owned()
+        } else {
+            match device.volume_percent {
+                Some(volume) => format!("Idle · volume {volume}%"),
+                None => "Idle".to_owned(),
+            }
+        };
+        ui.label(spottyfi_ui::components::muted(palette, detail, 11.0));
+    });
+
+    if transferable {
+        response
+            .clone()
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if response.clicked() {
+            return device.id.clone().map(TransportIntent::TransferToDevice);
+        }
+    }
+    None
+}
+
+/// Pick the panel icon for a Connect device kind.
+fn device_icon(kind: DeviceKind) -> spottyfi_ui::Icon {
+    match kind {
+        DeviceKind::Speaker => spottyfi_ui::Icon::Radio,
+        DeviceKind::Smartphone | DeviceKind::Tablet => spottyfi_ui::Icon::User,
+        DeviceKind::Computer | DeviceKind::Tv | DeviceKind::Other => spottyfi_ui::Icon::Devices,
+    }
 }
 
 /// Format a [`std::time::Duration`] as `m:ss`.

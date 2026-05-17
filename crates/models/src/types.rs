@@ -229,3 +229,38 @@ pub struct SearchResults {
     /// Matching playlists.
     pub playlists: Page<SimplifiedPlaylist>,
 }
+
+/// The kind of a Spotify Connect device — drives the device picker's icon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeviceKind {
+    /// A desktop or laptop computer.
+    Computer,
+    /// A phone.
+    Smartphone,
+    /// A tablet.
+    Tablet,
+    /// A speaker, including smart speakers.
+    Speaker,
+    /// A television.
+    Tv,
+    /// Anything else (receiver, set-top box, console, car, …).
+    Other,
+}
+
+/// A Spotify Connect playback device (`GET /me/player/devices`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Device {
+    /// The device's Spotify id. `None` when Spotify omits it for a device
+    /// that cannot currently be targeted for a playback transfer.
+    pub id: Option<String>,
+    /// The human-readable device name.
+    pub name: String,
+    /// Whether playback is currently happening on this device.
+    pub is_active: bool,
+    /// Whether Spotify forbids controlling this device through the Web API.
+    pub is_restricted: bool,
+    /// The device kind, used to pick the picker icon.
+    pub kind: DeviceKind,
+    /// The device's current volume as a `0..=100` percentage, if known.
+    pub volume_percent: Option<u32>,
+}

@@ -18,6 +18,7 @@
 use std::time::Duration;
 
 use spottyfi_audio::{PlaybackState, QueueState, RepeatMode};
+use spottyfi_models::Device;
 use spottyfi_ui::components;
 use spottyfi_ui::icons::{self, Icon};
 use spottyfi_ui::scrubber::{Scrubber, ScrubberState};
@@ -28,6 +29,10 @@ use crate::shell::Tab;
 
 /// Height of the transport bar — a tight, dense strip.
 pub const TRANSPORT_HEIGHT: f32 = 68.0;
+
+/// The device name Spottyfi registers under in the Connect picker — used to
+/// tell *our* device apart from the others in the device list.
+const SPOTTYFI_DEVICE_NAME: &str = "Spottyfi";
 
 /// A transport command the user issued this frame.
 #[derive(Debug, Clone, PartialEq)]
@@ -77,8 +82,12 @@ pub enum TransportIntent {
     /// Set the repeat mode (off / repeat-all / repeat-one).
     SetRepeat(RepeatMode),
     /// Reveal a dock tab or panel — the right-cluster shortcut buttons
-    /// (Settings, Queue) open or focus their tab.
+    /// (Settings, Devices, Queue) open or focus their tab.
     ShowTab(Tab),
+    /// Transfer Spotify playback to the Connect device with this id.
+    TransferToDevice(String),
+    /// Re-fetch the Spotify Connect device list.
+    RefreshDevices,
 }
 
 /// Per-frame, mutable UI state for the transport widgets.
@@ -120,8 +129,15 @@ pub fn transport_bar(
     playback: &PlaybackState,
     queue: &QueueState,
     waveform: &[f32],
+    devices: &[Device],
 ) -> Option<TransportIntent> {
     let mut intent = None;
+
+    // The active Connect device, when playback is on something other than
+    // this app — surfaced in the now-playing block and the Devices button.
+    let playing_elsewhere = devices
+        .iter()
+        .find(|d| d.is_active && d.name != SPOTTYFI_DEVICE_NAME);
 
     egui::Panel::bottom("transport")
         .exact_size(TRANSPORT_HEIGHT)
@@ -156,7 +172,7 @@ pub fn transport_bar(
                     .max_rect(left_rect)
                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
             );
-            now_playing(&mut left, palette, playback);
+            now_playing(&mut left, palette, playback, playing_elsewhere);
 
             // Centre: the control cluster over the seek scrubber, genuinely
             // centred in the window.
@@ -177,7 +193,9 @@ pub fn transport_bar(
                     .max_rect(right_rect)
                     .layout(egui::Layout::right_to_left(egui::Align::Center)),
             );
-            if let Some(i) = right_cluster(&mut right, palette, ui_state, playback) {
+            if let Some(i) =
+                right_cluster(&mut right, palette, ui_state, playback, playing_elsewhere)
+            {
                 intent = Some(i);
             }
         });
@@ -190,7 +208,12 @@ const CENTRE_WIDTH: f32 = 520.0;
 
 /// The now-playing block: album art (live URL), title + artist, and a dimmed
 /// bitrate line.
-fn now_playing(ui: &mut egui::Ui, palette: &Palette, playback: &PlaybackState) {
+fn now_playing(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    playback: &PlaybackState,
+    playing_elsewhere: Option<&Device>,
+) {
     let art_url = playback.track.as_ref().and_then(|t| t.art_url.as_deref());
     components::album_art(ui, palette, art_url, 48.0, 0.0);
 
@@ -217,9 +240,23 @@ fn now_playing(ui: &mut egui::Ui, palette: &Palette, playback: &PlaybackState) {
                     ui.label(components::muted(palette, codec_line, 9.5));
                 }
             }
-            None => {
-                ui.label(components::muted(palette, "Nothing playing", 12.5));
-            }
+            None => match playing_elsewhere {
+                Some(device) => {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(format!("Playing on {}", device.name))
+                                .family(spottyfi_ui::fonts::medium())
+                                .size(12.5)
+                                .color(palette.accent),
+                        )
+                        .truncate(),
+                    );
+                    ui.label(components::muted(palette, "Spotify Connect", 11.0));
+                }
+                None => {
+                    ui.label(components::muted(palette, "Nothing playing", 12.5));
+                }
+            },
         }
     });
 }
@@ -531,6 +568,7 @@ fn right_cluster(
     palette: &Palette,
     ui_state: &mut TransportUiState,
     playback: &PlaybackState,
+    playing_elsewhere: Option<&Device>,
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
@@ -571,8 +609,24 @@ fn right_cluster(
     if icons::icon_button(ui, palette, Icon::Settings, 15.0, false, "Settings").clicked() {
         intent = Some(TransportIntent::ShowTab(Tab::Settings));
     }
-    // Devices: the Connect device picker lands in a later wave.
-    icons::icon_button(ui, palette, Icon::Devices, 15.0, false, "Devices");
+    // Devices: opens the Connect device picker; tinted accent and labelled
+    // with the device name when playback is on another device.
+    let devices_tooltip = match playing_elsewhere {
+        Some(device) => format!("Playing on {} — switch device", device.name),
+        None => "Devices".to_owned(),
+    };
+    if icons::icon_button(
+        ui,
+        palette,
+        Icon::Devices,
+        15.0,
+        playing_elsewhere.is_some(),
+        &devices_tooltip,
+    )
+    .clicked()
+    {
+        intent = Some(TransportIntent::ShowTab(Tab::Devices));
+    }
     if icons::icon_button(ui, palette, Icon::Queue, 15.0, false, "Queue").clicked() {
         intent = Some(TransportIntent::ShowTab(Tab::Queue));
     }

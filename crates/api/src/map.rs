@@ -266,6 +266,30 @@ pub fn search_results(src: &rs::SearchMultipleResult) -> m::SearchResults {
     }
 }
 
+/// Map an `rspotify` Connect device.
+pub fn device(src: &rs::Device) -> m::Device {
+    m::Device {
+        id: src.id.clone(),
+        name: src.name.clone(),
+        is_active: src.is_active,
+        is_restricted: src.is_restricted,
+        kind: device_kind(&src._type),
+        volume_percent: src.volume_percent,
+    }
+}
+
+/// Map an `rspotify` device type onto the picker-facing [`m::DeviceKind`].
+fn device_kind(src: &rs::DeviceType) -> m::DeviceKind {
+    match src {
+        rs::DeviceType::Computer => m::DeviceKind::Computer,
+        rs::DeviceType::Smartphone => m::DeviceKind::Smartphone,
+        rs::DeviceType::Tablet => m::DeviceKind::Tablet,
+        rs::DeviceType::Speaker => m::DeviceKind::Speaker,
+        rs::DeviceType::Tv => m::DeviceKind::Tv,
+        _ => m::DeviceKind::Other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

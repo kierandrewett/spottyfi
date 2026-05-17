@@ -10,7 +10,7 @@ use rspotify::{AuthCodePkceSpotify, ClientResult};
 
 use spottyfi_auth::Session;
 use spottyfi_models::{
-    Album, Artist, Category, Page, Playlist, PlaylistTrack, SavedTrack, SearchResults,
+    Album, Artist, Category, Device, Page, Playlist, PlaylistTrack, SavedTrack, SearchResults,
     SimplifiedAlbum, SimplifiedPlaylist, Track, User,
 };
 
@@ -608,6 +608,18 @@ impl SpotifyApi for SpotifyClient {
             })
             .await?;
         Ok(recs.tracks.iter().map(map::simplified_to_track).collect())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn devices(&self) -> ApiResult<Vec<Device>> {
+        let devices = self.request(|| self.rspotify.device()).await?;
+        Ok(devices.iter().map(map::device).collect())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn transfer_playback(&self, device_id: &str, play: bool) -> ApiResult<()> {
+        self.request(|| self.rspotify.transfer_playback(device_id, Some(play)))
+            .await
     }
 }
 

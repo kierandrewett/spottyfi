@@ -10,6 +10,7 @@ mod app;
 mod auth_controller;
 mod avatar;
 mod cli;
+mod devices;
 mod hotkeys;
 mod login;
 mod media;

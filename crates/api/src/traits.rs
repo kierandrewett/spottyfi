@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use futures::stream::Stream;
 
 use spottyfi_models::{
-    Album, Artist, Category, Page, Playlist, PlaylistTrack, SavedTrack, SearchResults,
+    Album, Artist, Category, Device, Page, Playlist, PlaylistTrack, SavedTrack, SearchResults,
     SimplifiedAlbum, SimplifiedPlaylist, Track, User,
 };
 
@@ -192,6 +192,14 @@ pub trait SpotifyApi: Send + Sync {
         seed_genres: &[String],
         limit: u32,
     ) -> ApiResult<Vec<Track>>;
+
+    /// The user's available Spotify Connect devices
+    /// (`GET /me/player/devices`).
+    async fn devices(&self) -> ApiResult<Vec<Device>>;
+
+    /// Transfer playback to the Connect device `device_id`, beginning
+    /// playback when `play` is set (`PUT /me/player`).
+    async fn transfer_playback(&self, device_id: &str, play: bool) -> ApiResult<()>;
 }
 
 #[cfg(test)]
