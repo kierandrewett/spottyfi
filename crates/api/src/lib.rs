@@ -47,6 +47,16 @@
 //! back onto Spotify objects via [`SpotifyApi::search`]. Last.fm needs a free
 //! API key in `SPOTTYFI_LASTFM_API_KEY`; with none set the client returns
 //! [`lastfm::LastfmError::NotConfigured`] and Browse degrades gracefully.
+//!
+//! ## Lyrics
+//!
+//! Spotify's Web API has no lyrics endpoint, so the [`lyrics`] module sources
+//! them from auxiliary providers: **musixmatch** (the legitimate path, behind
+//! the `musixmatch` Cargo feature, off by default, keyed by
+//! `SPOTTYFI_MUSIXMATCH_KEY`) and an **undocumented** internal Spotify endpoint
+//! (opt-in only, via `SPOTTYFI_LYRICS_TOKEN`). [`lyrics::LyricsService`]
+//! assembles whichever are configured; with none set every lookup returns
+//! [`lyrics::LyricsError::NoSourceConfigured`] — it never panics.
 #![warn(missing_docs)]
 // `unwrap`/`expect` are denied in library code but allowed in unit tests,
 // per the workspace convention in `PLAN.md`.
@@ -56,6 +66,7 @@ mod cache;
 mod client;
 mod error;
 pub mod lastfm;
+pub mod lyrics;
 mod map;
 mod metadata;
 mod retry;

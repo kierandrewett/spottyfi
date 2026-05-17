@@ -8,6 +8,13 @@ authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+# The musixmatch lyrics provider (the legitimate, documented lyrics path).
+# Off by default — a build without it carries no musixmatch code at all. Needs
+# an API key in `SPOTTYFI_MUSIXMATCH_KEY` at run time. See `src/lyrics`.
+musixmatch = []
+
 [dependencies]
 spottyfi-models = { workspace = true }
 spottyfi-auth = { workspace = true }
