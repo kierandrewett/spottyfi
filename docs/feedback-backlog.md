@@ -63,6 +63,18 @@ one at a time). `[ ]` todo · `[~]` in progress · `[x]` done.
 - [x] Live audio visualisations
 - (Both need a custom librespot backend that taps the PCM sample stream.)
 
+## WS8 — Lyrics enhancements `[ ]`
+(Follow-up to Phase 11; runs after Phase 12 to avoid `app`-crate collision.)
+- [ ] Add **lrclib.net** as a lyrics provider — free, open, no API key, synced
+      LRC. Make it the **default** provider (works with no setup).
+- [ ] **Cache** fetched lyrics per track so revisiting doesn't refetch — reuse
+      the `cache` crate (SQLite), like playlist contents.
+- [ ] Let the user **choose the lyrics provider** in Settings (lrclib /
+      musixmatch / internal / auto).
+- [ ] **Match heuristics** — score candidates by track duration (plus
+      title/artist/album) to pick the right lyrics version; lrclib's API takes
+      a duration and has a search endpoint returning candidates.
+
 ## Notes on the big ones
 - **Connect device, equalizer, waveform/visualisations** are each substantial
   features, not tweaks — equalizer and visualisations both require a custom
