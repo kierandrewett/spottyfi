@@ -35,7 +35,7 @@ pub struct Palette {
     pub outline: egui::Color32,
 }
 
-/// The two selectable dark themes.
+/// The selectable dark themes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Theme {
     /// The faithful Spotify-like near-black palette with the green accent.
@@ -43,6 +43,10 @@ pub enum Theme {
     SpotifyDark,
     /// An alternate dark theme: teal-green accent with lilac highlights.
     TealLilac,
+    /// A pure-black (AMOLED-friendly) palette with the Spotify-green accent.
+    Amoled,
+    /// The Nord palette: a cool blue-grey base with a frost-blue accent.
+    Nord,
 }
 
 impl Theme {
@@ -52,13 +56,20 @@ impl Theme {
         match self {
             Theme::SpotifyDark => "Spotify Dark",
             Theme::TealLilac => "Teal & Lilac",
+            Theme::Amoled => "AMOLED Black",
+            Theme::Nord => "Nord",
         }
     }
 
     /// Every theme variant, in display order.
     #[must_use]
-    pub fn all() -> [Theme; 2] {
-        [Theme::SpotifyDark, Theme::TealLilac]
+    pub fn all() -> [Theme; 4] {
+        [
+            Theme::SpotifyDark,
+            Theme::TealLilac,
+            Theme::Amoled,
+            Theme::Nord,
+        ]
     }
 
     /// The colour palette for this theme.
@@ -88,6 +99,30 @@ impl Theme {
                 text_muted: egui::Color32::from_rgb(0xa6, 0x9f, 0xc4),
                 error: egui::Color32::from_rgb(0xf1, 0x6c, 0x8b),
                 outline: egui::Color32::from_rgb(0x39, 0x44, 0x55),
+            },
+            Theme::Amoled => Palette {
+                base: egui::Color32::from_rgb(0x00, 0x00, 0x00),
+                card: egui::Color32::from_rgb(0x0b, 0x0b, 0x0b),
+                elevated: egui::Color32::from_rgb(0x15, 0x15, 0x15),
+                hover: egui::Color32::from_rgb(0x24, 0x24, 0x24),
+                accent: egui::Color32::from_rgb(0x1e, 0xd7, 0x60),
+                accent_dark: egui::Color32::from_rgb(0x1a, 0xbf, 0x54),
+                text: egui::Color32::from_rgb(0xff, 0xff, 0xff),
+                text_muted: egui::Color32::from_rgb(0x9a, 0x9a, 0x9a),
+                error: egui::Color32::from_rgb(0xf1, 0x5e, 0x6c),
+                outline: egui::Color32::from_rgb(0x2b, 0x2b, 0x2b),
+            },
+            Theme::Nord => Palette {
+                base: egui::Color32::from_rgb(0x2e, 0x34, 0x40),
+                card: egui::Color32::from_rgb(0x34, 0x3b, 0x49),
+                elevated: egui::Color32::from_rgb(0x3b, 0x42, 0x52),
+                hover: egui::Color32::from_rgb(0x43, 0x4c, 0x5e),
+                accent: egui::Color32::from_rgb(0x88, 0xc0, 0xd0),
+                accent_dark: egui::Color32::from_rgb(0x81, 0xa1, 0xc1),
+                text: egui::Color32::from_rgb(0xec, 0xef, 0xf4),
+                text_muted: egui::Color32::from_rgb(0x9a, 0xa5, 0xb9),
+                error: egui::Color32::from_rgb(0xbf, 0x61, 0x6a),
+                outline: egui::Color32::from_rgb(0x4c, 0x56, 0x6a),
             },
         }
     }
