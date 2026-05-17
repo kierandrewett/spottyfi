@@ -5,13 +5,13 @@ Grouped into workstreams; each workstream is roughly one focused change set.
 Worked through sequentially (everything touches the `app` crate, so agents run
 one at a time). `[ ]` todo · `[~]` in progress · `[x]` done.
 
-## WS1 — Rendering & scroll quality `[ ]`
-- [ ] Disable smooth scrolling
-- [ ] Fix "glitching" size issues (layout jitter / resizing glitches)
-- [ ] Fix scrolling generally
-- [ ] Smoother text rendering — currently jagged (check `pixels_per_point` /
+## WS1 — Rendering & scroll quality `[x]`
+- [x] Disable smooth scrolling
+- [x] Fix "glitching" size issues (layout jitter / resizing glitches)
+- [x] Fix scrolling generally
+- [x] Smoother text rendering — currently jagged (check `pixels_per_point` /
       display scaling / text AA)
-- [ ] Smoother image rendering — currently "crispy" (linear texture filtering,
+- [x] Smoother image rendering — currently "crispy" (linear texture filtering,
       not nearest)
 
 ## WS2 — Transport: custom controls & layout `[ ]`
