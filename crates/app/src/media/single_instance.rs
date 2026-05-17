@@ -12,8 +12,6 @@
 //! Using MPRIS `Raise` for the "focus the running window" signal means no
 //! extra IPC socket: the running instance's MPRIS server is the channel.
 
-use std::time::Duration;
-
 /// The lock name — also the D-Bus path component, kept in one place.
 const LOCK_NAME: &str = "dev.drewett.spottyfi.instance";
 
@@ -106,11 +104,6 @@ fn raise_running_instance() {
         }
     }
 }
-
-/// A small fixed delay used by callers that want to give the running
-/// instance's MPRIS server a moment to come up — exposed so the value lives
-/// next to the rest of the single-instance logic.
-pub const RAISE_GRACE: Duration = Duration::from_millis(150);
 
 #[cfg(test)]
 mod tests {

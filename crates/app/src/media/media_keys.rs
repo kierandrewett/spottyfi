@@ -101,10 +101,7 @@ fn key_modifiers(mods: HotkeyModifiers) -> Modifiers {
 
 /// Build a `global-hotkey` [`HotKey`] from one of our [`Hotkey`]s.
 fn global_hotkey(hotkey: Hotkey) -> HotKey {
-    HotKey::new(
-        Some(key_modifiers(hotkey.modifiers)),
-        key_code(hotkey.key),
-    )
+    HotKey::new(Some(key_modifiers(hotkey.modifiers)), key_code(hotkey.key))
 }
 
 /// Register the media keys and start the event-pump thread.
@@ -195,15 +192,13 @@ pub fn spawn(sender: MediaSender, hotkeys: &HotkeyMap) {
 ///
 /// `manager` is held only to keep the registrations alive for the loop's
 /// lifetime; it is otherwise unused.
-fn pump(
-    manager: GlobalHotKeyManager,
-    routes: HashMap<u32, MediaCommand>,
-    sender: MediaSender,
-) {
+fn pump(manager: GlobalHotKeyManager, routes: HashMap<u32, MediaCommand>, sender: MediaSender) {
     let receiver = GlobalHotKeyEvent::receiver();
     loop {
-        // A short timed recv keeps the thread responsive without a busy spin;
-        // `recv_timeout` returning `Err` (timeout / disconnect) just loops.
+        // A short timed recv keeps the thread responsive without a busy spin.
+        // `global-hotkey` delivers events over a `crossbeam-channel`, whose
+        // `recv_timeout` yields `Ok` on an event and `Err` on timeout or a
+        // closed channel; the only fatal case is a disconnect.
         match receiver.recv_timeout(Duration::from_millis(250)) {
             Ok(event) => {
                 // Only act on key-press, not release, so a single tap fires
@@ -214,10 +209,12 @@ fn pump(
                     }
                 }
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err(err) if err.is_disconnected() => {
                 tracing::debug!("media-key channel disconnected; pump exiting");
                 break;
+            }
+            Err(_) => {
+                // A plain timeout — loop and poll again.
             }
         }
     }

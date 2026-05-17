@@ -63,7 +63,10 @@ mpris-server = "0.10"
 # through MPRIS).
 global-hotkey = "0.8"
 # The system-tray icon + menu. On Linux this needs GTK + libappindicator.
-tray-icon = "0.24"
+# `default-features = false` drops the `libxdo` dependency — it only backs the
+# predefined Copy/Cut/Paste menu items, which Spottyfi's tray menu does not
+# use — so the build needs no `libxdo` dev package.
+tray-icon = { version = "0.24", default-features = false, features = ["gtk"] }
 # GTK, for the dedicated thread the tray icon's event loop runs on.
 gtk = "0.18"
 # Single-instance lock — a second launch focuses the running window.

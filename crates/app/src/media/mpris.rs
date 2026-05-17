@@ -20,10 +20,8 @@
 
 use std::time::Duration;
 
-use mpris_server::{
-    LoopStatus, Metadata, PlaybackStatus, Property, Server, Signal, Time, TrackId,
-};
 use mpris_server::zbus::fdo;
+use mpris_server::{LoopStatus, Metadata, PlaybackStatus, Property, Server, Signal, Time, TrackId};
 use tokio::runtime::Handle;
 
 use super::{MediaCommand, MediaSender, MediaSnapshot, SharedSnapshot};
@@ -178,8 +176,7 @@ impl mpris_server::PlayerInterface for MprisAdapter {
     }
 
     async fn seek(&self, offset: Time) -> fdo::Result<()> {
-        self.sender
-            .send(MediaCommand::SeekBy(offset.as_micros() as i64));
+        self.sender.send(MediaCommand::SeekBy(offset.as_micros()));
         Ok(())
     }
 
@@ -202,16 +199,16 @@ impl mpris_server::PlayerInterface for MprisAdapter {
     async fn loop_status(&self) -> fdo::Result<LoopStatus> {
         Ok(match self.snap().repeat {
             spottyfi_audio::RepeatMode::Off => LoopStatus::None,
-            spottyfi_audio::RepeatMode::All => LoopStatus::Playlist,
-            spottyfi_audio::RepeatMode::One => LoopStatus::Track,
+            spottyfi_audio::RepeatMode::Context => LoopStatus::Playlist,
+            spottyfi_audio::RepeatMode::Track => LoopStatus::Track,
         })
     }
 
     async fn set_loop_status(&self, loop_status: LoopStatus) -> mpris_server::zbus::Result<()> {
         let mode = match loop_status {
             LoopStatus::None => spottyfi_audio::RepeatMode::Off,
-            LoopStatus::Playlist => spottyfi_audio::RepeatMode::All,
-            LoopStatus::Track => spottyfi_audio::RepeatMode::One,
+            LoopStatus::Playlist => spottyfi_audio::RepeatMode::Context,
+            LoopStatus::Track => spottyfi_audio::RepeatMode::Track,
         };
         self.sender.send(MediaCommand::SetRepeat(mode));
         Ok(())
@@ -384,7 +381,7 @@ fn position_jumped(last: &MediaSnapshot, current: &MediaSnapshot) -> bool {
     let delta = current_ms - last_ms;
     // Allow up to ~600ms of forward drift (poll jitter + a frame) before
     // calling it a seek; any backward move is always a seek.
-    delta < -50 || delta > 600
+    !(-50..=600).contains(&delta)
 }
 
 #[cfg(test)]
