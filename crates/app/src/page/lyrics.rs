@@ -81,6 +81,8 @@ impl LyricsPanel {
                 uri: track.uri.clone(),
                 title: track.title.clone(),
                 artist: track.artists.first().cloned().unwrap_or_default(),
+                album: track.album.clone(),
+                duration: track.duration,
             }),
             None => {
                 // Nothing playing — drop any stale load.

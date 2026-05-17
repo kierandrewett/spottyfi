@@ -13,8 +13,10 @@
 
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 /// A single timed lyric line.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncedLine {
     /// The position in the track at which this line begins.
     pub at: Duration,
@@ -23,7 +25,7 @@ pub struct SyncedLine {
 }
 
 /// Lyrics for one track — either time-synced or plain (unsynced).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Lyrics {
     /// Time-synced lyrics: lines ordered by their start time.
     ///
