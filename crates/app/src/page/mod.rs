@@ -49,7 +49,7 @@ use spottyfi_ui::theme::Palette;
 use tokio::runtime::Handle;
 
 pub use incremental::IncrementalLoad;
-pub use promise::Loadable;
+pub use promise::{LoadState, Loadable};
 
 use crate::shell::Tab;
 
@@ -215,6 +215,22 @@ pub(crate) fn loading_spinner(ui: &mut egui::Ui, palette: &Palette, caption: &st
         ui.add(egui::Spinner::new().size(28.0).color(palette.accent));
         ui.add_space(8.0);
         ui.label(spottyfi_ui::components::muted(palette, caption, 12.5));
+    });
+}
+
+/// Draw a centred "cancelled" message — shown when the user cancelled a
+/// page's [`Loadable`] from the top-bar activity indicator.
+pub(crate) fn load_cancelled(ui: &mut egui::Ui, palette: &Palette, message: &str) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(ui.available_height() * 0.4);
+        ui.label(
+            egui::RichText::new("Cancelled")
+                .family(spottyfi_ui::fonts::semibold())
+                .size(15.0)
+                .color(palette.text),
+        );
+        ui.add_space(4.0);
+        ui.label(spottyfi_ui::components::muted(palette, message, 12.0));
     });
 }
 

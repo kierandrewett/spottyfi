@@ -15,7 +15,10 @@ use spottyfi_models::{Artist, Track};
 use spottyfi_ui::components;
 
 use super::cards;
-use super::{loading_spinner, Loadable, Page, PageAction, PageContext, PageServices};
+use super::{
+    load_cancelled, loading_spinner, LoadState, Loadable, Page, PageAction, PageContext,
+    PageServices,
+};
 
 /// How many chart entries to fetch from Last.fm.
 const CHART_LEN: u32 = 24;
@@ -87,9 +90,16 @@ impl Page for ChartsPage {
         let Some(data) = self.data.as_ref() else {
             return charts_unconfigured(ui, &palette);
         };
-        let Some(loaded) = data.value() else {
-            loading_spinner(ui, &palette, "Loading the charts…");
-            return None;
+        let loaded = match data.state() {
+            LoadState::Ready(loaded) => loaded,
+            LoadState::Pending => {
+                loading_spinner(ui, &palette, "Loading the charts…");
+                return None;
+            }
+            LoadState::Cancelled => {
+                load_cancelled(ui, &palette, "Loading the charts was cancelled.");
+                return None;
+            }
         };
 
         let mut action = None;

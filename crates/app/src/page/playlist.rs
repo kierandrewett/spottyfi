@@ -14,7 +14,10 @@ use spottyfi_ui::components;
 use spottyfi_ui::track_table::{self, TrackColumns, TrackRow, TrackTableState};
 
 use super::track_view::{self, Entry, PlayContext};
-use super::{load_error, loading_spinner, Loadable, Page, PageAction, PageContext, PageServices};
+use super::{
+    load_cancelled, load_error, loading_spinner, LoadState, Loadable, Page, PageAction,
+    PageContext, PageServices,
+};
 
 /// The playlist metadata load: name, description, art, owner.
 type LoadedMeta = Result<Playlist, ApiError>;
@@ -103,9 +106,16 @@ impl Page for PlaylistPage {
 
     fn ui(&mut self, ui: &mut egui::Ui, ctx: &PageContext<'_>) -> Option<PageAction> {
         let palette = ctx.palette;
-        let Some(loaded) = self.meta.value() else {
-            loading_spinner(ui, &palette, "Loading playlist…");
-            return None;
+        let loaded = match self.meta.state() {
+            LoadState::Ready(loaded) => loaded,
+            LoadState::Pending => {
+                loading_spinner(ui, &palette, "Loading playlist…");
+                return None;
+            }
+            LoadState::Cancelled => {
+                load_cancelled(ui, &palette, "Loading this playlist was cancelled.");
+                return None;
+            }
         };
         let playlist = match loaded {
             Ok(playlist) => playlist,
@@ -120,9 +130,9 @@ impl Page for PlaylistPage {
         let sort = self.sort;
 
         // The track list resolves separately; show its state below the header.
-        let tracks_loaded = self.tracks.value();
-        let original: &[Entry] = match tracks_loaded {
-            Some(Ok(tracks)) => tracks,
+        let tracks_state = self.tracks.state();
+        let original: &[Entry] = match &tracks_state {
+            LoadState::Ready(Ok(tracks)) => tracks,
             _ => &[],
         };
 
@@ -156,21 +166,28 @@ impl Page for PlaylistPage {
                 }
                 ui.add_space(14.0);
 
-                match tracks_loaded {
-                    None => {
+                match tracks_state {
+                    LoadState::Pending => {
                         ui.horizontal(|ui| {
                             ui.add(egui::Spinner::new().size(13.0).color(palette.accent));
                             ui.label(components::muted(&palette, "Loading tracks…", 11.0));
                         });
                     }
-                    Some(Err(err)) => {
+                    LoadState::Cancelled => {
+                        ui.label(components::muted(
+                            &palette,
+                            "Loading tracks was cancelled.",
+                            11.0,
+                        ));
+                    }
+                    LoadState::Ready(Err(err)) => {
                         ui.label(
                             egui::RichText::new(format!("Couldn't load tracks: {err}"))
                                 .size(11.0)
                                 .color(palette.error),
                         );
                     }
-                    Some(Ok(_)) => {
+                    LoadState::Ready(Ok(_)) => {
                         let rows: Vec<TrackRow<'_>> = self
                             .sorted
                             .iter()

@@ -8,7 +8,10 @@ use spottyfi_ui::components;
 use spottyfi_ui::track_table::{self, TrackColumns, TrackRow, TrackTableState};
 
 use super::track_view::{self, Entry, PlayContext};
-use super::{load_error, loading_spinner, Loadable, Page, PageAction, PageContext, PageServices};
+use super::{
+    load_cancelled, load_error, loading_spinner, LoadState, Loadable, Page, PageAction,
+    PageContext, PageServices,
+};
 
 /// The data the album page loads.
 type Loaded = Result<AlbumData, ApiError>;
@@ -104,9 +107,16 @@ impl Page for AlbumPage {
 
     fn ui(&mut self, ui: &mut egui::Ui, ctx: &PageContext<'_>) -> Option<PageAction> {
         let palette = ctx.palette;
-        let Some(loaded) = self.data.value() else {
-            loading_spinner(ui, &palette, "Loading album…");
-            return None;
+        let loaded = match self.data.state() {
+            LoadState::Ready(loaded) => loaded,
+            LoadState::Pending => {
+                loading_spinner(ui, &palette, "Loading album…");
+                return None;
+            }
+            LoadState::Cancelled => {
+                load_cancelled(ui, &palette, "Loading this album was cancelled.");
+                return None;
+            }
         };
         let data = match loaded {
             Ok(data) => data,

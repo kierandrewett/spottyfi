@@ -26,7 +26,7 @@ use std::time::Duration;
 use spottyfi_api::lyrics::{Lyrics, LyricsError, LyricsService, TrackRef};
 use spottyfi_ui::components;
 
-use super::{Loadable, Page, PageAction, PageContext, PageServices};
+use super::{LoadState, Loadable, Page, PageAction, PageContext, PageServices};
 
 /// The result of one lyrics fetch.
 type Loaded = Result<Lyrics, LyricsError>;
@@ -127,9 +127,16 @@ impl Page for LyricsPanel {
             super::loading_spinner(ui, &palette, "Loading lyrics…");
             return None;
         };
-        let Some(loaded) = data.value() else {
-            super::loading_spinner(ui, &palette, "Loading lyrics…");
-            return None;
+        let loaded = match data.state() {
+            LoadState::Ready(loaded) => loaded,
+            LoadState::Pending => {
+                super::loading_spinner(ui, &palette, "Loading lyrics…");
+                return None;
+            }
+            LoadState::Cancelled => {
+                super::load_cancelled(ui, &palette, "Loading lyrics was cancelled.");
+                return None;
+            }
         };
 
         match loaded {

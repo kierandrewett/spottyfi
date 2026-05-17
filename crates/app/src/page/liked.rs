@@ -10,7 +10,7 @@ use spottyfi_ui::track_table::{self, TrackColumns, TrackRow, TrackTableState};
 
 use super::incremental::IncrementalLoad;
 use super::track_view::{self, Entry, PlayContext};
-use super::{loading_spinner, Page, PageAction, PageContext, PageServices};
+use super::{load_cancelled, loading_spinner, Page, PageAction, PageContext, PageServices};
 
 /// The Liked Songs page: a header over a sortable saved-tracks table.
 pub struct LikedSongsPage {
@@ -67,10 +67,17 @@ impl Page for LikedSongsPage {
     fn ui(&mut self, ui: &mut egui::Ui, ctx: &PageContext<'_>) -> Option<PageAction> {
         let palette = ctx.palette;
 
-        let still_loading = !self.tracks.is_done();
-        if self.tracks.len() == 0 && still_loading {
-            loading_spinner(ui, &palette, "Loading your liked songs…");
-            return None;
+        let (done, cancelled) = self.tracks.with(|s| (s.done, s.cancelled));
+        let still_loading = !done && !cancelled;
+        if self.tracks.len() == 0 {
+            if cancelled {
+                load_cancelled(ui, &palette, "Loading your liked songs was cancelled.");
+                return None;
+            }
+            if still_loading {
+                loading_spinner(ui, &palette, "Loading your liked songs…");
+                return None;
+            }
         }
 
         let sort = self.sort;
@@ -152,6 +159,13 @@ impl Page for LikedSongsPage {
                         ui.add(egui::Spinner::new().size(13.0).color(palette.accent));
                         ui.label(components::muted(&palette, "Loading more songs…", 11.0));
                     });
+                } else if cancelled {
+                    ui.add_space(8.0);
+                    ui.label(components::muted(
+                        &palette,
+                        "Loading more songs was cancelled.",
+                        11.0,
+                    ));
                 } else if let Some(err) = &stream_error {
                     ui.add_space(8.0);
                     ui.label(

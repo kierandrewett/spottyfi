@@ -12,7 +12,10 @@ use spottyfi_models::SimplifiedAlbum;
 use spottyfi_ui::components;
 
 use super::cards;
-use super::{loading_spinner, Loadable, Page, PageAction, PageContext, PageServices};
+use super::{
+    load_cancelled, loading_spinner, LoadState, Loadable, Page, PageAction, PageContext,
+    PageServices,
+};
 
 /// How many new releases to fetch.
 const RELEASES_LEN: u32 = 30;
@@ -49,9 +52,16 @@ impl Page for NewReleasesPage {
 
     fn ui(&mut self, ui: &mut egui::Ui, ctx: &PageContext<'_>) -> Option<PageAction> {
         let palette = ctx.palette;
-        let Some(loaded) = self.data.value() else {
-            loading_spinner(ui, &palette, "Loading new releases…");
-            return None;
+        let loaded = match self.data.state() {
+            LoadState::Ready(loaded) => loaded,
+            LoadState::Pending => {
+                loading_spinner(ui, &palette, "Loading new releases…");
+                return None;
+            }
+            LoadState::Cancelled => {
+                load_cancelled(ui, &palette, "Loading new releases was cancelled.");
+                return None;
+            }
         };
 
         let mut action = None;

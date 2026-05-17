@@ -23,7 +23,7 @@ use spottyfi_ui::components;
 use spottyfi_ui::theme::Palette;
 
 use super::cards;
-use super::{Loadable, Page, PageAction, PageContext, PageServices};
+use super::{LoadState, Loadable, Page, PageAction, PageContext, PageServices};
 use crate::shell::Tab;
 
 /// How many categories to request from Spotify.
@@ -122,11 +122,19 @@ impl Page for BrowsePage {
                 // The Spotify category grid.
                 components::section_header(ui, &palette, "Genres & Moods");
                 ui.add_space(6.0);
-                match self.categories.value() {
-                    None => {
+                match self.categories.state() {
+                    LoadState::Pending => {
                         ui.add(egui::Spinner::new().size(16.0).color(palette.accent));
                     }
-                    Some(Err(ApiError::EndpointUnavailable { .. })) => {
+                    LoadState::Cancelled => {
+                        cards::calm_note(
+                            ui,
+                            &palette,
+                            spottyfi_ui::Icon::Browse,
+                            "Loading categories was cancelled.",
+                        );
+                    }
+                    LoadState::Ready(Err(ApiError::EndpointUnavailable { .. })) => {
                         cards::calm_note(
                             ui,
                             &palette,
@@ -134,7 +142,7 @@ impl Page for BrowsePage {
                             "Spotify's category list isn't available to this app.",
                         );
                     }
-                    Some(Err(err)) => {
+                    LoadState::Ready(Err(err)) => {
                         cards::calm_note(
                             ui,
                             &palette,
@@ -142,10 +150,10 @@ impl Page for BrowsePage {
                             &format!("Couldn't load categories: {err}"),
                         );
                     }
-                    Some(Ok(categories)) if categories.is_empty() => {
+                    LoadState::Ready(Ok(categories)) if categories.is_empty() => {
                         ui.label(components::muted(&palette, "No categories to show.", 13.0));
                     }
-                    Some(Ok(categories)) => {
+                    LoadState::Ready(Ok(categories)) => {
                         if let Some(a) = category_grid(ui, &palette, categories) {
                             action = Some(a);
                         }
@@ -182,9 +190,21 @@ fn charts_section(
         );
         return None;
     };
-    let Some(loaded) = charts.value() else {
-        ui.add(egui::Spinner::new().size(16.0).color(palette.accent));
-        return None;
+    let loaded = match charts.state() {
+        LoadState::Ready(loaded) => loaded,
+        LoadState::Pending => {
+            ui.add(egui::Spinner::new().size(16.0).color(palette.accent));
+            return None;
+        }
+        LoadState::Cancelled => {
+            cards::calm_note(
+                ui,
+                palette,
+                spottyfi_ui::Icon::Charts,
+                "Loading charts was cancelled.",
+            );
+            return None;
+        }
     };
 
     match loaded {

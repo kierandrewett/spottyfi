@@ -18,7 +18,10 @@ use spottyfi_models::{Artist, Track};
 use spottyfi_ui::components;
 
 use super::cards;
-use super::{loading_spinner, Loadable, Page, PageAction, PageContext, PageServices};
+use super::{
+    load_cancelled, loading_spinner, LoadState, Loadable, Page, PageAction, PageContext,
+    PageServices,
+};
 
 /// How many entries to pull for the category's tracks and artists.
 const CATEGORY_LEN: u32 = 20;
@@ -128,9 +131,16 @@ impl Page for CategoryPage {
             );
             return None;
         };
-        let Some(loaded) = data.value() else {
-            loading_spinner(ui, &palette, "Loading this category…");
-            return None;
+        let loaded = match data.state() {
+            LoadState::Ready(loaded) => loaded,
+            LoadState::Pending => {
+                loading_spinner(ui, &palette, "Loading this category…");
+                return None;
+            }
+            LoadState::Cancelled => {
+                load_cancelled(ui, &palette, "Loading this category was cancelled.");
+                return None;
+            }
         };
 
         let mut action = None;

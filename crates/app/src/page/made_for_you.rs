@@ -16,7 +16,10 @@ use spottyfi_models::{Artist, Track};
 use spottyfi_ui::components;
 
 use super::cards;
-use super::{loading_spinner, Loadable, Page, PageAction, PageContext, PageServices};
+use super::{
+    load_cancelled, loading_spinner, LoadState, Loadable, Page, PageAction, PageContext,
+    PageServices,
+};
 
 /// How many of the user's top items to seed recommendations from.
 const SEED_COUNT: u32 = 5;
@@ -149,9 +152,16 @@ impl Page for MadeForYouPage {
             );
             return None;
         };
-        let Some(loaded) = data.value() else {
-            loading_spinner(ui, &palette, "Building your mixes…");
-            return None;
+        let loaded = match data.state() {
+            LoadState::Ready(loaded) => loaded,
+            LoadState::Pending => {
+                loading_spinner(ui, &palette, "Building your mixes…");
+                return None;
+            }
+            LoadState::Cancelled => {
+                load_cancelled(ui, &palette, "Building your mixes was cancelled.");
+                return None;
+            }
         };
 
         let mut action = None;

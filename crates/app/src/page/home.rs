@@ -10,7 +10,10 @@ use spottyfi_api::ApiError;
 use spottyfi_models::{Album, SimplifiedPlaylist, SpotifyId as _};
 use spottyfi_ui::components;
 
-use super::{load_error, loading_spinner, Loadable, Page, PageAction, PageContext, PageServices};
+use super::{
+    load_cancelled, load_error, loading_spinner, LoadState, Loadable, Page, PageAction,
+    PageContext, PageServices,
+};
 use crate::shell::Tab;
 
 /// How many items each Home shelf shows.
@@ -66,9 +69,16 @@ impl Page for HomePage {
 
     fn ui(&mut self, ui: &mut egui::Ui, ctx: &PageContext<'_>) -> Option<PageAction> {
         let palette = ctx.palette;
-        let Some(loaded) = self.data.value() else {
-            loading_spinner(ui, &palette, "Loading your home…");
-            return None;
+        let loaded = match self.data.state() {
+            LoadState::Ready(loaded) => loaded,
+            LoadState::Pending => {
+                loading_spinner(ui, &palette, "Loading your home…");
+                return None;
+            }
+            LoadState::Cancelled => {
+                load_cancelled(ui, &palette, "Loading your home was cancelled.");
+                return None;
+            }
         };
         let data = match loaded {
             Ok(data) => data,
