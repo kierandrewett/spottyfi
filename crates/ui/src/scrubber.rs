@@ -68,6 +68,15 @@ pub struct Scrubber<'a> {
     knob_radius: f32,
     /// Whether the widget is interactive.
     enabled: bool,
+    /// An optional explicit widget height. When `None` the height is derived
+    /// from the knob radius / track thickness; waveform mode wants a taller
+    /// band so the envelope has room to breathe.
+    height: Option<f32>,
+    /// An optional rolling-waveform envelope: peak amplitudes in `0.0..=1.0`,
+    /// oldest first. When set, the track is drawn as a mirrored waveform
+    /// instead of a flat capsule — the live Spotify-style seek bar. The
+    /// played portion is accent-coloured, the rest dimmed.
+    waveform: Option<&'a [f32]>,
 }
 
 impl<'a> Scrubber<'a> {
@@ -80,7 +89,37 @@ impl<'a> Scrubber<'a> {
             track_thickness: 4.0,
             knob_radius: 6.0,
             enabled: true,
+            height: None,
+            waveform: None,
         }
+    }
+
+    /// Override the widget's total height. Useful for waveform mode, where a
+    /// taller band gives the envelope room; the default derives the height
+    /// from the knob radius and track thickness.
+    #[must_use]
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
+        self
+    }
+
+    /// Draw the track as a live rolling waveform rather than a flat capsule.
+    ///
+    /// `envelope` is a window of recent peak amplitudes in `0.0..=1.0`, oldest
+    /// first — typically a [`spottyfi_audio`-style](crate) audio-tap waveform.
+    /// The played portion (left of `fraction`) is painted in the accent
+    /// colour, the unplayed portion dimmed. Passing an empty slice falls back
+    /// to the plain capsule, so a paused / pre-playback scrubber still reads.
+    ///
+    /// [`spottyfi_audio`-style]: crate
+    #[must_use]
+    pub fn waveform(mut self, envelope: &'a [f32]) -> Self {
+        self.waveform = if envelope.is_empty() {
+            None
+        } else {
+            Some(envelope)
+        };
+        self
     }
 
     /// Set the total width the scrubber occupies.
@@ -120,8 +159,11 @@ impl<'a> Scrubber<'a> {
         fraction: f32,
     ) -> ScrubberResponse {
         let fraction = fraction.clamp(0.0, 1.0);
-        // The widget's allocated rect: full width, tall enough for the knob.
-        let height = (self.knob_radius * 2.0).max(self.track_thickness) + 4.0;
+        // The widget's allocated rect: full width, tall enough for the knob
+        // (or the caller-requested height — waveform mode wants a tall band).
+        let height = self
+            .height
+            .unwrap_or_else(|| (self.knob_radius * 2.0).max(self.track_thickness) + 4.0);
         let sense = if self.enabled {
             egui::Sense::click_and_drag()
         } else {
@@ -213,6 +255,11 @@ impl<'a> Scrubber<'a> {
         hover: Option<f32>,
         dragging: bool,
     ) {
+        if let Some(envelope) = self.waveform {
+            self.paint_waveform(ui, rect, track_left, track_span, shown, hover, envelope);
+            return;
+        }
+
         let painter = ui.painter();
         let cy = rect.center().y;
         let half = self.track_thickness * 0.5;
@@ -255,6 +302,80 @@ impl<'a> Scrubber<'a> {
             painter.circle_filled(egui::pos2(knob_x, cy), self.knob_radius, self.palette.text);
         }
     }
+
+    /// Paint the track as a live rolling waveform: mirrored amplitude bars,
+    /// accent-filled up to `shown` and dimmed beyond it.
+    ///
+    /// One thin vertical bar is drawn per pixel column of the track; each
+    /// column's height is the envelope sample under it. A hover preview
+    /// brightens the dimmed portion up to the pointer; the knob is drawn at
+    /// the play head.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_waveform(
+        &self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        track_left: f32,
+        track_span: f32,
+        shown: f32,
+        hover: Option<f32>,
+        envelope: &[f32],
+    ) {
+        let painter = ui.painter();
+        let cy = rect.center().y;
+        // The bars fill the widget's full height, leaving a hair of margin so
+        // the knob is not clipped. A floor keeps even silence visible as a
+        // thin centre line rather than vanishing entirely.
+        let max_half = (rect.height() * 0.5 - 1.0).max(1.0);
+        let min_half = 0.75_f32;
+
+        // One bar per integer column across the track.
+        let columns = track_span.max(1.0) as usize;
+        let play_x = track_left + track_span * shown;
+        let hover_x = hover.map(|h| track_left + track_span * h);
+
+        for col in 0..columns {
+            let x = track_left + col as f32 + 0.5;
+            let frac = (col as f32 + 0.5) / track_span;
+            let amp = sample_envelope(envelope, frac);
+            let half = (min_half + amp * (max_half - min_half)).min(max_half);
+
+            // Colour: accent for the played portion, a faint hover-preview
+            // tint up to the pointer, otherwise the dimmed unplayed colour.
+            let colour = if x <= play_x {
+                self.palette.accent
+            } else if hover_x.is_some_and(|hx| x <= hx) {
+                self.palette.text_muted
+            } else {
+                self.palette.outline
+            };
+
+            painter.line_segment(
+                [egui::pos2(x, cy - half), egui::pos2(x, cy + half)],
+                egui::Stroke::new(1.0, colour),
+            );
+        }
+
+        // The play-head knob, always shown on the waveform so the seek
+        // position is unambiguous against the busy bar field.
+        if self.knob_radius > 0.0 {
+            painter.circle_filled(egui::pos2(play_x, cy), self.knob_radius, self.palette.text);
+        }
+    }
+}
+
+/// Sample a waveform `envelope` at a normalised position `frac` (`0.0..=1.0`).
+///
+/// `frac` is mapped onto the envelope's index range with nearest-sample
+/// lookup. An empty envelope yields `0.0`. Pulled out as a free function so the
+/// envelope→bar mapping is unit-tested without an egui context.
+fn sample_envelope(envelope: &[f32], frac: f32) -> f32 {
+    if envelope.is_empty() {
+        return 0.0;
+    }
+    let last = envelope.len() - 1;
+    let idx = (frac.clamp(0.0, 1.0) * last as f32).round() as usize;
+    envelope[idx.min(last)].clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -302,5 +423,35 @@ mod tests {
         let (left, span) = (24.0, 256.0);
         assert_eq!(x_at(-1.0, left, span), left);
         assert_eq!(x_at(2.0, left, span), left + span);
+    }
+
+    #[test]
+    fn sample_envelope_handles_the_empty_case() {
+        assert_eq!(super::sample_envelope(&[], 0.5), 0.0);
+    }
+
+    #[test]
+    fn sample_envelope_maps_the_ends_to_first_and_last() {
+        let env = [0.1, 0.4, 0.9, 0.2];
+        assert!((super::sample_envelope(&env, 0.0) - 0.1).abs() < f32::EPSILON);
+        assert!((super::sample_envelope(&env, 1.0) - 0.2).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn sample_envelope_picks_the_nearest_sample() {
+        let env = [0.0, 1.0];
+        // Just past the midpoint rounds up to the second sample.
+        assert!((super::sample_envelope(&env, 0.6) - 1.0).abs() < f32::EPSILON);
+        assert!((super::sample_envelope(&env, 0.4) - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn sample_envelope_clamps_out_of_range_input() {
+        let env = [0.3, 0.7];
+        assert!((super::sample_envelope(&env, -5.0) - 0.3).abs() < f32::EPSILON);
+        assert!((super::sample_envelope(&env, 9.0) - 0.7).abs() < f32::EPSILON);
+        // An out-of-unit-range amplitude is clamped to 0..1.
+        assert_eq!(super::sample_envelope(&[2.0], 0.0), 1.0);
+        assert_eq!(super::sample_envelope(&[-1.0], 0.0), 0.0);
     }
 }

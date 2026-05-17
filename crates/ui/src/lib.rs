@@ -18,6 +18,8 @@
 //!   by the transport's seek bar and its volume control.
 //! - [`track_table`] — the sortable track-table widget (Phase 5) shared by the
 //!   playlist, album and liked-songs pages.
+//! - [`visualiser`] — the audio-visualiser render widgets (WS7): a spectrum
+//!   analyser and an oscilloscope, fed already-analysed data.
 //!
 //! The dock shell itself lives in the `app` binary, which is the only crate
 //! that may depend on both `audio` and `ui`.
@@ -31,6 +33,7 @@ pub mod image_loader;
 pub mod scrubber;
 pub mod theme;
 pub mod track_table;
+pub mod visualiser;
 
 pub use components::Density;
 pub use icons::Icon;
@@ -39,6 +42,7 @@ pub use theme::{Palette, Theme};
 pub use track_table::{
     track_table, SortColumn, TrackAction, TrackColumns, TrackRow, TrackTableState,
 };
+pub use visualiser::VisualiserMode;
 
 /// Install Spottyfi's fonts and image loaders into an egui context.
 ///
