@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metainfo for Spottyfi. Consumed by software centres and used to
+     build the Flatpak / AppImage listing. -->
+<component type="desktop-application">
+  <id>dev.drewett.spottyfi</id>
+
+  <name>Spottyfi</name>
+  <summary>A native Rust Spotify client with a docking workspace UI</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+
+  <developer id="dev.drewett">
+    <name>Kieran Drewett</name>
+  </developer>
+
+  <description>
+    <p>
+      Spottyfi is a native, keyboard-first Spotify client. It streams real
+      audio through librespot using your own Spotify Premium account and
+      presents a dockable tab and panel workspace: pages open as tabs, and the
+      album-art, queue, lyrics and devices panels can be dragged into splits.
+    </p>
+    <p>
+      It pairs the information density of the leaked internal Spotify imgui
+      tool with the feature surface of the modern desktop client.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Real audio playback via librespot (Spotify Premium required)</li>
+      <li>Dockable tabs and panels with persistent layouts</li>
+      <li>Library, search, browse, queue and time-synced lyrics</li>
+      <li>Spotify Connect device registration</li>
+      <li>MPRIS2 media-key and desktop integration</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">dev.drewett.spottyfi.desktop</launchable>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Player</category>
+  </categories>
+
+  <url type="homepage">https://github.com/kierandrewett/spottyfi</url>
+  <url type="bugtracker">https://github.com/kierandrewett/spottyfi/issues</url>
+  <url type="vcs-browser">https://github.com/kierandrewett/spottyfi</url>
+
+  <content_rating type="oars-1.1"/>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <recommends>
+    <display_length compare="ge">768</display_length>
+  </recommends>
+
+  <releases>
+    <release version="0.1.0" date="2026-05-17">
+      <description>
+        <p>Initial development release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

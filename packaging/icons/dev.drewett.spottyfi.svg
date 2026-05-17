@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Spottyfi application icon.
+
+  A near-black rounded tile (the Spottyfi base colour, #121212) carrying an
+  accent-green (#1ed760) "S" formed from three stacked sound-bars — a nod to
+  Spotify's wordmark and to the app's spectrum visualiser. Flat, no gradients,
+  scales cleanly from 16px to 1024px.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Base tile -->
+  <rect width="256" height="256" rx="56" fill="#121212"/>
+  <!-- Subtle elevated inner panel for depth -->
+  <rect x="20" y="20" width="216" height="216" rx="40" fill="#181818"/>
+  <!-- An "S" traced as a single rounded stroke, built from equaliser-like
+       horizontal runs joined by short verticals. -->
+  <path fill="none" stroke="#1ed760" stroke-width="22"
+        stroke-linecap="round" stroke-linejoin="round"
+        d="M 181 90
+           L 86 90
+           L 86 128
+           L 170 128
+           L 170 166
+           L 75 166"/>
+</svg>

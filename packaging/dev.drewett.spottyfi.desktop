@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Spottyfi
+GenericName=Music Player
+Comment=A native Rust Spotify client with a docking workspace UI
+Exec=spottyfi
+TryExec=spottyfi
+Icon=dev.drewett.spottyfi
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=spotify;music;audio;player;streaming;librespot;
+StartupNotify=true
+StartupWMClass=dev.drewett.spottyfi
