@@ -135,6 +135,12 @@ pub fn track_table(
 ) -> Option<TrackAction> {
     let mut action: Option<TrackAction> = None;
 
+    // Columns sit flush against each other: the default item spacing left an
+    // 8px dark gap between cells, which chopped the hovered / now-playing row
+    // highlight into disconnected blocks. With zero gap each row reads as one
+    // continuous band.
+    ui.spacing_mut().item_spacing.x = 0.0;
+
     // A faint header-row background spanning the table width.
     let header_height = 24.0;
 
@@ -252,10 +258,10 @@ fn paint_cell_bg(ui: &mut egui::Ui, fill: Option<egui::Color32>) {
 
 /// The faint Spotify-green wash painted behind the currently-playing row.
 fn now_playing_bg(palette: &Palette) -> egui::Color32 {
-    // A low-alpha accent tint — present enough to read as "playing", subtle
-    // enough not to fight the green track title.
+    // A low-alpha accent tint — present enough to read clearly as "playing"
+    // and unmistakably green, subtle enough not to fight the green title.
     let a = palette.accent;
-    egui::Color32::from_rgba_unmultiplied(a.r(), a.g(), a.b(), 28)
+    egui::Color32::from_rgba_unmultiplied(a.r(), a.g(), a.b(), 42)
 }
 
 /// Draw a thin vertical separator at the left edge of a column.
