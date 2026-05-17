@@ -75,9 +75,9 @@ one at a time). `[ ]` todo · `[~]` in progress · `[x]` done.
       title/artist/album) to pick the right lyrics version; lrclib's API takes
       a duration and has a search endpoint returning candidates.
 
-## WS9 — fix the activity-cancel panic `[ ]`
+## WS9 — fix the activity-cancel panic `[x]`
 (Bug. Runs right after Phase 12, before WS8 — both are `app`-crate work.)
-- [ ] Cancelling an activity from the top-bar indicator panics:
+- [x] Cancelling an activity from the top-bar indicator panics:
       `poll-promise: The Promise Sender was dropped`. The cancel hook
       `JoinHandle::abort()`s the task, dropping the `Loadable`'s promise
       Sender unsent; the owning page then polls a dead promise and panics.
