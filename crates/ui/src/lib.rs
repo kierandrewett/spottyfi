@@ -14,6 +14,8 @@
 //!   `egui::Image::from_uri(http_url)` resolves remote album art and avatars.
 //! - [`components`] — reusable widgets (section headers, album art, icon and
 //!   primary buttons, filter chips) plus the row-[`components::Density`] notion.
+//! - [`scrubber`] — the Spotify-style hover-scrub progress/seek widget, shared
+//!   by the transport's seek bar and its volume control.
 //! - [`track_table`] — the sortable track-table widget (Phase 5) shared by the
 //!   playlist, album and liked-songs pages.
 //!
@@ -26,11 +28,13 @@ pub mod components;
 pub mod fonts;
 pub mod icons;
 pub mod image_loader;
+pub mod scrubber;
 pub mod theme;
 pub mod track_table;
 
 pub use components::Density;
 pub use icons::Icon;
+pub use scrubber::{Scrubber, ScrubberResponse, ScrubberState};
 pub use theme::{Palette, Theme};
 pub use track_table::{
     track_table, SortColumn, TrackAction, TrackColumns, TrackRow, TrackTableState,
