@@ -180,6 +180,14 @@ fn apply_palette(style: &mut egui::Style, palette: &Palette) {
     style.spacing.button_padding = egui::vec2(10.0, 4.0);
     style.spacing.menu_margin = egui::Margin::same(4);
     style.spacing.scroll = egui::style::ScrollStyle::thin();
+
+    // Immediate, non-animated scrolling. This kills the lerp used by
+    // `scroll_to_*` (jump-to-tab, focus-follows-selection) so navigation lands
+    // instantly. egui 0.34 has no public knob for mouse-wheel input smoothing
+    // itself — that remains hardcoded in `egui::input_state` — so a faint
+    // wheel-momentum tail can still be observed; everything programmatic is
+    // now instant.
+    style.scroll_animation = egui::style::ScrollAnimation::none();
 }
 
 #[cfg(test)]

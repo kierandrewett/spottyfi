@@ -49,4 +49,20 @@ pub use track_table::{
 pub fn install_fonts_and_network_loader(ctx: &egui::Context) {
     fonts::install(ctx);
     image_loader::install(ctx);
+    tune_rendering(ctx);
+}
+
+/// Tune egui's tessellation for crisp, smooth rendering.
+///
+/// Feathering is egui's only edge anti-aliasing; with it off, shape and glyph
+/// edges look jagged ("crispy"). It is on by default, but pinning it here makes
+/// the intent explicit and survives any future style reset. The feathering
+/// width is left at egui's default (1 physical pixel), which is correct at the
+/// native display scale — eframe adopts the OS `pixels_per_point` automatically
+/// and Spottyfi never overrides it.
+fn tune_rendering(ctx: &egui::Context) {
+    ctx.options_mut(|opts| {
+        opts.tessellation_options.feathering = true;
+        opts.tessellation_options.feathering_size_in_pixels = 1.0;
+    });
 }
