@@ -36,11 +36,11 @@ one at a time). `[ ]` todo · `[~]` in progress · `[x]` done.
       listening history / scrobble. (Significant — librespot-connect / spirc;
       Phase 2 deliberately deferred this.)
 
-## WS5 — Settings & account UI `[ ]`
-- [ ] Proper Settings page — audio settings, local files, equalizer, and other
+## WS5 — Settings & account UI `[~]`
+- [x] Proper Settings page — audio settings, local files, equalizer, and other
       power-user options
 - [ ] Equalizer (real DSP — needs a custom audio backend tapping PCM; large)
-- [ ] User avatar + name in the **top-right**; that's the entry point for user
+- [x] User avatar + name in the **top-right**; that's the entry point for user
       info, Settings, Log out
 
 ## WS6 — Library, tables & navigation UX `[x]`
