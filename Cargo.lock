@@ -6602,6 +6602,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "librespot",
+ "rand 0.10.1",
  "spottyfi-auth",
  "spottyfi-models",
  "thiserror 2.0.18",

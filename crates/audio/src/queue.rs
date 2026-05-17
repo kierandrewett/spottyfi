@@ -21,6 +21,8 @@
 
 use std::time::Duration;
 
+use rand::seq::SliceRandom;
+
 /// A single playable entry in the queue or a context.
 ///
 /// Carries just enough metadata for the queue panel to render a row without
@@ -75,18 +77,35 @@ impl RepeatMode {
 }
 
 /// The playback context: the ordered track list being played through.
+///
+/// The track list is stored once, in its original order. Play order is a
+/// separate `order` permutation of indices into `tracks`: identity when
+/// shuffle is off, a random permutation when it is on. The cursor is a
+/// position *within `order`*, so toggling shuffle never disturbs the stored
+/// list and the current track can always be kept put.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Context {
     /// The context's own Spotify URI (`spotify:playlist:…`, `spotify:album:…`).
     uri: String,
     /// The context's human-readable display name.
     name: String,
-    /// Every track in the context, in play order.
+    /// Every track in the context, in the original (unshuffled) order.
     tracks: Vec<QueueTrack>,
-    /// The cursor: index of the track in `tracks` that is the *current*
-    /// context track. `None` before a context track has been played (i.e.
-    /// while a manual-queue track is playing and the context has not started).
+    /// The play-order permutation: `order[i]` is an index into `tracks`.
+    /// Identity (`0,1,2,…`) when shuffle is off.
+    order: Vec<usize>,
+    /// The cursor: position within `order` of the *current* context track.
+    /// `None` before a context track has been played (i.e. while a
+    /// manual-queue track is playing and the context has not started).
     index: Option<usize>,
+}
+
+impl Context {
+    /// The `tracks` index of the current context track, if any.
+    fn current_track_index(&self) -> Option<usize> {
+        self.index
+            .and_then(|cursor| self.order.get(cursor).copied())
+    }
 }
 
 /// The queue + context state machine.
@@ -106,6 +125,8 @@ pub struct Queue {
     current_from_manual: bool,
     /// The repeat mode.
     repeat: RepeatMode,
+    /// Whether the context plays in a shuffled order.
+    shuffle: bool,
 }
 
 impl Queue {
@@ -132,6 +153,58 @@ impl Queue {
         self.repeat = mode;
     }
 
+    /// Whether the context plays in a shuffled order.
+    #[must_use]
+    pub fn shuffle(&self) -> bool {
+        self.shuffle
+    }
+
+    /// Turn shuffle on or off, rebuilding the context's play order.
+    ///
+    /// The currently-playing context track is **preserved**: when shuffle is
+    /// switched on it becomes the first entry of the new shuffled order, so
+    /// playback continues uninterrupted and only the *upcoming* tracks are
+    /// reordered. Switching shuffle off restores the original track order with
+    /// the cursor moved to wherever the current track sits in it.
+    pub fn set_shuffle(&mut self, shuffle: bool) {
+        if self.shuffle == shuffle {
+            return;
+        }
+        self.shuffle = shuffle;
+        self.rebuild_context_order();
+    }
+
+    /// Rebuild [`Context::order`] for the current `shuffle` flag, keeping the
+    /// current context track at the cursor.
+    fn rebuild_context_order(&mut self) {
+        let len = self.context.tracks.len();
+        if len == 0 {
+            self.context.order = Vec::new();
+            self.context.index = None;
+            return;
+        }
+
+        // The `tracks`-index the cursor currently points at, if any.
+        let current = self.context.current_track_index();
+
+        if self.shuffle {
+            let mut rest: Vec<usize> = (0..len).filter(|i| Some(*i) != current).collect();
+            rest.shuffle(&mut rand::rng());
+            let mut order = Vec::with_capacity(len);
+            // Pin the current track to the front so playback is uninterrupted.
+            if let Some(current) = current {
+                order.push(current);
+            }
+            order.extend(rest);
+            self.context.order = order;
+            self.context.index = current.map(|_| 0);
+        } else {
+            self.context.order = (0..len).collect();
+            // The identity permutation maps each cursor straight to its track.
+            self.context.index = current;
+        }
+    }
+
     /// Replace the context and start playing at `offset`.
     ///
     /// Returns the track that should now be loaded into the player, or `None`
@@ -147,14 +220,31 @@ impl Queue {
             self.context = Context::default();
             return None;
         }
-        let index = offset.min(tracks.len() - 1);
+        let len = tracks.len();
+        let start = offset.min(len - 1);
+        // Build the play order. With shuffle on, the chosen track leads and the
+        // rest is shuffled behind it; otherwise it is the identity order.
+        let (order, index) = if self.shuffle {
+            let mut rest: Vec<usize> = (0..len).filter(|i| *i != start).collect();
+            rest.shuffle(&mut rand::rng());
+            let mut order = Vec::with_capacity(len);
+            order.push(start);
+            order.extend(rest);
+            (order, 0)
+        } else {
+            ((0..len).collect(), start)
+        };
         self.context = Context {
             uri,
             name,
             tracks,
+            order,
             index: Some(index),
         };
-        self.current = self.context.tracks.get(index).cloned();
+        self.current = self
+            .context
+            .current_track_index()
+            .map(|i| self.context.tracks[i].clone());
         self.current_from_manual = false;
         self.current.clone()
     }
@@ -202,14 +292,17 @@ impl Queue {
     }
 
     /// Step the context cursor forward, honouring [`RepeatMode::Context`].
+    ///
+    /// The cursor walks the `order` permutation, so the steps follow the
+    /// shuffled order when shuffle is on.
     fn advance_context(&mut self) -> Option<QueueTrack> {
-        let len = self.context.tracks.len();
+        let len = self.context.order.len();
         if len == 0 {
             return None;
         }
-        // The cursor `index` is the *current* context track. If a manual track
-        // was just playing, `index` still points at the last context track
-        // played, so the next context track is `index + 1`.
+        // The cursor `index` is the *current* position in `order`. If a manual
+        // track was just playing, it still points at the last context track
+        // played, so the next is `index + 1`.
         let next = match self.context.index {
             Some(i) if i + 1 < len => i + 1,
             Some(_) => {
@@ -222,7 +315,10 @@ impl Queue {
             None => 0,
         };
         self.context.index = Some(next);
-        self.current = self.context.tracks.get(next).cloned();
+        self.current = self
+            .context
+            .current_track_index()
+            .map(|i| self.context.tracks[i].clone());
         self.current_from_manual = false;
         self.current.clone()
     }
@@ -238,7 +334,10 @@ impl Queue {
             _ => return None,
         };
         self.context.index = Some(prev);
-        self.current = self.context.tracks.get(prev).cloned();
+        self.current = self
+            .context
+            .current_track_index()
+            .map(|i| self.context.tracks[i].clone());
         self.current_from_manual = false;
         self.current.clone()
     }
@@ -259,8 +358,13 @@ impl Queue {
 
     /// Jump straight to context entry `index`. Returns the track now playing,
     /// or `None` if `index` is out of range.
+    ///
+    /// `index` is a position in the (possibly shuffled) play order — the same
+    /// space as [`QueueState::context_index`] — so a click on an upcoming
+    /// entry maps directly here.
     pub fn skip_to_context(&mut self, index: usize) -> Option<QueueTrack> {
-        let track = self.context.tracks.get(index).cloned()?;
+        let track_index = self.context.order.get(index).copied()?;
+        let track = self.context.tracks.get(track_index).cloned()?;
         self.context.index = Some(index);
         self.current = Some(track.clone());
         self.current_from_manual = false;
@@ -303,21 +407,25 @@ impl Queue {
             context_index: self.context.index,
             manual: self.manual.clone(),
             repeat: self.repeat,
+            shuffle: self.shuffle,
         }
     }
 
-    /// The context tracks that come *after* the current cursor position.
+    /// The context tracks that come *after* the current cursor position, in
+    /// play order (shuffled when shuffle is on).
     fn upcoming_context(&self) -> Vec<QueueTrack> {
-        match self.context.index {
-            Some(i) => self
-                .context
-                .tracks
-                .get(i + 1..)
-                .map(<[QueueTrack]>::to_vec)
-                .unwrap_or_default(),
+        let start = match self.context.index {
+            Some(i) => i + 1,
             // No context track played yet — the whole context is upcoming.
-            None => self.context.tracks.clone(),
-        }
+            None => 0,
+        };
+        self.context
+            .order
+            .get(start..)
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|&track_index| self.context.tracks.get(track_index).cloned())
+            .collect()
     }
 }
 
@@ -345,6 +453,8 @@ pub struct QueueState {
     pub manual: Vec<QueueTrack>,
     /// The repeat mode.
     pub repeat: RepeatMode,
+    /// Whether the context plays in a shuffled order.
+    pub shuffle: bool,
 }
 
 impl QueueState {
@@ -526,6 +636,70 @@ mod tests {
         let snap = q.snapshot();
         assert_eq!(snap.context_index.map(|i| i + 1), Some(3));
         assert_eq!(snap.up_next_context[0].uri, "t3");
+    }
+
+    #[test]
+    fn shuffle_preserves_the_current_track() {
+        let mut q = Queue::new();
+        q.play_context("ctx".into(), "Ctx".into(), context(20), 7);
+        assert_eq!(q.current().unwrap().uri, "t7");
+        q.set_shuffle(true);
+        // Toggling shuffle never disturbs what is playing now.
+        assert_eq!(q.current().unwrap().uri, "t7");
+        assert!(q.shuffle());
+        // Switching back off keeps the current track too.
+        q.set_shuffle(false);
+        assert_eq!(q.current().unwrap().uri, "t7");
+        assert!(!q.shuffle());
+    }
+
+    #[test]
+    fn shuffle_off_restores_original_order() {
+        let mut q = Queue::new();
+        q.play_context("ctx".into(), "Ctx".into(), context(6), 2);
+        q.set_shuffle(true);
+        q.set_shuffle(false);
+        // From t2, the unshuffled order resumes: t3, t4, t5.
+        assert_eq!(q.advance().unwrap().uri, "t3");
+        assert_eq!(q.advance().unwrap().uri, "t4");
+        assert_eq!(q.advance().unwrap().uri, "t5");
+    }
+
+    #[test]
+    fn shuffle_covers_every_track_once() {
+        let mut q = Queue::new();
+        q.play_context("ctx".into(), "Ctx".into(), context(30), 0);
+        q.set_shuffle(true);
+        let mut seen = vec![q.current().unwrap().uri.clone()];
+        while let Some(track) = q.advance() {
+            seen.push(track.uri);
+        }
+        seen.sort();
+        seen.dedup();
+        // Every one of the 30 tracks appears exactly once.
+        assert_eq!(seen.len(), 30);
+    }
+
+    #[test]
+    fn shuffle_at_play_context_starts_with_offset_track() {
+        let mut q = Queue::new();
+        q.set_shuffle(true);
+        let started = q.play_context("ctx".into(), "Ctx".into(), context(10), 4);
+        // The chosen offset track still leads the shuffled order.
+        assert_eq!(started.unwrap().uri, "t4");
+        assert!(q.shuffle());
+    }
+
+    #[test]
+    fn shuffle_upcoming_matches_play_order() {
+        let mut q = Queue::new();
+        q.play_context("ctx".into(), "Ctx".into(), context(8), 0);
+        q.set_shuffle(true);
+        let snap = q.snapshot();
+        assert!(snap.shuffle);
+        // The first upcoming entry is the next track `advance` will return.
+        let first_upcoming = snap.up_next_context[0].uri.clone();
+        assert_eq!(q.advance().unwrap().uri, first_upcoming);
     }
 
     #[test]
