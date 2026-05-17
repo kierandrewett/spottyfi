@@ -55,21 +55,34 @@ RUST_LOG=spottyfi=debug cargo run
 | `SPOTTYFI_CLIENT_ID` | for live login | the registered Spotify app's Client ID (PKCE, no secret) |
 | `SPOTTYFI_REDIRECT_PORT` | optional | overrides the loopback callback port (default `8888`) |
 | `SPOTTYFI_LASTFM_API_KEY` | optional | a free [Last.fm API key](https://www.last.fm/api/account/create); enables Browse's charts and recommendations. Without it, Browse still shows the Spotify category grid and those sections show a "set the key" note. |
-| `SPOTTYFI_MUSIXMATCH_KEY` | optional | a [musixmatch API key](https://developer.musixmatch.com/); enables the Lyrics panel. Requires a build with the `musixmatch` Cargo feature (off by default — see below). Without a key the Lyrics panel shows a calm "no lyrics source configured" note. |
+| `SPOTTYFI_MUSIXMATCH_KEY` | optional | a [musixmatch API key](https://developer.musixmatch.com/); enables the optional musixmatch lyrics provider. Requires a build with the `musixmatch` Cargo feature (off by default — see below). |
 
 ### Lyrics
 
-The Lyrics panel sources time-synced lyrics from [musixmatch](https://developer.musixmatch.com/),
-the legitimate provider. It is behind an off-by-default Cargo feature, so a
-lyrics-enabled build is opt-in:
+The Lyrics panel sources time-synced lyrics from [lrclib.net](https://lrclib.net/)
+by default — a free, open, community lyrics database that needs **no API key
+and no setup**. It works out of the box, so the Lyrics panel is functional in a
+default build.
 
-```sh
-cargo run --features spottyfi-api/musixmatch
-```
+Two further providers are optional:
 
-With the feature compiled in, set `SPOTTYFI_MUSIXMATCH_KEY` to your musixmatch
-API key to enable lyrics fetching. Without the feature or the key, the Lyrics
-panel degrades gracefully to a "no lyrics source configured" state.
+- **musixmatch** — a commercial API behind the off-by-default `musixmatch`
+  Cargo feature. Build with it and set `SPOTTYFI_MUSIXMATCH_KEY`:
+
+  ```sh
+  cargo run --features spottyfi-api/musixmatch
+  ```
+
+- The **internal Spotify** lyrics endpoint — undocumented and against Spotify's
+  Terms of Service; only attempted when `SPOTTYFI_LYRICS_TOKEN` is set. See
+  `docs/questions.md`.
+
+The provider is chosen on the Settings page (**Automatic** / lrclib / musixmatch
+/ Spotify internal); Automatic tries each available provider, lrclib first.
+When several lyrics versions exist, candidates are scored by track duration (and
+title/artist/album) so the synced lyrics line up with the recording playing.
+Fetched lyrics are cached in the SQLite metadata store, so revisiting a track
+does not re-fetch — including "no lyrics found" misses, on a shorter TTL.
 
 ## Workspace layout
 

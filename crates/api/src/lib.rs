@@ -51,12 +51,13 @@
 //! ## Lyrics
 //!
 //! Spotify's Web API has no lyrics endpoint, so the [`lyrics`] module sources
-//! them from auxiliary providers: **musixmatch** (the legitimate path, behind
-//! the `musixmatch` Cargo feature, off by default, keyed by
-//! `SPOTTYFI_MUSIXMATCH_KEY`) and an **undocumented** internal Spotify endpoint
-//! (opt-in only, via `SPOTTYFI_LYRICS_TOKEN`). [`lyrics::LyricsService`]
-//! assembles whichever are configured; with none set every lookup returns
-//! [`lyrics::LyricsError::NoSourceConfigured`] — it never panics.
+//! them from auxiliary providers: **lrclib.net** (the free, open, no-setup
+//! default — always available), **musixmatch** (behind the `musixmatch` Cargo
+//! feature, off by default, keyed by `SPOTTYFI_MUSIXMATCH_KEY`) and an
+//! **undocumented** internal Spotify endpoint (opt-in only, via
+//! `SPOTTYFI_LYRICS_TOKEN`). [`lyrics::LyricsService`] assembles them, scores
+//! search candidates by track duration, and caches fetched lyrics — see the
+//! module docs. It never panics.
 #![warn(missing_docs)]
 // `unwrap`/`expect` are denied in library code but allowed in unit tests,
 // per the workspace convention in `PLAN.md`.
