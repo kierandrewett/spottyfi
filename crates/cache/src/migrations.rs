@@ -31,6 +31,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 2,
         sql: include_str!("../migrations/0002_playlist_tracks.sql"),
     },
+    Migration {
+        version: 3,
+        sql: include_str!("../migrations/0003_lyrics.sql"),
+    },
 ];
 
 /// Read the schema version stored in the database (`0` for a fresh DB).
@@ -106,6 +110,7 @@ mod tests {
             "artists",
             "playlists",
             "playlist_tracks",
+            "lyrics",
         ] {
             let count: i64 = conn
                 .query_row(

@@ -7111,6 +7111,7 @@ dependencies = [
  "spottyfi-auth",
  "spottyfi-cache",
  "spottyfi-models",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

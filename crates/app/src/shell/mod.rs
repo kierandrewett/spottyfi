@@ -105,9 +105,19 @@ impl ShellState {
                 None
             }
         };
-        // The lyrics source layer. With no provider configured this still
-        // builds — the Lyrics panel then shows a calm "no source" note.
-        let lyrics = spottyfi_api::lyrics::LyricsService::from_env();
+        // The lyrics source layer — lrclib (the free default) is always on.
+        // A persistent lyrics cache is attached when the metadata SQLite
+        // store opens, so revisiting a track does not re-fetch its lyrics.
+        let lyrics = {
+            let service = spottyfi_api::lyrics::LyricsService::from_env();
+            match open_lyrics_cache() {
+                Ok(cache) => service.with_cache(cache),
+                Err(err) => {
+                    tracing::warn!(%err, "lyrics cache unavailable; lyrics will not be cached");
+                    service
+                }
+            }
+        };
         let services = PageServices {
             api: Arc::clone(&api),
             lastfm,
@@ -186,6 +196,18 @@ fn apply_nav(persisted: &mut PersistedShell, request: NavRequest) {
         (false, true) => nav::navigate_replace_main(dock, dock_extras, request.tab),
         (true, true) => nav::open_new_tab_main(dock, request.tab),
     }
+}
+
+/// Open the persistent lyrics cache over the platform metadata database.
+///
+/// The lyrics rows live in the same SQLite store as the rest of the metadata
+/// cache (its `lyrics` table); opening it here just attaches a second handle.
+/// On failure the lyrics layer runs cache-less — every lookup hits the
+/// network — rather than failing the login.
+fn open_lyrics_cache() -> Result<spottyfi_api::lyrics::LyricsCache, spottyfi_cache::CacheError> {
+    let db_path = spottyfi_cache::paths::metadata_db_path()?;
+    let store = spottyfi_cache::MetadataCache::open(db_path)?;
+    Ok(spottyfi_api::lyrics::LyricsCache::new(Arc::new(store)))
 }
 
 /// Apply one [`TabCommand`] to the persisted dock — the right-click menu's

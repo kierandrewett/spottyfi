@@ -37,6 +37,10 @@ pub enum Kind {
     /// A playlist's fully-resolved track listing — a JSON array of
     /// [`PlaylistTrack`](spottyfi_models::PlaylistTrack), keyed by playlist id.
     PlaylistTracks,
+    /// The lyrics fetched for a track — a JSON record carrying the lyrics (or
+    /// a "not found" marker), the source provider and a fetched-at stamp,
+    /// keyed by Spotify track id. Stored by the `api` crate's lyrics layer.
+    Lyrics,
 }
 
 impl Kind {
@@ -51,6 +55,7 @@ impl Kind {
             Kind::Artist => "artists",
             Kind::Playlist => "playlists",
             Kind::PlaylistTracks => "playlist_tracks",
+            Kind::Lyrics => "lyrics",
         }
     }
 }
@@ -196,6 +201,7 @@ impl MetadataCache {
             Kind::Artist,
             Kind::Playlist,
             Kind::PlaylistTracks,
+            Kind::Lyrics,
         ] {
             conn.execute(&format!("DELETE FROM {}", kind.table()), [])?;
         }
@@ -274,6 +280,25 @@ mod tests {
         cache.clear().expect("clear");
         let miss: Option<Cached<Vec<String>>> =
             cache.get(Kind::PlaylistTracks, "pl1").expect("get");
+        assert!(miss.is_none());
+    }
+
+    #[test]
+    fn lyrics_kind_round_trips() {
+        // The lyrics cache stores an opaque JSON record keyed by track id.
+        let cache = MetadataCache::open_in_memory().expect("open");
+        let payload = r#"{"provider":"lrclib","lyrics":["a","b"]}"#.to_owned();
+        cache
+            .put(Kind::Lyrics, "spotify:track:x", &payload)
+            .expect("put");
+        let hit: Cached<String> = cache
+            .get(Kind::Lyrics, "spotify:track:x")
+            .expect("get")
+            .expect("hit");
+        assert_eq!(hit.value, payload);
+        assert_eq!(hit.staleness, Staleness::Fresh);
+        cache.clear().expect("clear");
+        let miss: Option<Cached<String>> = cache.get(Kind::Lyrics, "spotify:track:x").expect("get");
         assert!(miss.is_none());
     }
 

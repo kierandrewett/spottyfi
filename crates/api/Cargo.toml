@@ -46,3 +46,5 @@ mockall = { workspace = true }
 tokio = { workspace = true }
 # Deserialising the rspotify-shaped JSON fixtures in the mapping unit tests.
 serde_json = { workspace = true }
+# A throwaway SQLite file for the lyrics-cache round-trip tests.
+tempfile = "3"

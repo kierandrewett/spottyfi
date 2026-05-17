@@ -31,6 +31,7 @@
 //! ([`parse_lrc`]) and the current-line selector
 //! ([`current_synced_line`]) live in [`model`].
 
+pub mod cache;
 pub mod lrclib;
 mod model;
 #[cfg(feature = "musixmatch")]
@@ -38,6 +39,7 @@ pub mod musixmatch;
 pub mod score;
 pub mod spotify_internal;
 
+pub use cache::{CachedLyrics, CachedOutcome, LyricsCache};
 pub use model::{current_synced_line, parse_lrc, Lyrics, SyncedLine};
 
 use serde::{Deserialize, Serialize};
@@ -147,6 +149,11 @@ pub struct LyricsService {
     musixmatch: Option<musixmatch::MusixmatchProvider>,
     /// The internal Spotify provider, when `SPOTTYFI_LYRICS_TOKEN` is set.
     spotify_internal: Option<spotify_internal::SpotifyInternalProvider>,
+    /// The persistent lyrics cache, when one has been attached.
+    ///
+    /// `None` keeps the service usable with no cache (every lookup hits the
+    /// network); the app attaches one via [`LyricsService::with_cache`].
+    cache: Option<LyricsCache>,
 }
 
 impl std::fmt::Debug for LyricsService {
@@ -191,7 +198,19 @@ impl LyricsService {
             #[cfg(feature = "musixmatch")]
             musixmatch,
             spotify_internal,
+            cache: None,
         }
+    }
+
+    /// Attach a persistent [`LyricsCache`], returning the updated service.
+    ///
+    /// With a cache attached, [`Self::lyrics_with`] consults it before any
+    /// provider and writes every fetched result (hits *and* misses) back to
+    /// it — so revisiting a track renders straight from cache.
+    #[must_use]
+    pub fn with_cache(mut self, cache: LyricsCache) -> Self {
+        self.cache = Some(cache);
+        self
     }
 
     /// Whether at least one lyrics provider is available.
@@ -219,6 +238,11 @@ impl LyricsService {
 
     /// Fetch lyrics for `track` from the chosen `provider`.
     ///
+    /// When a [`LyricsCache`] is attached this consults it first: a cached hit
+    /// is returned with no network call, and a cached miss short-circuits to
+    /// [`LyricsError::NotFound`]. On a cache miss the providers are tried and
+    /// the result — lyrics *or* a miss — is written back to the cache.
+    ///
     /// [`LyricsProvider::Auto`] tries every configured provider in order —
     /// lrclib, then musixmatch, then the internal Spotify endpoint — and the
     /// first to return lyrics wins. A named provider pins the lookup; if that
@@ -235,12 +259,93 @@ impl LyricsService {
         track: &TrackRef,
         provider: LyricsProvider,
     ) -> LyricsResult<Lyrics> {
+        // The cache is keyed by the bare Spotify track id; a non-track URI
+        // (which the cache could not key) simply skips the cache entirely.
+        let cache_key = track.spotify_track_id().map(ToOwned::to_owned);
+
+        // 1. Consult the cache.
+        if let (Some(cache), Some(key)) = (&self.cache, &cache_key) {
+            match self.read_cache(cache, key).await {
+                Some(CachedOutcome::Found(lyrics)) => {
+                    tracing::debug!("served lyrics from cache");
+                    return Ok(lyrics);
+                }
+                Some(CachedOutcome::NotFound) => {
+                    tracing::debug!("served a cached lyrics miss");
+                    return Err(LyricsError::NotFound);
+                }
+                None => {}
+            }
+        }
+
+        // 2. Cache miss — go to the providers.
+        let fetched = self.fetch_uncached(track, provider).await;
+
+        // 3. Write the outcome back to the cache (hits and misses alike). A
+        //    transient provider/network error is not cached — only a clean
+        //    "not found" miss is, so a flaky network does not poison the cache.
+        if let (Some(cache), Some(key)) = (&self.cache, &cache_key) {
+            match &fetched {
+                Ok((lyrics, source)) => {
+                    self.write_cache(cache, key, CachedLyrics::found(lyrics.clone(), *source))
+                        .await;
+                }
+                Err(LyricsError::NotFound) => {
+                    self.write_cache(cache, key, CachedLyrics::miss()).await;
+                }
+                Err(_) => {}
+            }
+        }
+
+        fetched.map(|(lyrics, _)| lyrics)
+    }
+
+    /// Read a cached lyrics outcome, off the blocking SQLite thread.
+    async fn read_cache(&self, cache: &LyricsCache, key: &str) -> Option<CachedOutcome> {
+        let cache = cache.clone();
+        let key = key.to_owned();
+        match tokio::task::spawn_blocking(move || cache.get(&key)).await {
+            Ok(Ok(record)) => record.map(|r| r.outcome),
+            Ok(Err(err)) => {
+                tracing::warn!(%err, "lyrics cache read failed; treating as a miss");
+                None
+            }
+            Err(err) => {
+                tracing::warn!(%err, "lyrics cache read task panicked");
+                None
+            }
+        }
+    }
+
+    /// Write a lyrics record to the cache, off the blocking SQLite thread.
+    ///
+    /// Best-effort: a cache write failure is logged, never surfaced — a
+    /// fetched result is still returned to the caller.
+    async fn write_cache(&self, cache: &LyricsCache, key: &str, record: CachedLyrics) {
+        let cache = cache.clone();
+        let key = key.to_owned();
+        match tokio::task::spawn_blocking(move || cache.put(&key, &record)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => tracing::warn!(%err, "lyrics cache write failed"),
+            Err(err) => tracing::warn!(%err, "lyrics cache write task panicked"),
+        }
+    }
+
+    /// Fetch lyrics from the providers, bypassing the cache.
+    ///
+    /// On success returns the lyrics paired with the name of the provider that
+    /// produced them (for the cache record).
+    async fn fetch_uncached(
+        &self,
+        track: &TrackRef,
+        provider: LyricsProvider,
+    ) -> LyricsResult<(Lyrics, &'static str)> {
         let mut last_err: Option<LyricsError> = None;
 
         // lrclib — the free default; tried for Auto and when pinned.
         if matches!(provider, LyricsProvider::Auto | LyricsProvider::Lrclib) {
             match self.lrclib.lyrics(track).await {
-                Ok(lyrics) => return Ok(lyrics),
+                Ok(lyrics) => return Ok((lyrics, "lrclib")),
                 Err(LyricsError::NotFound) => {}
                 Err(err) => {
                     tracing::warn!(%err, "lrclib lyrics lookup failed");
@@ -254,7 +359,7 @@ impl LyricsService {
         if matches!(provider, LyricsProvider::Auto | LyricsProvider::Musixmatch) {
             if let Some(mxm) = &self.musixmatch {
                 match mxm.lyrics(track).await {
-                    Ok(lyrics) => return Ok(lyrics),
+                    Ok(lyrics) => return Ok((lyrics, "musixmatch")),
                     Err(LyricsError::NotFound) => {}
                     Err(err) => {
                         tracing::warn!(%err, "musixmatch lyrics lookup failed");
@@ -271,7 +376,7 @@ impl LyricsService {
         ) {
             if let Some(internal) = &self.spotify_internal {
                 match internal.lyrics(track).await {
-                    Ok(lyrics) => return Ok(lyrics),
+                    Ok(lyrics) => return Ok((lyrics, "spotify-internal")),
                     Err(LyricsError::NotFound) => {}
                     Err(err) => {
                         tracing::warn!(%err, "internal Spotify lyrics lookup failed");
