@@ -15,9 +15,18 @@
 //!   A stale, slow response can therefore never overwrite a newer query's
 //!   results.
 //!
+//! Unlike [`Loadable`](super::Loadable), a search task does **not** own a
+//! `poll_promise::Promise` — it writes into a shared `Mutex` slot and the UI
+//! reads that slot independently. Aborting the task therefore cannot trigger
+//! the "Sender was dropped" panic; there is nothing to send. The only fallout
+//! of cancelling is that the result slot stays empty for that generation, so
+//! [`SearchLoad`] tracks a `cancelled` flag and clears `loading` accordingly
+//! — otherwise the page would spin forever on a cancelled search.
+//!
 //! Like the other loads, an in-flight search registers a cancellable activity
 //! in the shared [`ActivityRegistry`] so the menu-bar indicator shows it.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -86,6 +95,9 @@ pub struct SearchLoad {
     shared: Arc<Mutex<Shared>>,
     /// The abort handle of the in-flight task, if one is running.
     in_flight: Option<AbortHandle>,
+    /// Tripped by the in-flight dispatch's activity-cancel hook. The page
+    /// reads it to render a cancelled state instead of an endless spinner.
+    cancelled: Arc<AtomicBool>,
     /// The query string of the most recent dispatch.
     query: String,
     /// Whether a dispatch is still awaiting its result.
@@ -100,6 +112,7 @@ impl Default for SearchLoad {
                 generation: 0,
             })),
             in_flight: None,
+            cancelled: Arc::new(AtomicBool::new(false)),
             query: String::new(),
             loading: false,
         }
@@ -138,9 +151,13 @@ impl SearchLoad {
         activity: &Arc<ActivityRegistry>,
     ) {
         // Abort whatever is in flight; its generation is now stale anyway.
+        // The task owns no `Promise` `Sender`, so aborting it cannot panic —
+        // it only writes into the shared slot, which a stale generation skips.
         if let Some(handle) = self.in_flight.take() {
             handle.abort();
         }
+        // A fresh dispatch clears any earlier cancellation; this query is live.
+        self.cancelled = Arc::new(AtomicBool::new(false));
         self.query = query.to_owned();
 
         let trimmed = query.trim();
@@ -178,10 +195,16 @@ impl SearchLoad {
             ctx.request_repaint();
         });
 
-        // Register a cancellable activity; cancelling aborts the search task.
+        // Register a cancellable activity. The hook aborts the search task —
+        // safe here, the task owns no `Promise` — and trips a flag so the page
+        // can render a cancelled state rather than spinning forever.
         let abort = handle.abort_handle();
         let cancel_abort = abort.clone();
-        let id = activity.register_cancellable("Searching…", move || cancel_abort.abort());
+        let cancel_flag = Arc::clone(&self.cancelled);
+        let id = activity.register_cancellable("Searching…", move || {
+            cancel_flag.store(true, Ordering::SeqCst);
+            cancel_abort.abort();
+        });
         let activity_finish = Arc::clone(activity);
         runtime.spawn(async move {
             let _ = handle.await;
@@ -189,6 +212,14 @@ impl SearchLoad {
         });
 
         self.in_flight = Some(abort);
+    }
+
+    /// Whether the in-flight search was cancelled by the user.
+    ///
+    /// Cleared by the next [`dispatch`](Self::dispatch).
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
     }
 
     /// The query string of the most recent dispatch.
@@ -204,6 +235,10 @@ impl SearchLoad {
     #[must_use]
     pub fn is_loading(&self) -> bool {
         if !self.loading {
+            return false;
+        }
+        // A cancelled search will never populate its slot — it is not loading.
+        if self.is_cancelled() {
             return false;
         }
         // The result has landed once the slot is populated for this query.
@@ -364,5 +399,30 @@ mod tests {
             let results = r.expect("result present").as_ref().expect("search ok");
             assert_eq!(results.tracks.total, 1, "stale result was discarded");
         });
+    }
+
+    #[test]
+    fn cancelling_an_in_flight_search_clears_loading() {
+        let (runtime, ctx, activity) = harness();
+        let mut mock = MockSpotifyApi::new();
+        // A slow search so the cancel lands while the request is in flight.
+        mock.expect_search().returning(|_, _, _| {
+            std::thread::sleep(Duration::from_millis(500));
+            Ok(SearchResults::default())
+        });
+        let api: Arc<dyn SpotifyApi> = Arc::new(mock);
+
+        let mut load = SearchLoad::new();
+        load.dispatch("daft punk", &api, runtime.handle(), &ctx, &activity);
+        assert!(load.is_loading());
+        assert!(!load.is_cancelled());
+
+        // Cancel via the registry, exactly as the top-bar indicator does.
+        let id = activity.snapshot()[0].id;
+        activity.cancel(id);
+
+        assert!(load.is_cancelled());
+        // A cancelled search is no longer loading — the page stops spinning.
+        assert!(!load.is_loading());
     }
 }

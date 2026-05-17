@@ -169,6 +169,16 @@ impl Page for SearchPage {
             });
             return action;
         }
+        // A search the user cancelled from the activity indicator: a calm note
+        // rather than an endless spinner. Editing the query re-dispatches.
+        if self.load.is_cancelled() {
+            ui.label(components::muted(
+                &palette,
+                "Search cancelled — edit your query to search again.",
+                12.0,
+            ));
+            return action;
+        }
 
         let category = self.category;
         let playing_uri = ctx.playback.track.as_ref().map(|t| t.uri.as_str());
