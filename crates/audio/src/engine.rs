@@ -32,11 +32,18 @@ use crate::sink::{EqParams, SharedEqParams, TappedSink};
 use crate::state::{PlaybackState, TrackInfo};
 use crate::tap::AudioTap;
 
+/// How often librespot is asked to emit a `PositionChanged` event.
+///
+/// These coarse 10Hz events re-anchor the locally-interpolated position; the
+/// poller below ticks much faster and interpolates between them.
+const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 /// How often the position poller refreshes the published snapshot.
 ///
-/// 100ms gives the ~10Hz update rate the transport bar needs for a smooth
-/// scrubber, as specified in `PLAN.md` Phase 2.
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// ~30Hz. The poller interpolates the play head from the last anchor, so a
+/// fast tick is what makes the transport scrubber glide smoothly instead of
+/// jumping in 100ms steps — the coarse rate was the visible playback "jitter".
+const POSITION_POLL_INTERVAL: Duration = Duration::from_millis(33);
 
 /// librespot's full-scale mixer volume (`u16::MAX`).
 const MAX_VOLUME: u16 = u16::MAX;
@@ -368,7 +375,7 @@ impl Engine {
         tokio::spawn(async move {
             // The poller ticks continuously; it only mutates the snapshot
             // while a track is actually playing.
-            let mut poll = tokio::time::interval(POLL_INTERVAL);
+            let mut poll = tokio::time::interval(POSITION_POLL_INTERVAL);
             // A locally tracked position, advanced between librespot's own
             // (coarser) position events for a smooth scrubber.
             let mut anchor: Option<PositionAnchor> = None;

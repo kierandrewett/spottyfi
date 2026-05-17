@@ -443,9 +443,10 @@ impl PlaybackControllerHandle {
         let egui_ctx = egui_ctx.clone();
         runtime.spawn(async move {
             let mut last = engine_state.load_full();
-            // Poll a touch faster than the engine's ~10Hz swap so the UI never
-            // lags a frame behind a control action.
-            let mut tick = tokio::time::interval(Duration::from_millis(80));
+            // Poll at ~60Hz — comfortably faster than the engine's ~30Hz
+            // position swap — so the UI mirror never aliases against the
+            // source rate and the scrubber tracks playback smoothly.
+            let mut tick = tokio::time::interval(Duration::from_millis(16));
             loop {
                 tick.tick().await;
                 let current = engine_state.load_full();

@@ -126,28 +126,35 @@ impl Sink for TappedSink {
         // Raw (already-encoded) packets carry no PCM samples to process; pass
         // them straight through. librespot only emits these for passthrough
         // formats Spottyfi does not request, but handle them for safety.
-        let samples = match &packet {
-            AudioPacket::Samples(samples) => samples,
-            AudioPacket::Raw(_) => return self.inner.write(packet, converter),
-        };
+        if !matches!(packet, AudioPacket::Samples(_)) {
+            return self.inner.write(packet, converter);
+        }
 
         self.refresh_params();
 
         let channels = NUM_CHANNELS as usize;
         // f64 (librespot's decode precision) -> f32 working buffer.
-        self.scratch.clear();
-        self.scratch.extend(samples.iter().map(|&s| s as f32));
+        {
+            let AudioPacket::Samples(samples) = &packet else {
+                unreachable!("packet kind checked above")
+            };
+            self.scratch.clear();
+            self.scratch.extend(samples.iter().map(|&s| s as f32));
+        }
 
-        // 1. Equalise in place (true bypass when disabled).
+        // Fast path: with the equaliser bypassed the audio is untouched, so
+        // the UI tap reads the decoded samples and the *original* packet is
+        // forwarded verbatim — no f32->f64 round trip and, crucially, no
+        // per-packet heap allocation on librespot's decode thread.
+        if !self.applied.enabled {
+            self.tap.push(&self.scratch);
+            return self.inner.write(packet, converter);
+        }
+
+        // EQ enabled: equalise in place, tap the post-EQ audio, then forward
+        // it. The f64 round trip only pays its allocation when the EQ is on.
         self.equalizer.process(&mut self.scratch, channels);
-
-        // 2. Tap the post-EQ audio for the UI. Cheap; see `tap` module docs.
         self.tap.push(&self.scratch);
-
-        // 3. Forward the post-EQ packet to the real sink. When the EQ is
-        //    disabled the scratch buffer equals the input bit-for-bit (f32
-        //    holds every f64 the decoder produces here without loss visible
-        //    after the sink's own f64->f32 step), so output is unchanged.
         let processed: Vec<f64> = self.scratch.iter().map(|&s| s as f64).collect();
         self.inner.write(AudioPacket::Samples(processed), converter)
     }
