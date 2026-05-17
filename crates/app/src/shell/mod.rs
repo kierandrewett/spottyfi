@@ -767,50 +767,83 @@ fn account_menu(
 }
 
 /// The VSCode-style background-activity indicator on the right of the menu
-/// bar: a small spinner and a label naming the current activity, with a cancel
-/// affordance for the most recent in-flight task. Renders nothing when idle.
+/// bar: a spinner plus a clickable summary that opens a dropdown listing
+/// every running job, each with its elapsed time and a cancel affordance.
+/// Renders nothing when idle.
 ///
 /// Drawn inside a `right_to_left` layout, so widgets are added rightmost-first.
 fn activity_indicator(ui: &mut egui::Ui, palette: &Palette, activity: &ActivityRegistry) {
     let activities = activity.snapshot();
-    let Some(current) = activities.last() else {
+    if activities.is_empty() {
         // Idle — show nothing, as specified.
         return;
+    }
+
+    // The summary: the single job's label, or a count when several run.
+    let summary = match activities.as_slice() {
+        [only] => only.label.clone(),
+        many => format!("{} background jobs", many.len()),
     };
 
     ui.add_space(8.0);
 
-    // Cancel affordance for the most recent task, when it is cancellable.
-    if current.cancellable {
-        let cancel = spottyfi_ui::icons::icon_button(
-            ui,
-            palette,
-            spottyfi_ui::Icon::Close,
-            12.0,
-            false,
-            "Cancel this task",
+    // The dropdown: a flat button that opens a panel listing every job.
+    let button = egui::Button::new(
+        egui::RichText::new(format!("{summary}  \u{25be}"))
+            .size(10.5)
+            .color(palette.text_muted),
+    )
+    .fill(palette.elevated)
+    .corner_radius(0);
+    egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
+        ui.set_min_width(300.0);
+        ui.label(
+            egui::RichText::new("Background jobs")
+                .family(spottyfi_ui::fonts::semibold())
+                .size(11.5)
+                .color(palette.text),
         );
-        if cancel.clicked() {
-            activity.cancel(current.id);
-        }
+        ui.add_space(4.0);
+        ui.separator();
         ui.add_space(2.0);
-    }
+        for job in &activities {
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new().size(12.0).color(palette.accent));
+                ui.add_space(6.0);
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new(&job.label)
+                            .size(11.5)
+                            .color(palette.text),
+                    );
+                    let elapsed = job.started_at.elapsed().as_secs();
+                    ui.label(spottyfi_ui::components::muted(
+                        palette,
+                        format!("running · {elapsed}s"),
+                        9.5,
+                    ));
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if job.cancellable
+                        && spottyfi_ui::icons::icon_button(
+                            ui,
+                            palette,
+                            spottyfi_ui::Icon::Close,
+                            11.0,
+                            false,
+                            "Cancel this job",
+                        )
+                        .clicked()
+                    {
+                        activity.cancel(job.id);
+                    }
+                });
+            });
+            ui.add_space(4.0);
+        }
+    });
 
-    // The activity label. When several tasks run at once, append a count.
-    let label = if activities.len() > 1 {
-        format!("{}  (+{})", current.label, activities.len() - 1)
-    } else {
-        current.label.clone()
-    };
-    let elapsed = current.started_at.elapsed().as_secs();
-    let label = if elapsed >= 2 {
-        format!("{label}  {elapsed}s")
-    } else {
-        label
-    };
-    ui.label(spottyfi_ui::components::muted(palette, label, 10.5));
-
-    ui.add_space(4.0);
+    ui.add_space(6.0);
     ui.add(egui::Spinner::new().size(12.0).color(palette.accent));
 
     // The indicator animates the spinner and the elapsed seconds; keep the
@@ -932,16 +965,21 @@ fn dock_style(palette: &Palette, egui_style: &egui::Style) -> egui_dock::Style {
     style.separator.color_hovered = palette.text_muted;
     style.separator.width = 1.0;
 
-    // The tab bar — flat, dense, sharp.
+    // The tab bar — flat, dense, sharp. A touch taller than the cramped
+    // default so tab labels have vertical breathing room, and a small left
+    // inset so the first tab does not sit flush against the window edge.
     style.tab_bar.bg_fill = palette.elevated;
     style.tab_bar.corner_radius = sharp;
-    style.tab_bar.height = 26.0;
+    style.tab_bar.height = 30.0;
+    style.tab_bar.inner_margin = egui::Margin::symmetric(4, 0);
     style.tab_bar.fill_tab_bar = false;
     style.tab_bar.hline_color = palette.outline;
 
     // Individual tabs — square; the active tab a touch lighter than the bar,
-    // inactive tabs blended into it.
-    style.tab.spacing = 0.0;
+    // inactive tabs blended into it. A 1px gap and a minimum width keep the
+    // tabs evenly sized and stop short titles collapsing to a sliver.
+    style.tab.spacing = 1.0;
+    style.tab.minimum_width = Some(96.0);
     style.tab.hline_below_active_tab_name = false;
     for interaction in [
         &mut style.tab.active,

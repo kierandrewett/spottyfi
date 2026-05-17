@@ -210,10 +210,18 @@ fn apply_palette(style: &mut egui::Style, palette: &Palette) {
 
     style.visuals = visuals;
 
-    // Spacing — tight enough for an information-dense UI.
+    // Spacing — dense, but with enough room that controls never feel cramped.
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    style.spacing.button_padding = egui::vec2(10.0, 4.0);
-    style.spacing.menu_margin = egui::Margin::same(4);
+    // Roomier buttons; this also sets the height of menu entries, so menus
+    // read comfortably instead of feeling tight.
+    style.spacing.button_padding = egui::vec2(10.0, 6.0);
+    // A border of breathing room inside menus and other popups.
+    style.spacing.menu_margin = egui::Margin::same(6);
+    // A comfortable minimum interactive height so menu entries, combo boxes
+    // and small buttons are easy to hit and evenly sized.
+    style.spacing.interact_size.y = 22.0;
+    // A touch more gap between a checkbox/radio and its label.
+    style.spacing.icon_spacing = 6.0;
     style.spacing.scroll = egui::style::ScrollStyle::thin();
 
     // Immediate, non-animated scrolling. This kills the lerp used by
