@@ -136,7 +136,12 @@ impl Page for AlbumPage {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                if let Some(a) = header(ui, &palette, &data.album) {
+                let total_ms: u64 = data
+                    .original
+                    .iter()
+                    .map(|e| u64::from(e.track.duration_ms))
+                    .sum();
+                if let Some(a) = header(ui, &palette, &data.album, total_ms) {
                     action = Some(a);
                 }
                 ui.add_space(14.0);
@@ -183,12 +188,25 @@ fn is_playing(track: &Track, playing_uri: Option<&str>) -> bool {
     }
 }
 
-/// The album header: cover art, title, artists and release year. A click on an
-/// artist name navigates to that artist's page.
+/// Format a total album duration (milliseconds) as `H hr M min` or `M min`.
+fn format_total_duration(total_ms: u64) -> String {
+    let total_secs = total_ms / 1000;
+    let minutes = total_secs / 60;
+    let hours = minutes / 60;
+    if hours > 0 {
+        format!("{hours} hr {} min", minutes % 60)
+    } else {
+        format!("{minutes} min")
+    }
+}
+
+/// The album header: cover art, title, artists, release year, track count and
+/// total duration. A click on an artist name navigates to that artist's page.
 fn header(
     ui: &mut egui::Ui,
     palette: &spottyfi_ui::theme::Palette,
     album: &Album,
+    total_ms: u64,
 ) -> Option<PageAction> {
     let mut action = None;
     ui.horizontal(|ui| {
@@ -233,8 +251,10 @@ fn header(
                 ui.label(components::muted(
                     palette,
                     format!(
-                        "  ·  {}  ·  {} tracks",
-                        album.release_date, album.total_tracks
+                        "  ·  {}  ·  {} tracks  ·  {}",
+                        album.release_date,
+                        album.total_tracks,
+                        format_total_duration(total_ms),
                     ),
                     12.0,
                 ));
@@ -242,4 +262,22 @@ fn header(
         });
     });
     action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_total_duration;
+
+    #[test]
+    fn total_duration_formats_minutes_and_hours() {
+        // Under an hour: plain minutes.
+        assert_eq!(format_total_duration(0), "0 min");
+        assert_eq!(format_total_duration(45 * 60 * 1000), "45 min");
+        // An hour or more: hours and remaining minutes.
+        assert_eq!(format_total_duration(60 * 60 * 1000), "1 hr 0 min");
+        assert_eq!(
+            format_total_duration((2 * 60 + 13) * 60 * 1000),
+            "2 hr 13 min"
+        );
+    }
 }
