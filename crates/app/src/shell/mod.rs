@@ -134,6 +134,9 @@ impl ShellState {
             "Loading playlists…",
             api.user_playlists_stream(),
         );
+        // Warm the metadata cache in the background so opening a playlist is
+        // instant rather than a cold network fetch.
+        crate::prefetch::spawn(Arc::clone(&api), &runtime);
         self.session = Some(ActiveSession {
             pages: PageRegistry::new(services),
             sidebar_playlists,

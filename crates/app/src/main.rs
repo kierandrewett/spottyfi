@@ -16,6 +16,7 @@ mod login;
 mod media;
 mod page;
 mod playback_controller;
+mod prefetch;
 mod settings;
 mod shell;
 mod transport;
