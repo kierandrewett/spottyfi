@@ -1,20 +1,25 @@
 //! The bottom transport bar and the debug "play a URI" control.
 //!
-//! Phase 4 promotes the transport to the real, polished bar: now-playing album
-//! art (loaded from the live URL via the `ui` crate's network image loader),
-//! title/artist, centred controls (shuffle, prev, play/pause, next, repeat), a
-//! progress scrubber with elapsed/total readouts, and a right cluster of
-//! lyrics/queue/devices toggle placeholders plus a volume slider.
+//! The transport is a true three-region layout: now-playing album art +
+//! title/artist on the left, the control cluster and seek scrubber genuinely
+//! centred in the window, and a volume control + toggle placeholders on the
+//! right. The central play/pause button is a larger accent-green circle — the
+//! one deliberately rounded element in an otherwise sharp UI.
 //!
-//! Shuffle, repeat and the right-cluster toggles are visual placeholders this
-//! phase — they have no engine wiring until later phases — but they are themed
-//! and laid out so the bar reads as complete.
+//! Both the seek bar and the volume control are the shared
+//! [`spottyfi_ui::scrubber::Scrubber`] widget: hover-to-preview, click/drag to
+//! seek, the seek committed on release so the engine is not spammed mid-drag.
+//!
+//! Shuffle, repeat and the right-cluster toggles are visual placeholders —
+//! they have no engine wiring until later phases — but they are themed and
+//! laid out so the bar reads as complete.
 
 use std::time::Duration;
 
 use spottyfi_audio::PlaybackState;
 use spottyfi_ui::components;
 use spottyfi_ui::icons::{self, Icon};
+use spottyfi_ui::scrubber::{Scrubber, ScrubberState};
 use spottyfi_ui::theme::Palette;
 
 use crate::playback_controller::EngineStatus;
@@ -69,16 +74,20 @@ pub enum TransportIntent {
 
 /// Per-frame, mutable UI state for the transport widgets.
 ///
-/// Held by the app so the scrubber's in-drag value, the debug field, and the
-/// state of the (not-yet-wired) shuffle / repeat toggles survive between
-/// frames.
+/// Held by the app so the seek/volume scrubbers' drag state, the debug field,
+/// and the state of the (not-yet-wired) shuffle / repeat toggles survive
+/// between frames.
 #[derive(Default)]
 pub struct TransportUiState {
     /// The track URI typed into the debug control.
     pub debug_uri: String,
-    /// While the user drags the scrubber, the in-progress position fraction;
-    /// `None` when not dragging, so the bar follows live playback.
-    scrub: Option<f32>,
+    /// The seek scrubber's per-instance drag state.
+    seek: ScrubberState,
+    /// The volume scrubber's per-instance drag state.
+    volume_scrub: ScrubberState,
+    /// While the user drags the volume scrubber, the in-progress fraction so
+    /// the icon and fill follow the drag before the engine catches up.
+    volume_preview: Option<f32>,
     /// Visual-only shuffle toggle (no engine wiring yet).
     shuffle: bool,
     /// Visual-only repeat toggle (no engine wiring yet).
@@ -89,6 +98,15 @@ pub struct TransportUiState {
 ///
 /// `palette` themes the bar; `playback` is the live snapshot the controls
 /// project.
+///
+/// ## Layout
+///
+/// The bar is a true three-region layout. The centre region — the control
+/// cluster and seek scrubber — is placed in a rect *centred on the panel's own
+/// width*, so it stays put regardless of how wide the left (now-playing) and
+/// right (volume) regions are. The left and right regions are then drawn in
+/// the gaps either side. This is the "measure, place a centred rect" approach
+/// the brief asks for — no width-fudging hacks.
 pub fn transport_bar(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -105,43 +123,60 @@ pub fn transport_bar(
                 .inner_margin(egui::Margin::symmetric(12, 6)),
         )
         .show_inside(ui, |ui| {
-            ui.horizontal_centered(|ui| {
-                // Left third: now-playing art + title/artist.
-                let side = (ui.available_width() * 0.28).clamp(180.0, 360.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(side, TRANSPORT_HEIGHT - 16.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| now_playing(ui, palette, playback),
-                );
+            let full = ui.available_rect_before_wrap();
 
-                // Right cluster reserves a fixed slice; the centre takes the rest.
-                let right_width = 210.0;
-                let centre_width = (ui.available_width() - right_width).max(220.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(centre_width, TRANSPORT_HEIGHT - 16.0),
-                    egui::Layout::centered_and_justified(egui::Direction::TopDown),
-                    |ui| {
-                        if let Some(i) = centre_controls(ui, palette, ui_state, playback) {
-                            intent = Some(i);
-                        }
-                    },
-                );
+            // The centre region is a fixed-width band centred on the panel.
+            // Clamp so it always fits between the side regions on a narrow
+            // window.
+            const SIDE_MIN: f32 = 150.0;
+            let centre_width = CENTRE_WIDTH.min((full.width() - SIDE_MIN * 2.0).max(220.0));
+            let centre_rect = egui::Rect::from_center_size(
+                full.center(),
+                egui::vec2(centre_width, full.height()),
+            );
 
-                // Right cluster: toggle placeholders + volume.
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width().max(120.0), TRANSPORT_HEIGHT - 16.0),
-                    egui::Layout::right_to_left(egui::Align::Center),
-                    |ui| {
-                        if let Some(i) = right_cluster(ui, palette, playback) {
-                            intent = Some(i);
-                        }
-                    },
-                );
-            });
+            // The left region fills from the panel's left edge to the centre
+            // band; the right region from the centre band to the right edge.
+            let left_rect =
+                egui::Rect::from_min_max(full.min, egui::pos2(centre_rect.left(), full.bottom()));
+            let right_rect =
+                egui::Rect::from_min_max(egui::pos2(centre_rect.right(), full.top()), full.max);
+
+            // Left: now-playing art + title/artist.
+            let mut left = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(left_rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            now_playing(&mut left, palette, playback);
+
+            // Centre: the control cluster over the seek scrubber, genuinely
+            // centred in the window.
+            let mut centre = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(centre_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Center)),
+            );
+            if let Some(i) = centre_controls(&mut centre, palette, ui_state, playback) {
+                intent = Some(i);
+            }
+
+            // Right: volume control + toggle placeholders, anchored right.
+            let mut right = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(right_rect)
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            );
+            if let Some(i) = right_cluster(&mut right, palette, ui_state, playback) {
+                intent = Some(i);
+            }
         });
 
     intent
 }
+
+/// The fixed width of the centred transport region (controls + scrubber).
+const CENTRE_WIDTH: f32 = 520.0;
 
 /// The now-playing block: album art (live URL), title + artist, and a dimmed
 /// bitrate line.
@@ -176,6 +211,11 @@ fn now_playing(ui: &mut egui::Ui, palette: &Palette, playback: &PlaybackState) {
     });
 }
 
+/// The diameter of the central play/pause button — deliberately larger than
+/// the surrounding controls, and the one rounded element in an otherwise sharp
+/// UI (see `docs/ui-reference.md`).
+const PLAY_BUTTON_DIAMETER: f32 = 34.0;
+
 /// The centre block: a control row above a seek scrubber, both centred
 /// horizontally and the pair centred vertically within the transport band.
 fn centre_controls(
@@ -186,31 +226,31 @@ fn centre_controls(
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
-    // The two stacked rows have a fixed combined height; lay them out in a
-    // top-down block that the enclosing centred-and-justified layout centres
-    // vertically. The block spans the full centre width so the scrubber and
-    // the (horizontally-centred) control row share the same axis.
-    const CONTROL_ROW_H: f32 = 30.0;
-    const SCRUBBER_ROW_H: f32 = 16.0;
+    // The two stacked rows have a fixed combined height; centre the block
+    // vertically within the band, then lay the rows top-down inside it.
+    const CONTROL_ROW_H: f32 = PLAY_BUTTON_DIAMETER;
+    const SCRUBBER_ROW_H: f32 = 14.0;
     const ROW_GAP: f32 = 4.0;
     let block_height = CONTROL_ROW_H + ROW_GAP + SCRUBBER_ROW_H;
-    let width = ui.available_width();
+    let band = ui.available_rect_before_wrap();
+    let width = band.width();
 
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, block_height),
-        egui::Layout::top_down(egui::Align::Center),
-        |ui| {
-            ui.spacing_mut().item_spacing.y = ROW_GAP;
-            // The transport control row, centred horizontally.
-            if let Some(i) = control_row(ui, palette, ui_state, playback, CONTROL_ROW_H) {
-                intent = Some(i);
-            }
-            // The seek scrubber row, spanning the full block width.
-            if let Some(i) = scrubber_row(ui, palette, ui_state, playback, width) {
-                intent = Some(i);
-            }
-        },
+    // A block of the exact combined height, vertically centred in the band.
+    let block_rect = egui::Rect::from_center_size(band.center(), egui::vec2(width, block_height));
+    let mut block = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(block_rect)
+            .layout(egui::Layout::top_down(egui::Align::Center)),
     );
+    block.spacing_mut().item_spacing.y = ROW_GAP;
+    // The transport control row, centred horizontally.
+    if let Some(i) = control_row(&mut block, palette, ui_state, playback, CONTROL_ROW_H) {
+        intent = Some(i);
+    }
+    // The seek scrubber row, spanning the full block width.
+    if let Some(i) = scrubber_row(&mut block, palette, ui_state, playback, width) {
+        intent = Some(i);
+    }
 
     intent
 }
@@ -225,12 +265,12 @@ fn control_row(
     height: f32,
 ) -> Option<TransportIntent> {
     let mut intent = None;
-    let has_track = playback.track.is_some();
 
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), height),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
             // A horizontally-centred cluster: an inner group whose intrinsic
             // width egui centres within the row.
             ui.with_layout(
@@ -255,37 +295,7 @@ fn control_row(
                         intent = Some(TransportIntent::Previous);
                     }
 
-                    // The play/pause control: the one accent-green element.
-                    let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(30.0, 30.0),
-                        if has_track {
-                            egui::Sense::click()
-                        } else {
-                            egui::Sense::hover()
-                        },
-                    );
-                    if ui.is_rect_visible(rect) {
-                        let fill = if has_track {
-                            palette.accent
-                        } else {
-                            palette.outline
-                        };
-                        ui.painter().rect_filled(rect, 0, fill);
-                        let glyph = if playback.playing {
-                            Icon::Pause
-                        } else {
-                            Icon::Play
-                        };
-                        let g = 14.0;
-                        glyph.image(g, egui::Color32::BLACK).paint_at(
-                            ui,
-                            egui::Rect::from_center_size(rect.center(), egui::vec2(g, g)),
-                        );
-                    }
-                    if response
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
+                    if play_button(ui, palette, playback).clicked() {
                         intent = Some(TransportIntent::TogglePlayPause);
                     }
 
@@ -314,7 +324,61 @@ fn control_row(
     intent
 }
 
-/// The seek scrubber row: elapsed / total readouts flanking a progress slider.
+/// The central play/pause control: a filled accent-green **circle**, bigger
+/// than the surrounding icon buttons.
+///
+/// This is the one deliberately rounded element in Spottyfi's otherwise sharp,
+/// zero-radius UI — the reference screenshot shows exactly this. It brightens
+/// slightly on hover and dims to the outline colour when no track is loaded.
+fn play_button(ui: &mut egui::Ui, palette: &Palette, playback: &PlaybackState) -> egui::Response {
+    let has_track = playback.track.is_some();
+    let diameter = PLAY_BUTTON_DIAMETER;
+    let sense = if has_track {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(diameter, diameter), sense);
+
+    if ui.is_rect_visible(rect) {
+        let fill = if !has_track {
+            palette.outline
+        } else if response.hovered() {
+            // A touch brighter on hover, like the Spotify client.
+            palette.accent
+        } else {
+            palette.accent_dark
+        };
+        ui.painter()
+            .circle_filled(rect.center(), diameter * 0.5, fill);
+        let glyph = if playback.playing {
+            Icon::Pause
+        } else {
+            Icon::Play
+        };
+        let g = diameter * 0.42;
+        glyph.image(g, egui::Color32::BLACK).paint_at(
+            ui,
+            egui::Rect::from_center_size(rect.center(), egui::vec2(g, g)),
+        );
+    }
+
+    if has_track {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    }
+}
+
+/// The fixed height of the seek-scrubber row.
+const SCRUBBER_HEIGHT: f32 = 14.0;
+
+/// The seek scrubber row: elapsed / total readouts flanking the custom
+/// [`Scrubber`] widget.
+///
+/// The displayed elapsed time follows the dragged position while a drag is in
+/// progress; the actual [`TransportIntent::Seek`] is emitted only on release
+/// (or a plain click), so the engine is not spammed mid-drag.
 fn scrubber_row(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -329,75 +393,99 @@ fn scrubber_row(
         .as_ref()
         .map_or(Duration::ZERO, |t| t.duration);
     let live_fraction = playback.progress_fraction();
-    let mut shown = ui_state.scrub.unwrap_or(live_fraction);
-
-    let position = if ui_state.scrub.is_some() {
-        Duration::from_secs_f32(shown * duration.as_secs_f32())
-    } else {
-        playback.position
-    };
 
     ui.allocate_ui_with_layout(
         egui::vec2(width, SCRUBBER_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.label(components::muted(palette, fmt_duration(position), 10.5));
+            ui.spacing_mut().item_spacing.x = 8.0;
+            // Reserve a fixed slot for each readout so the scrubber's left and
+            // right edges hold still as the time text changes width.
+            const READOUT_W: f32 = 34.0;
+            let elapsed_slot = ui.cursor().min;
 
-            let track_width = (ui.available_width() - 44.0).max(80.0);
-            ui.spacing_mut().slider_width = track_width;
-            let slider = ui.add_enabled(
-                !duration.is_zero(),
-                egui::Slider::new(&mut shown, 0.0..=1.0)
-                    .show_value(false)
-                    .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
-            );
+            // Placeholder for the elapsed readout — drawn after the scrubber,
+            // once the dragged position is known.
+            ui.add_space(READOUT_W);
 
-            if slider.drag_started() || slider.dragged() {
-                ui_state.scrub = Some(shown);
-            }
-            if slider.drag_stopped() || slider.clicked() {
-                let target = Duration::from_secs_f32(shown * duration.as_secs_f32());
+            let track_width = (ui.available_width() - READOUT_W).max(60.0);
+            let scrub = Scrubber::new(palette, "transport-seek")
+                .width(track_width)
+                .track_thickness(4.0)
+                .knob_radius(6.0)
+                .enabled(!duration.is_zero())
+                .show(ui, &mut ui_state.seek, live_fraction);
+
+            if let Some(fraction) = scrub.committed {
+                let target = Duration::from_secs_f32(fraction * duration.as_secs_f32());
                 intent = Some(TransportIntent::Seek(target));
-                ui_state.scrub = None;
             }
 
             ui.label(components::muted(palette, fmt_duration(duration), 10.5));
+
+            // Draw the elapsed readout into its reserved slot: the dragged
+            // position while dragging, otherwise live playback position.
+            let position = if scrub.dragging {
+                Duration::from_secs_f32(scrub.fraction * duration.as_secs_f32())
+            } else {
+                playback.position
+            };
+            let mut elapsed = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(egui::Rect::from_min_size(
+                        elapsed_slot,
+                        egui::vec2(READOUT_W, SCRUBBER_HEIGHT),
+                    ))
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            elapsed.label(components::muted(palette, fmt_duration(position), 10.5));
         },
     );
 
     intent
 }
 
-/// The fixed height of the seek-scrubber row.
-const SCRUBBER_HEIGHT: f32 = 16.0;
-
-/// The right cluster: lyrics/queue/devices toggle placeholders + volume.
+/// The right cluster: a volume scrubber + toggle placeholders.
 fn right_cluster(
     ui: &mut egui::Ui,
     palette: &Palette,
+    ui_state: &mut TransportUiState,
     playback: &PlaybackState,
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
-    // Volume slider (right-to-left layout, so this lands rightmost).
-    let mut volume = playback.volume;
-    ui.spacing_mut().slider_width = 80.0;
-    let response = ui.add(
-        egui::Slider::new(&mut volume, 0.0..=1.0)
-            .show_value(false)
-            .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
-    );
-    if response.changed() {
-        intent = Some(TransportIntent::SetVolume(volume));
+    // The right region is laid out right-to-left, so widgets are added
+    // rightmost-first: volume scrubber, volume icon, then the toggles.
+    ui.spacing_mut().item_spacing.x = 4.0;
+
+    // The volume scrubber reuses the same component, just shorter and with no
+    // hover-preview cue (knob still appears on hover/drag).
+    let volume = ui_state.volume_preview.unwrap_or(playback.volume);
+    let scrub = Scrubber::new(palette, "transport-volume")
+        .width(88.0)
+        .track_thickness(4.0)
+        .knob_radius(5.0)
+        .show(ui, &mut ui_state.volume_scrub, volume);
+    if scrub.dragging {
+        ui_state.volume_preview = Some(scrub.fraction);
     }
-    let vol_icon = if playback.volume <= 0.001 {
+    // Volume changes apply live (drag and click), so emit on any change.
+    if let Some(fraction) = scrub.committed {
+        intent = Some(TransportIntent::SetVolume(fraction));
+        ui_state.volume_preview = None;
+    } else if scrub.dragging {
+        intent = Some(TransportIntent::SetVolume(scrub.fraction));
+    }
+
+    let shown_volume = ui_state.volume_preview.unwrap_or(playback.volume);
+    let vol_icon = if shown_volume <= 0.001 {
         Icon::VolumeMuted
     } else {
         Icon::Volume
     };
     icons::icon_button(ui, palette, vol_icon, 15.0, false, "Volume");
 
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     // Toggle placeholders — wired in later phases.
     icons::icon_button(ui, palette, Icon::Settings, 15.0, false, "Settings (later)");
     icons::icon_button(ui, palette, Icon::Devices, 15.0, false, "Devices (later)");
