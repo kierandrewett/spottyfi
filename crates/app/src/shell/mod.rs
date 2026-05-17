@@ -252,7 +252,8 @@ fn apply_shortcuts(ui: &egui::Ui, persisted: &mut PersistedShell) {
         }
     }
     if new_tab {
-        nav::open_new_tab(&mut persisted.dock, Tab::Home);
+        // A new tab belongs in the centre tab group, not a side panel.
+        nav::open_new_tab_main(&mut persisted.dock, Tab::Home);
     }
     if reopen {
         nav::reopen_last_closed(&mut persisted.dock, &mut persisted.dock_extras);

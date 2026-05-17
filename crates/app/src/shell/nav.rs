@@ -260,29 +260,41 @@ pub fn reopen_last_closed(dock: &mut DockState<Tab>, extras: &mut DockExtras) {
     open_new_tab(dock, closed.tab);
 }
 
-/// Navigate the focused tab back one step in its history, if it can.
+/// Navigate the **main pane's** active tab back one step in its history.
 ///
-/// The focused tab's surface is swapped in place for the previous one; the
-/// surface left behind goes onto the history's forward stack.
+/// The menu-bar Back / Forward buttons are a global navigation control, so
+/// they always act on the centre tab group — never on whichever side panel
+/// happens to hold focus (a panel has no history, which made the buttons
+/// silently do nothing). The surface swapped out goes onto the forward stack.
 pub fn go_back(dock: &mut DockState<Tab>, extras: &mut DockExtras) {
     step_history(dock, extras, HistoryStep::Back);
 }
 
-/// Navigate the focused tab forward one step in its history, if it can.
+/// Navigate the main pane's active tab forward one step in its history.
 pub fn go_forward(dock: &mut DockState<Tab>, extras: &mut DockExtras) {
     step_history(dock, extras, HistoryStep::Forward);
 }
 
-/// Whether the focused tab can step back in its history.
-#[must_use]
-pub fn can_go_back(dock: &DockState<Tab>, extras: &DockExtras) -> bool {
-    focused_tab(dock).is_some_and(|tab| extras.can_go_back(&tab))
+/// The active tab of the main (centre) pane — the leaf holding Home.
+fn main_pane_tab(dock: &DockState<Tab>) -> Option<Tab> {
+    let path = main_leaf_path(dock)?;
+    if let Ok(egui_dock::Node::Leaf(leaf)) = dock.node(path) {
+        leaf.tabs.get(leaf.active.0).cloned()
+    } else {
+        None
+    }
 }
 
-/// Whether the focused tab can step forward in its history.
+/// Whether the main pane's active tab can step back in its history.
+#[must_use]
+pub fn can_go_back(dock: &DockState<Tab>, extras: &DockExtras) -> bool {
+    main_pane_tab(dock).is_some_and(|tab| extras.can_go_back(&tab))
+}
+
+/// Whether the main pane's active tab can step forward in its history.
 #[must_use]
 pub fn can_go_forward(dock: &DockState<Tab>, extras: &DockExtras) -> bool {
-    focused_tab(dock).is_some_and(|tab| extras.can_go_forward(&tab))
+    main_pane_tab(dock).is_some_and(|tab| extras.can_go_forward(&tab))
 }
 
 /// Which direction a history step goes.
@@ -292,12 +304,12 @@ enum HistoryStep {
     Forward,
 }
 
-/// Shared back/forward implementation: swap the focused tab's surface for its
+/// Shared back/forward implementation: swap the main pane's active tab for its
 /// history neighbour, in place, and re-key its history under the new surface.
 fn step_history(dock: &mut DockState<Tab>, extras: &mut DockExtras, step: HistoryStep) {
-    // Resolve the focused leaf and the *exact* active-tab slot within it, so
-    // the swap targets the right tab even if its surface is open twice.
-    let Some(leaf_path) = active_leaf_path(dock) else {
+    // Resolve the main (centre) leaf and the *exact* active-tab slot within it,
+    // so the swap targets the right tab even if its surface is open twice.
+    let Some(leaf_path) = main_leaf_path(dock) else {
         return;
     };
     let Ok(egui_dock::Node::Leaf(leaf)) = dock.node(leaf_path) else {
@@ -534,6 +546,27 @@ mod tests {
         // Step forward again.
         go_forward(&mut dock, &mut extras);
         assert_eq!(focused_tab(&dock), Some(Tab::Album("b".into())));
+    }
+
+    #[test]
+    fn history_navigation_targets_the_main_pane() {
+        use egui_dock::{NodeIndex, SurfaceIndex};
+        // Centre leaf with Home; navigate it twice so it has back history.
+        let mut dock = dock_with(vec![Tab::Home]);
+        let surface = SurfaceIndex::main();
+        dock[surface].split_right(NodeIndex::root(), 0.7, vec![Tab::Queue]);
+        let mut extras = DockExtras::default();
+
+        navigate_replace_main(&mut dock, &mut extras, Tab::Browse);
+        navigate_replace_main(&mut dock, &mut extras, Tab::Charts);
+
+        // Focus the side panel — Back must still walk the *main pane*.
+        let queue_leaf = dock.find_tab(&Tab::Queue).expect("queue").node_path();
+        dock.set_focused_node_and_surface(queue_leaf);
+
+        assert!(can_go_back(&dock, &extras), "main pane has history");
+        go_back(&mut dock, &mut extras);
+        assert_eq!(main_pane_tab(&dock), Some(Tab::Browse));
     }
 
     #[test]
