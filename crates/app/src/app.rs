@@ -252,7 +252,7 @@ impl SpottyfiApp {
     }
 
     /// Apply a transport intent by dispatching it onto the playback engine.
-    fn apply_transport_intent(&self, intent: TransportIntent) {
+    fn apply_transport_intent(&mut self, intent: TransportIntent) {
         match intent {
             TransportIntent::TogglePlayPause => self.playback.toggle_play_pause(),
             TransportIntent::Seek(position) => self.playback.seek(position),
@@ -276,6 +276,7 @@ impl SpottyfiApp {
             TransportIntent::RemoveManual(index) => self.playback.remove_manual(index),
             TransportIntent::SetShuffle(shuffle) => self.playback.set_shuffle(shuffle),
             TransportIntent::SetRepeat(mode) => self.playback.set_repeat(mode),
+            TransportIntent::ShowTab(tab) => self.shell.reveal_tab(tab),
         }
     }
 

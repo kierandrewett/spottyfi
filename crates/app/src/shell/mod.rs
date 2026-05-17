@@ -171,6 +171,17 @@ impl ShellState {
         self.persisted.save();
     }
 
+    /// Reveal a dock tab: focus it if it is already open, otherwise add it to
+    /// the focused leaf. Used by the transport bar's shortcut buttons.
+    pub fn reveal_tab(&mut self, tab: Tab) {
+        match self.persisted.dock.find_tab(&tab) {
+            Some(location) => {
+                let _ = self.persisted.dock.set_active_tab(location);
+            }
+            None => self.persisted.dock.push_to_focused_leaf(tab),
+        }
+    }
+
     /// Re-apply the theme to `ctx` if it changed since the last frame.
     pub fn sync_theme(&mut self, ctx: &egui::Context) {
         if self.applied_theme != Some(self.persisted.theme) {

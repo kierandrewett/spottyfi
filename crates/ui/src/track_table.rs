@@ -135,11 +135,11 @@ pub fn track_table(
 ) -> Option<TrackAction> {
     let mut action: Option<TrackAction> = None;
 
-    // Columns sit flush against each other: the default item spacing left an
-    // 8px dark gap between cells, which chopped the hovered / now-playing row
-    // highlight into disconnected blocks. With zero gap each row reads as one
-    // continuous band.
-    ui.spacing_mut().item_spacing.x = 0.0;
+    // Rows and columns sit flush against each other. The default item spacing
+    // left gaps between cells (chopping a row's highlight into blocks) and
+    // between rows (a dark strip around the now-playing row that read as a
+    // drop shadow). With zero spacing every row is one continuous band.
+    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
 
     // A faint header-row background spanning the table width.
     let header_height = 24.0;
@@ -241,8 +241,7 @@ pub fn track_table(
 
 /// Paint the faint header-row background behind a header cell.
 fn paint_header_bg(ui: &mut egui::Ui, palette: &Palette) {
-    let rect = ui.max_rect().expand2(egui::vec2(0.0, 2.0));
-    ui.painter().rect_filled(rect, 0, palette.card);
+    ui.painter().rect_filled(ui.max_rect(), 0, palette.card);
 }
 
 /// Paint a row cell's background, if any — a flat, sharp, full-bleed fill.
@@ -251,8 +250,7 @@ fn paint_header_bg(ui: &mut egui::Ui, palette: &Palette) {
 /// one continuous band across every column.
 fn paint_cell_bg(ui: &mut egui::Ui, fill: Option<egui::Color32>) {
     if let Some(fill) = fill {
-        let rect = ui.max_rect().expand2(egui::vec2(0.0, 1.0));
-        ui.painter().rect_filled(rect, 0, fill);
+        ui.painter().rect_filled(ui.max_rect(), 0, fill);
     }
 }
 

@@ -24,6 +24,7 @@ use spottyfi_ui::scrubber::{Scrubber, ScrubberState};
 use spottyfi_ui::theme::Palette;
 
 use crate::playback_controller::EngineStatus;
+use crate::shell::Tab;
 
 /// Height of the transport bar — a tight, dense strip.
 pub const TRANSPORT_HEIGHT: f32 = 68.0;
@@ -75,6 +76,9 @@ pub enum TransportIntent {
     SetShuffle(bool),
     /// Set the repeat mode (off / repeat-all / repeat-one).
     SetRepeat(RepeatMode),
+    /// Reveal a dock tab or panel — the right-cluster shortcut buttons
+    /// (Settings, Queue) open or focus their tab.
+    ShowTab(Tab),
 }
 
 /// Per-frame, mutable UI state for the transport widgets.
@@ -562,10 +566,16 @@ fn right_cluster(
     icons::icon_button(ui, palette, vol_icon, 15.0, false, "Volume");
 
     ui.add_space(4.0);
-    // Toggle placeholders — wired in later phases.
-    icons::icon_button(ui, palette, Icon::Settings, 15.0, false, "Settings (later)");
-    icons::icon_button(ui, palette, Icon::Devices, 15.0, false, "Devices (later)");
-    icons::icon_button(ui, palette, Icon::Queue, 15.0, false, "Queue (later)");
+    // Right-cluster shortcuts. Added rightmost-first (a right-to-left layout):
+    // Settings, then Devices, then Queue.
+    if icons::icon_button(ui, palette, Icon::Settings, 15.0, false, "Settings").clicked() {
+        intent = Some(TransportIntent::ShowTab(Tab::Settings));
+    }
+    // Devices: the Connect device picker lands in a later wave.
+    icons::icon_button(ui, palette, Icon::Devices, 15.0, false, "Devices");
+    if icons::icon_button(ui, palette, Icon::Queue, 15.0, false, "Queue").clicked() {
+        intent = Some(TransportIntent::ShowTab(Tab::Queue));
+    }
 
     intent
 }
