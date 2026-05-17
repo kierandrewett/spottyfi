@@ -25,12 +25,14 @@
 // per the workspace convention in `PLAN.md`.
 #![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
 
+mod config;
 mod controller;
 mod engine;
 mod error;
 mod queue;
 mod state;
 
+pub use crate::config::{EngineConfig, StreamQuality};
 pub use crate::controller::{PlaybackController, SharedPlaybackState, SharedQueueState};
 pub use crate::error::{AudioError, AudioResult};
 pub use crate::queue::{Queue, QueueState, QueueTrack, RepeatMode};

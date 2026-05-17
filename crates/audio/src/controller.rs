@@ -24,6 +24,7 @@ use arc_swap::ArcSwap;
 use librespot::playback::player::PlayerEvent;
 use std::sync::Mutex;
 
+use crate::config::EngineConfig;
 use crate::engine::Engine;
 use crate::error::{AudioError, AudioResult};
 use crate::queue::{Queue, QueueState, QueueTrack, RepeatMode};
@@ -56,18 +57,21 @@ impl PlaybackController {
     /// Start the audio engine, authenticating librespot with `access_token`.
     ///
     /// `access_token` is the access-token string from the auth crate's
-    /// `Session::token()`. The engine connects a librespot session, builds the
-    /// player and mixer, begins publishing [`PlaybackState`] snapshots, and
-    /// spawns the queue auto-advance task.
+    /// `Session::token()`. `config` carries the start-time engine settings
+    /// (stream quality, normalisation) — librespot bakes these into its
+    /// `PlayerConfig` at connect, so they only change on a fresh start. The
+    /// engine connects a librespot session, builds the player and mixer,
+    /// begins publishing [`PlaybackState`] snapshots, and spawns the queue
+    /// auto-advance task.
     ///
     /// # Errors
     ///
     /// Returns [`AudioError::Connect`] if the librespot session handshake
     /// fails, or [`AudioError::NoBackend`] if no audio output is available.
     #[tracing::instrument(skip_all)]
-    pub async fn start(access_token: &str) -> AudioResult<Self> {
+    pub async fn start(access_token: &str, config: EngineConfig) -> AudioResult<Self> {
         let state: SharedPlaybackState = Arc::new(ArcSwap::from_pointee(PlaybackState::default()));
-        let engine = Engine::connect(access_token, Arc::clone(&state)).await?;
+        let engine = Engine::connect(access_token, config, Arc::clone(&state)).await?;
         let queue = Arc::new(Mutex::new(Queue::new()));
         let queue_state: SharedQueueState = Arc::new(ArcSwap::from_pointee(QueueState::default()));
 

@@ -26,6 +26,7 @@ use librespot::playback::mixer::softmixer::SoftMixer;
 use librespot::playback::mixer::{Mixer, MixerConfig};
 use librespot::playback::player::{Player, PlayerEvent};
 
+use crate::config::EngineConfig;
 use crate::error::{AudioError, AudioResult};
 use crate::state::{PlaybackState, TrackInfo};
 
@@ -37,12 +38,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// librespot's full-scale mixer volume (`u16::MAX`).
 const MAX_VOLUME: u16 = u16::MAX;
-
-/// The audio bitrate Spottyfi requests from Spotify.
-///
-/// 320 kbps is the highest tier librespot supports and what Spottyfi has
-/// always shipped; it is surfaced verbatim in the transport's codec readout.
-const BITRATE: Bitrate = Bitrate::Bitrate320;
 
 /// The codec librespot decodes — Spotify streams Ogg Vorbis at every tier.
 pub(crate) const CODEC_NAME: &str = "Ogg Vorbis";
@@ -97,6 +92,15 @@ fn bitrate_kbps(bitrate: Bitrate) -> u16 {
     }
 }
 
+/// Map a Spottyfi [`StreamQuality`] to the librespot [`Bitrate`] tier.
+fn bitrate_for(quality: crate::config::StreamQuality) -> Bitrate {
+    match quality {
+        crate::config::StreamQuality::Low => Bitrate::Bitrate96,
+        crate::config::StreamQuality::Normal => Bitrate::Bitrate160,
+        crate::config::StreamQuality::High => Bitrate::Bitrate320,
+    }
+}
+
 /// The running librespot engine: session, player, mixer and shared state.
 pub(crate) struct Engine {
     /// The librespot player. Cheap to clone (`Arc` inside).
@@ -131,15 +135,19 @@ impl Engine {
     /// no audio output backend is available.
     pub(crate) async fn connect(
         access_token: &str,
+        config: EngineConfig,
         state: Arc<ArcSwap<PlaybackState>>,
     ) -> AudioResult<Self> {
         let session_config = SessionConfig::default();
+        let bitrate = bitrate_for(config.quality);
         let player_config = PlayerConfig {
             // Opt into periodic `PositionChanged` events; combined with the
             // poller this keeps the published position accurate.
             position_update_interval: Some(POLL_INTERVAL),
-            // Highest tier; surfaced verbatim in the transport readout.
-            bitrate: BITRATE,
+            // The user-chosen tier; surfaced verbatim in the transport readout.
+            bitrate,
+            // librespot's volume normalisation, toggled from Settings.
+            normalisation: config.normalisation,
             ..PlayerConfig::default()
         };
 
@@ -172,7 +180,7 @@ impl Engine {
         let initial_volume = volume_from_u16(mixer.volume());
         let initial = PlaybackState {
             volume: initial_volume,
-            bitrate_kbps: bitrate_kbps(BITRATE),
+            bitrate_kbps: bitrate_kbps(bitrate),
             codec: CODEC_NAME.to_owned(),
             ..PlaybackState::default()
         };
