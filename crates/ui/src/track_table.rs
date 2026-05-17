@@ -225,6 +225,25 @@ fn paint_header_bg(ui: &mut egui::Ui, palette: &Palette) {
     ui.painter().rect_filled(rect, 0, palette.card);
 }
 
+/// Paint a row cell's background, if any — a flat, sharp, full-bleed fill.
+///
+/// Called at the start of every cell so a hovered / now-playing row reads as
+/// one continuous band across every column.
+fn paint_cell_bg(ui: &mut egui::Ui, fill: Option<egui::Color32>) {
+    if let Some(fill) = fill {
+        let rect = ui.max_rect().expand2(egui::vec2(0.0, 1.0));
+        ui.painter().rect_filled(rect, 0, fill);
+    }
+}
+
+/// The faint Spotify-green wash painted behind the currently-playing row.
+fn now_playing_bg(palette: &Palette) -> egui::Color32 {
+    // A low-alpha accent tint — present enough to read as "playing", subtle
+    // enough not to fight the green track title.
+    let a = palette.accent;
+    egui::Color32::from_rgba_unmultiplied(a.r(), a.g(), a.b(), 28)
+}
+
 /// Draw a thin vertical separator at the left edge of a column.
 fn column_rule(ui: &mut egui::Ui, palette: &Palette) {
     let rect = ui.max_rect();
@@ -288,9 +307,22 @@ fn render_row(
     let mut action: Option<TrackAction> = None;
     let track = track_row.track;
 
+    // The whole row's hover state — used to paint a subtle full-row highlight.
+    let hovered = row.response().hovered();
+    // The row background: a faint green wash for the now-playing row, a subtle
+    // lighter wash on hover, nothing otherwise.
+    let row_bg = if track_row.is_playing {
+        Some(now_playing_bg(palette))
+    } else if hovered {
+        Some(palette.hover)
+    } else {
+        None
+    };
+
     // "#" — a speaker icon marks the currently-playing row; otherwise the
     // position number with a small music-note glyph.
     row.col(|ui| {
+        paint_cell_bg(ui, row_bg);
         if track_row.is_playing {
             ui.add_space(2.0);
             crate::icons::icon(ui, Icon::Volume, 13.0, palette.accent);
@@ -308,6 +340,7 @@ fn render_row(
 
     // Title — album-art thumbnail + track name over the artist line.
     row.col(|ui| {
+        paint_cell_bg(ui, row_bg);
         components::album_art(ui, palette, primary_image(track), 34.0, 0.0);
         ui.add_space(8.0);
         ui.vertical(|ui| {
@@ -354,6 +387,7 @@ fn render_row(
     // Album — a clickable link to the album page when it carries an id.
     if columns.album {
         row.col(|ui| {
+            paint_cell_bg(ui, row_bg);
             column_rule(ui, palette);
             match &track.album.id {
                 Some(id) if !track.album.name.is_empty() => {
@@ -378,20 +412,25 @@ fn render_row(
     // Date added.
     if columns.date_added {
         row.col(|ui| {
+            paint_cell_bg(ui, row_bg);
             column_rule(ui, palette);
             let text = track_row.date_added.map(format_date).unwrap_or_default();
             ui.label(components::muted(palette, text, 11.5));
         });
     }
 
-    // Duration.
+    // Duration — right-aligned so the m:ss values line up on their last digit.
     row.col(|ui| {
+        paint_cell_bg(ui, row_bg);
         column_rule(ui, palette);
-        ui.label(components::muted(
-            palette,
-            format_duration(track.duration_ms),
-            11.5,
-        ));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(8.0);
+            ui.label(components::muted(
+                palette,
+                format_duration(track.duration_ms),
+                11.5,
+            ));
+        });
     });
 
     // Whole-row interactions: double-click plays, right-click opens the menu.
