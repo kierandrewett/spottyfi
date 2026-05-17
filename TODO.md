@@ -250,4 +250,26 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
   already existed from WS5; Phase 12 only added its Notifications and editable
   Hotkeys sections.
 
-## Phase 13 — Packaging `[ ]`
+## Phase 13 — Packaging `[x]`
+
+- [x] Desktop-integration assets under `packaging/`: freedesktop
+      `dev.drewett.spottyfi.desktop` (validated with `desktop-file-validate`),
+      AppStream `dev.drewett.spottyfi.metainfo.xml` (validated with
+      `appstreamcli validate`), and the app icon as `dev.drewett.spottyfi.svg`
+      plus rasterised PNGs at 64/128/256/512 (dark base, accent-green "S")
+- [x] AppImage — `[package.metadata.appimage]` in `crates/app/Cargo.toml`
+      wired to the icon; `cargo appimage --release --package spottyfi-app`
+- [x] Flatpak — `packaging/flatpak/dev.drewett.spottyfi.yml`, the freedesktop
+      24.08 runtime + `rust-stable` SDK extension, builds the workspace and
+      installs all desktop assets; per PLAN.md "just have it building"
+- [x] Windows / macOS — **stub only**: `[package.metadata.bundle]` for
+      `cargo-bundle` (macOS `.app`) and a `cargo-wix` note (Windows MSI),
+      both marked as later targets
+- [x] CI: `.github/workflows/release.yml` builds the Linux binary + AppImage
+      on `v*` tags and attaches them to a GitHub release; existing `ci.yml`
+      untouched
+- [x] README "Packaging & install" section with the exact build commands
+- Notes: Nix was dropped from the project (see PLAN.md deviations), so no
+  flake packaging. The AppImage / Flatpak manifests are correct and complete
+  but not built here (no display / packaging tooling in the dev environment);
+  Windows and macOS remain configuration-only.

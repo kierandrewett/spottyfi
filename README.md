@@ -9,8 +9,9 @@ information-dense — the layout of the leaked internal Spotify imgui tool with
 the feature surface of the modern client.
 
 > **Status:** early development. See [`PLAN.md`](PLAN.md) for the full roadmap
-> and [`TODO.md`](TODO.md) for the phase tracker. Currently at **Phase 0 —
-> bootstrap**: the binary opens an empty window.
+> and [`TODO.md`](TODO.md) for the phase tracker. All roadmap phases (0–13) are
+> implemented; live playback still needs a maintainer-supplied Spotify app —
+> see [`docs/questions.md`](docs/questions.md).
 
 ## Requirements
 
@@ -106,6 +107,60 @@ cargo nextest run --workspace      # or: cargo test --workspace
 ```
 
 CI runs the same gate on Linux. See [`docs/`](docs/) for architecture notes.
+
+## Packaging & install
+
+Desktop-integration assets live under [`packaging/`](packaging/): a freedesktop
+`.desktop` entry, an AppStream `metainfo.xml`, and the app icon as SVG plus
+rasterised PNGs (64/128/256/512). Linux is the supported packaging target;
+Windows and macOS are stubbed for later.
+
+### AppImage (Linux)
+
+A self-contained, single-file build. The icon and desktop assets and the
+`[package.metadata.appimage]` block in `crates/app/Cargo.toml` are already
+wired up:
+
+```sh
+cargo install cargo-appimage     # needs `appimagetool` on PATH
+cargo appimage --release --package spottyfi-app
+```
+
+The result lands in `target/appimage/`. The release workflow
+(`.github/workflows/release.yml`) builds this automatically on every `v*` tag.
+
+### Flatpak (Linux)
+
+A manifest is provided at
+[`packaging/flatpak/dev.drewett.spottyfi.yml`](packaging/flatpak/dev.drewett.spottyfi.yml).
+It targets the `org.freedesktop.Platform` 24.08 runtime with the `rust-stable`
+SDK extension. Flatpak builds are offline, so the crate dependencies must first
+be vendored into a `cargo-sources.json` with the
+[flatpak-builder-tools cargo generator](https://github.com/flatpak/flatpak-builder-tools/tree/master/cargo)
+(see the comments at the top of the manifest):
+
+```sh
+flatpak install flathub org.freedesktop.Platform//24.08 \
+                         org.freedesktop.Sdk//24.08 \
+                         org.freedesktop.Sdk.Extension.rust-stable//24.08
+python3 flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
+flatpak-builder --user --install --force-clean \
+    build-dir packaging/flatpak/dev.drewett.spottyfi.yml
+```
+
+`cargo-sources.json` is generated, not committed; regenerate it whenever
+`Cargo.lock` changes.
+
+### Windows / macOS (later)
+
+Not current targets — only the configuration is stubbed:
+
+- **macOS `.app`** — `[package.metadata.bundle]` in `crates/app/Cargo.toml`
+  feeds [`cargo-bundle`](https://github.com/burtonageo/cargo-bundle):
+  `cargo install cargo-bundle && cargo bundle --release`.
+- **Windows MSI** — `cargo install cargo-wix`, then `cargo wix init` generates
+  `wix/main.wxs` and `cargo wix` builds the installer. The `.wxs` file is not
+  committed yet.
 
 ## Licence
 

@@ -1,0 +1,71 @@
+name: Release
+
+# Builds the Linux binary and an AppImage on every version tag, and attaches
+# them to a GitHub release. Independent of ci.yml — the CI gate still runs on
+# pushes and pull requests.
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  linux:
+    name: Linux binary + AppImage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libasound2-dev \
+            libssl-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            libdbus-1-dev \
+            libfuse2 \
+            file
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --package spottyfi-app
+
+      - name: Install cargo-appimage
+        run: cargo install cargo-appimage
+
+      - name: Build AppImage
+        run: cargo appimage --release --package spottyfi-app
+
+      - name: Stage artefacts
+        run: |
+          mkdir -p dist
+          cp target/release/spottyfi "dist/spottyfi-${{ github.ref_name }}-x86_64-linux"
+          cp target/appimage/*.AppImage "dist/Spottyfi-${{ github.ref_name }}-x86_64.AppImage" || \
+            cp target/appimage/spottyfi.AppImage "dist/Spottyfi-${{ github.ref_name }}-x86_64.AppImage"
+
+      - name: Upload workflow artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ github.ref_name }}
+          path: dist/*
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
