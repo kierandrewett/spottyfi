@@ -43,15 +43,15 @@ one at a time). `[ ]` todo · `[~]` in progress · `[x]` done.
 - [ ] User avatar + name in the **top-right**; that's the entry point for user
       info, Settings, Log out
 
-## WS6 — Library, tables & navigation UX `[ ]`
-- [ ] Sidebar items open in the main pane by default
-- [ ] Playlist sidebar icons use the real playlist image
-- [ ] Cache playlist contents so a playlist doesn't reload on every visit
-- [ ] Album duration shown
-- [ ] Fix the "Date added" column (currently empty — `api` drops `added_at`)
-- [ ] Hover an artist name in a table → jump to artist; same for albums
-- [ ] Make tables look nicer / better
-- [ ] General docking-UX cleanup — some interactions are confusing and don't
+## WS6 — Library, tables & navigation UX `[x]`
+- [x] Sidebar items open in the main pane by default
+- [x] Playlist sidebar icons use the real playlist image
+- [x] Cache playlist contents so a playlist doesn't reload on every visit
+- [x] Album duration shown
+- [x] Fix the "Date added" column (currently empty — `api` drops `added_at`)
+- [x] Hover an artist name in a table → jump to artist; same for albums
+- [x] Make tables look nicer / better
+- [x] General docking-UX cleanup — some interactions are confusing and don't
       make sense with the dock model
 
 ## WS7 — Waveform & visualisations `[ ]`
