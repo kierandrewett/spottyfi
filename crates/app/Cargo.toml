@@ -50,3 +50,23 @@ directories = "6"
 
 # RON for the on-disk layout + settings file.
 ron = "0.12"
+
+# Platform integration (Phase 12). Linux-first: MPRIS2 is Linux-only by
+# definition; the tray / media-key / notification crates are cross-platform
+# abstractions over the Linux/Wayland target.
+#
+# `mpris-server` publishes the org.mpris.MediaPlayer2 D-Bus interface; it
+# re-exports `zbus`, so the single-instance "raise the running window" call
+# reuses it rather than adding a second D-Bus dependency.
+mpris-server = "0.10"
+# System-wide media keys (a fallback for WMs that do not route XF86Audio*
+# through MPRIS).
+global-hotkey = "0.8"
+# The system-tray icon + menu. On Linux this needs GTK + libappindicator.
+tray-icon = "0.24"
+# GTK, for the dedicated thread the tray icon's event loop runs on.
+gtk = "0.18"
+# Single-instance lock — a second launch focuses the running window.
+single-instance = "0.3"
+# Track-change desktop notifications (off by default).
+notify-rust = "4"
