@@ -55,6 +55,8 @@ struct ActiveSession {
     /// The incremental load of the sidebar's playlist list — playlists appear
     /// as they stream in rather than after every page is collected.
     sidebar_playlists: IncrementalLoad<spottyfi_models::SimplifiedPlaylist>,
+    /// Warms the lyrics cache for the playing track in the background.
+    lyrics_prefetch: crate::lyrics_prefetch::LyricsPrefetcher,
 }
 
 /// Persistent, non-serialised UI state owned by the shell for one session.
@@ -137,9 +139,14 @@ impl ShellState {
         // Warm the metadata cache in the background so opening a playlist is
         // instant rather than a cold network fetch.
         crate::prefetch::spawn(Arc::clone(&api), &runtime);
+        // A clone of the lyrics service warms the lyrics cache for the
+        // playing track; it shares the same persistent cache.
+        let lyrics_prefetch =
+            crate::lyrics_prefetch::LyricsPrefetcher::new(services.lyrics.clone(), runtime.clone());
         self.session = Some(ActiveSession {
             pages: PageRegistry::new(services),
             sidebar_playlists,
+            lyrics_prefetch,
         });
     }
 
@@ -830,6 +837,10 @@ fn dock(
         });
         return Vec::new();
     };
+
+    // Warm the lyrics cache for the playing track so opening the Lyrics
+    // panel is instant. A no-op on every frame the track has not changed.
+    session.lyrics_prefetch.observe(playback.track.as_ref());
 
     // Drop pages — and pin / history bookkeeping — for tabs closed since the
     // last frame. The closed-tab stack is intentionally left alone.

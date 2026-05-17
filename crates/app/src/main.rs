@@ -13,6 +13,7 @@ mod cli;
 mod devices;
 mod hotkeys;
 mod login;
+mod lyrics_prefetch;
 mod media;
 mod page;
 mod playback_controller;

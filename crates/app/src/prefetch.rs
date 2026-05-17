@@ -32,8 +32,13 @@ pub fn spawn(api: Arc<dyn SpotifyApi>, runtime: &Handle) {
         while let Some(item) = playlists.next().await {
             let Ok(playlist) = item else { continue };
             let id = playlist.id.id().to_owned();
+            // Warm both fetches a playlist page open performs: the playlist
+            // metadata (header, name) and its full track listing.
+            if let Err(err) = api.playlist(&id).await {
+                tracing::debug!(%err, %id, "prefetch: playlist metadata warm failed");
+            }
             if let Err(err) = api.playlist_tracks_all(&id).await {
-                tracing::debug!(%err, %id, "prefetch: playlist warm failed");
+                tracing::debug!(%err, %id, "prefetch: playlist tracks warm failed");
             } else {
                 warmed += 1;
             }
