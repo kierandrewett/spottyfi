@@ -138,6 +138,14 @@ pub fn track_table(
     // A faint header-row background spanning the table width.
     let header_height = 24.0;
 
+    // Full-row hover highlight. `egui_extras::TableRow::response()` may only be
+    // called after a column has been added, so the hovered row is read from the
+    // previous frame (kept in egui memory) and the new one recorded after the
+    // row's cells — a one-frame lag that is imperceptible.
+    let table_id = ui.id().with("track_table_row_hover");
+    let prev_hover: Option<usize> = ui.data_mut(|d| d.get_temp(table_id)).flatten();
+    let mut new_hover: Option<usize> = None;
+
     let mut builder = TableBuilder::new(ui)
         .striped(false)
         .resizable(false)
@@ -210,11 +218,17 @@ pub fn track_table(
                 let Some(track_row) = rows.get(index) else {
                     return;
                 };
-                if let Some(a) = render_row(&mut row, palette, columns, track_row) {
+                let hovered = prev_hover == Some(index);
+                if let Some(a) = render_row(&mut row, palette, columns, track_row, hovered) {
                     action = Some(a);
+                }
+                if row.response().hovered() {
+                    new_hover = Some(index);
                 }
             });
         });
+
+    ui.data_mut(|d| d.insert_temp(table_id, new_hover));
 
     action
 }
@@ -303,14 +317,14 @@ fn render_row(
     palette: &Palette,
     columns: TrackColumns,
     track_row: &TrackRow<'_>,
+    hovered: bool,
 ) -> Option<TrackAction> {
     let mut action: Option<TrackAction> = None;
     let track = track_row.track;
 
-    // The whole row's hover state — used to paint a subtle full-row highlight.
-    let hovered = row.response().hovered();
     // The row background: a faint green wash for the now-playing row, a subtle
-    // lighter wash on hover, nothing otherwise.
+    // lighter wash on hover (`hovered` is the previous frame's state — see the
+    // note in `track_table`), nothing otherwise.
     let row_bg = if track_row.is_playing {
         Some(now_playing_bg(palette))
     } else if hovered {
