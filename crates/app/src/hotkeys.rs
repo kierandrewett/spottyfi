@@ -91,22 +91,16 @@ impl HotkeyAction {
         match self {
             HotkeyAction::CloseTab => Hotkey::new(HotkeyKey::W, cmd),
             HotkeyAction::NewTab => Hotkey::new(HotkeyKey::T, cmd),
-            HotkeyAction::ReopenTab => Hotkey::new(
-                HotkeyKey::T,
-                HotkeyModifiers {
-                    shift: true,
-                    ..cmd
-                },
-            ),
+            HotkeyAction::ReopenTab => {
+                Hotkey::new(HotkeyKey::T, HotkeyModifiers { shift: true, ..cmd })
+            }
             HotkeyAction::OpenSearch => Hotkey::new(HotkeyKey::K, cmd),
             // Transport actions default to plain function-style keys so they
             // do not clash with the editing shortcuts; the media keys proper
             // are handled by MPRIS / `global-hotkey` regardless.
             HotkeyAction::PlayPause => Hotkey::new(HotkeyKey::Space, HotkeyModifiers::CTRL_ALT),
             HotkeyAction::NextTrack => Hotkey::new(HotkeyKey::Period, HotkeyModifiers::CTRL_ALT),
-            HotkeyAction::PreviousTrack => {
-                Hotkey::new(HotkeyKey::Comma, HotkeyModifiers::CTRL_ALT)
-            }
+            HotkeyAction::PreviousTrack => Hotkey::new(HotkeyKey::Comma, HotkeyModifiers::CTRL_ALT),
         }
     }
 }
@@ -135,12 +129,6 @@ impl HotkeyModifiers {
         shift: false,
         alt: true,
     };
-
-    /// Whether no modifier at all is held.
-    #[must_use]
-    pub fn is_empty(self) -> bool {
-        !self.command && !self.shift && !self.alt
-    }
 }
 
 /// The (small, serialisable) set of keys a shortcut can be bound to.
@@ -151,11 +139,61 @@ impl HotkeyModifiers {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[allow(missing_docs)] // Each variant is a single, self-evident key.
 pub enum HotkeyKey {
-    A, B, C, D, E, F, G, H, I, J, K, L, M,
-    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
-    Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
-    F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
-    Space, Comma, Period, Slash, Semicolon, Minus, Equals,
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
+    Num0,
+    Num1,
+    Num2,
+    Num3,
+    Num4,
+    Num5,
+    Num6,
+    Num7,
+    Num8,
+    Num9,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
+    Space,
+    Comma,
+    Period,
+    Slash,
+    Semicolon,
+    Minus,
+    Equals,
 }
 
 impl HotkeyKey {
@@ -412,6 +450,78 @@ impl HotkeyMap {
         HotkeyAction::all()
             .into_iter()
             .find(|action| self.get(*action).matches(input))
+    }
+}
+
+/// The transient state of the Settings-page "capture a new shortcut" editor.
+///
+/// `None` when no rebind is in progress; `Some(action)` while the editor is
+/// waiting for the user to press the next key combination for `action`. It is
+/// session-scoped UI state — not persisted.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HotkeyCapture {
+    /// The action currently being rebound, if any.
+    pub capturing: Option<HotkeyAction>,
+}
+
+impl HotkeyCapture {
+    /// Begin capturing a new binding for `action`.
+    pub fn start(&mut self, action: HotkeyAction) {
+        self.capturing = Some(action);
+    }
+
+    /// Cancel any in-progress capture.
+    pub fn cancel(&mut self) {
+        self.capturing = None;
+    }
+
+    /// Whether a capture is in progress for `action`.
+    #[must_use]
+    pub fn is_capturing(&self, action: HotkeyAction) -> bool {
+        self.capturing == Some(action)
+    }
+
+    /// Read the next pressed key from `input` as a [`Hotkey`].
+    ///
+    /// Returns the captured hotkey when a *bindable* key was pressed this
+    /// frame (modifier-only presses are ignored so the user can hold a
+    /// modifier before the key). The caller then commits it and clears the
+    /// capture. `Escape` is reported via [`HotkeyCapture::cancelled_by_escape`]
+    /// and never produces a binding.
+    #[must_use]
+    pub fn read(&self, input: &egui::InputState) -> Option<Hotkey> {
+        self.capturing?;
+        // Find the first bindable key pressed this frame.
+        for event in &input.events {
+            if let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+            {
+                if *key == egui::Key::Escape {
+                    return None;
+                }
+                if let Some(hotkey_key) = HotkeyKey::from_egui(*key) {
+                    return Some(Hotkey::new(
+                        hotkey_key,
+                        HotkeyModifiers {
+                            command: modifiers.command || modifiers.ctrl,
+                            shift: modifiers.shift,
+                            alt: modifiers.alt,
+                        },
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether `Escape` was pressed this frame (cancels the capture).
+    #[must_use]
+    pub fn cancelled_by_escape(&self, input: &egui::InputState) -> bool {
+        self.capturing.is_some() && input.key_pressed(egui::Key::Escape)
     }
 }
 

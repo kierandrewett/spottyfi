@@ -217,6 +217,17 @@ impl LocalFilesSettings {
     }
 }
 
+/// Desktop-integration settings (Phase 12).
+///
+/// Currently a single toggle: whether a desktop notification fires on every
+/// track change. **Off by default** — notifications are opt-in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct NotificationSettings {
+    /// Whether to raise a desktop notification when the playing track changes.
+    #[serde(default)]
+    pub track_change: bool,
+}
+
 /// The full persisted user-settings model surfaced on the Settings page.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -229,6 +240,12 @@ pub struct AppSettings {
     /// Registered local-music folders.
     #[serde(default)]
     pub local_files: LocalFilesSettings,
+    /// Desktop-integration / notification settings.
+    #[serde(default)]
+    pub notifications: NotificationSettings,
+    /// The user-rebindable keyboard shortcuts.
+    #[serde(default)]
+    pub hotkeys: crate::hotkeys::HotkeyMap,
 }
 
 impl AppSettings {
@@ -256,6 +273,10 @@ mod tests {
         assert!(!settings.equalizer.enabled);
         assert_eq!(settings.equalizer.band_gains_db, [0.0; EQ_BAND_COUNT]);
         assert!(settings.local_files.folders.is_empty());
+        // Track-change notifications are opt-in — off by default.
+        assert!(!settings.notifications.track_change);
+        // The hotkey map starts at its first-launch defaults.
+        assert_eq!(settings.hotkeys, crate::hotkeys::HotkeyMap::default());
     }
 
     #[test]

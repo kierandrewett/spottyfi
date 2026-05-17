@@ -14,20 +14,15 @@
 use spottyfi_ui::components::{self, Density};
 use spottyfi_ui::theme::{Palette, Theme};
 
+use crate::hotkeys::{HotkeyAction, HotkeyCapture};
 use crate::settings::{
     AppSettings, AudioSettings, EqPreset, StreamTier, EQ_BAND_FREQUENCIES_HZ, EQ_GAIN_LIMIT_DB,
 };
 use crate::shell::Layout;
 
-/// The keyboard shortcuts surfaced read-only on the Hotkeys section.
-///
-/// Sourced from `docs/docking.md` and the shell's `apply_shortcuts`. Full
-/// rebinding is a later workstream — this is the documented, current set.
-const HOTKEYS: &[(&str, &str)] = &[
-    ("Close tab", "Cmd/Ctrl + W"),
-    ("New Home tab", "Cmd/Ctrl + T"),
-    ("Reopen closed tab", "Cmd/Ctrl + Shift + T"),
-    ("Open Search", "Cmd/Ctrl + K"),
+/// The non-rebindable mouse / modifier interactions, shown for reference under
+/// the editable hotkey list — these are structural, not keyboard shortcuts.
+const FIXED_BINDINGS: &[(&str, &str)] = &[
     ("Open in new tab", "Cmd/Ctrl + click a link"),
     ("Close a tab", "Middle-click the tab"),
 ];
@@ -42,10 +37,13 @@ pub struct SettingsContext<'a> {
     pub density: &'a mut Density,
     /// The currently-applied dock layout, shown in the Appearance section.
     pub layout: Layout,
-    /// The power-user settings block (audio, equalizer, local files).
+    /// The power-user settings block (audio, equalizer, local files,
+    /// notifications, hotkeys).
     pub settings: &'a mut AppSettings,
     /// A draft folder path the user is typing in the Local Files section.
     pub local_folder_draft: &'a mut String,
+    /// The transient "capture a new shortcut" state for the Hotkeys section.
+    pub hotkey_capture: &'a mut HotkeyCapture,
 }
 
 /// Something the Settings page asked the shell to do this frame.
@@ -61,6 +59,10 @@ pub enum SettingsAction {
     /// The equaliser settings changed; the new gains are pushed live to the
     /// audio engine (no restart — the DSP picks them up on the next packet).
     EqualizerChanged,
+    /// A keyboard shortcut was rebound. The in-window shortcuts pick the new
+    /// binding up immediately (they read the live map each frame); the global
+    /// media-key registration is refreshed on the next launch.
+    HotkeysChanged,
 }
 
 /// Render the Settings page body, returning every [`SettingsAction`] raised.
@@ -81,9 +83,11 @@ pub fn settings_page(ui: &mut egui::Ui, ctx: &mut SettingsContext<'_>) -> Vec<Se
             ui.add_space(20.0);
             local_files_section(ui, &palette, ctx);
             ui.add_space(20.0);
+            notifications_section(ui, &palette, ctx);
+            ui.add_space(20.0);
             appearance_section(ui, &palette, ctx, &mut actions);
             ui.add_space(20.0);
-            hotkeys_section(ui, &palette);
+            hotkeys_section(ui, &palette, ctx, &mut actions);
 
             ui.add_space(16.0);
             ui.label(components::muted(
@@ -108,7 +112,7 @@ fn page_title(ui: &mut egui::Ui, palette: &Palette) {
     ui.add_space(2.0);
     ui.label(components::muted(
         palette,
-        "Audio, equalizer, local files and appearance.",
+        "Audio, equalizer, local files, notifications, appearance and hotkeys.",
         12.0,
     ));
     ui.add_space(16.0);
@@ -456,35 +460,154 @@ fn appearance_section(
     );
 }
 
-/// The Hotkeys section: a read-only list of the current keyboard shortcuts.
+/// The Notifications section: the off-by-default track-change toggle.
+fn notifications_section(ui: &mut egui::Ui, palette: &Palette, ctx: &mut SettingsContext<'_>) {
+    section(
+        ui,
+        palette,
+        "Notifications",
+        "Desktop notifications. Off by default.",
+        |ui| {
+            setting_row(ui, palette, "Track change", |ui| {
+                ui.checkbox(
+                    &mut ctx.settings.notifications.track_change,
+                    "Show a desktop notification when the track changes",
+                );
+            });
+            ui.label(components::muted(
+                palette,
+                "Notifications are posted through the desktop's notification \
+                 daemon; on Linux this is the standard freedesktop service.",
+                10.5,
+            ));
+        },
+    );
+}
+
+/// The Hotkeys section: an editable list of the rebindable keyboard shortcuts.
 ///
-/// Full rebinding is a later workstream; this documents the live bindings.
-fn hotkeys_section(ui: &mut egui::Ui, palette: &Palette) {
+/// Each row shows the action, its current binding and an **Edit** button. Edit
+/// puts the row into capture mode — the next key combination the user presses
+/// becomes the new binding (Escape cancels). A binding that collides with
+/// another action is rejected with an inline warning. The fixed mouse / modifier
+/// interactions are listed read-only below for reference.
+fn hotkeys_section(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    ctx: &mut SettingsContext<'_>,
+    actions: &mut Vec<SettingsAction>,
+) {
     section(
         ui,
         palette,
         "Hotkeys",
-        "Current keyboard shortcuts. Rebinding arrives in a later update.",
+        "Rebindable keyboard shortcuts. Click Edit, then press the new keys.",
         |ui| {
-            for (action, keys) in HOTKEYS {
+            // Resolve any in-progress capture first, so the row below renders
+            // with the freshly committed binding.
+            if let Some(action) = ctx.hotkey_capture.capturing {
+                let cancelled = ui.input(|i| ctx.hotkey_capture.cancelled_by_escape(i));
+                let captured = ui.input(|i| ctx.hotkey_capture.read(i));
+                if cancelled {
+                    ctx.hotkey_capture.cancel();
+                } else if let Some(hotkey) = captured {
+                    // Reject a combination already bound to another action.
+                    if ctx.settings.hotkeys.conflict(hotkey, action).is_none() {
+                        ctx.settings.hotkeys.set(action, hotkey);
+                        actions.push(SettingsAction::HotkeysChanged);
+                    }
+                    ctx.hotkey_capture.cancel();
+                }
+                // Keep repainting while waiting for the keypress.
+                ui.ctx().request_repaint();
+            }
+
+            for action in HotkeyAction::all() {
+                hotkey_row(ui, palette, ctx, action);
+                ui.add_space(2.0);
+            }
+
+            ui.add_space(8.0);
+            if ui.button("Reset shortcuts to defaults").clicked() {
+                ctx.settings.hotkeys.reset();
+                ctx.hotkey_capture.cancel();
+                actions.push(SettingsAction::HotkeysChanged);
+            }
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(6.0);
+            ui.label(components::muted(palette, "Fixed interactions", 11.0));
+            ui.add_space(4.0);
+            for (label, keys) in FIXED_BINDINGS {
                 ui.horizontal(|ui| {
                     ui.add_sized(
-                        egui::vec2(220.0, 20.0),
+                        egui::vec2(200.0, 18.0),
                         egui::Label::new(
-                            egui::RichText::new(*action).size(12.0).color(palette.text),
+                            egui::RichText::new(*label).size(11.5).color(palette.text),
                         ),
                     );
                     ui.label(
                         egui::RichText::new(*keys)
-                            .size(11.5)
+                            .size(11.0)
                             .family(spottyfi_ui::fonts::medium())
                             .color(palette.text_muted),
                     );
                 });
                 ui.add_space(2.0);
             }
+            ui.add_space(4.0);
+            ui.label(components::muted(
+                palette,
+                "Transport shortcuts also work as system-wide media keys when \
+                 the desktop does not already route them.",
+                10.5,
+            ));
         },
     );
+}
+
+/// One editable hotkey row: the action label, its binding, and an Edit button.
+fn hotkey_row(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    ctx: &mut SettingsContext<'_>,
+    action: HotkeyAction,
+) {
+    let capturing = ctx.hotkey_capture.is_capturing(action);
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            egui::vec2(200.0, 22.0),
+            egui::Label::new(
+                egui::RichText::new(action.label())
+                    .size(12.0)
+                    .color(palette.text)
+                    .family(spottyfi_ui::fonts::medium()),
+            ),
+        );
+
+        if capturing {
+            ui.label(
+                egui::RichText::new("Press a key combination… (Esc to cancel)")
+                    .size(11.5)
+                    .color(palette.accent),
+            );
+        } else {
+            let binding = ctx.settings.hotkeys.get(action).to_string();
+            ui.add_sized(
+                egui::vec2(180.0, 22.0),
+                egui::Label::new(
+                    egui::RichText::new(binding)
+                        .size(11.5)
+                        .family(spottyfi_ui::fonts::medium())
+                        .color(palette.text_muted),
+                ),
+            );
+            if ui.button("Edit").clicked() {
+                ctx.hotkey_capture.start(action);
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -500,10 +623,10 @@ mod tests {
     }
 
     #[test]
-    fn hotkey_list_is_non_empty() {
-        assert!(!HOTKEYS.is_empty());
-        for (action, keys) in HOTKEYS {
-            assert!(!action.is_empty());
+    fn fixed_bindings_list_is_non_empty() {
+        assert!(!FIXED_BINDINGS.is_empty());
+        for (label, keys) in FIXED_BINDINGS {
+            assert!(!label.is_empty());
             assert!(!keys.is_empty());
         }
     }
