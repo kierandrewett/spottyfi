@@ -143,8 +143,20 @@ impl ShellState {
         // playing track; it shares the same persistent cache.
         let lyrics_prefetch =
             crate::lyrics_prefetch::LyricsPrefetcher::new(services.lyrics.clone(), runtime.clone());
+        // Preemptively build the fixed content pages so their loads run in the
+        // background from login — navigating to any of them is then instant.
+        let mut pages = PageRegistry::new(services);
+        pages.prefetch(&[
+            Tab::Home,
+            Tab::Library,
+            Tab::LikedSongs,
+            Tab::Browse,
+            Tab::Charts,
+            Tab::NewReleases,
+            Tab::MadeForYou,
+        ]);
         self.session = Some(ActiveSession {
-            pages: PageRegistry::new(services),
+            pages,
             sidebar_playlists,
             lyrics_prefetch,
         });

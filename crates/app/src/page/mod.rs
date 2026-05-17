@@ -37,7 +37,7 @@ mod search_load;
 mod settings;
 mod track_view;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use spottyfi_api::lastfm::LastfmClient;
@@ -161,6 +161,10 @@ pub struct PageRegistry {
     services: PageServices,
     /// The boxed pages, one per open page tab.
     pages: HashMap<Tab, Box<dyn Page>>,
+    /// Tabs whose pages were built preemptively (prefetched on login) so their
+    /// loads run in the background — kept alive across [`Self::retain_open`]
+    /// even while no tab holds them open.
+    prefetched: HashSet<Tab>,
 }
 
 impl PageRegistry {
@@ -170,6 +174,23 @@ impl PageRegistry {
         Self {
             services,
             pages: HashMap::new(),
+            prefetched: HashSet::new(),
+        }
+    }
+
+    /// Preemptively build `tabs`' pages so their (often slow) loads run in the
+    /// background from login — navigating to any of them is then instant
+    /// rather than a spinner.
+    ///
+    /// Prefetched pages are spared by [`Self::retain_open`], so they survive
+    /// even though no tab holds them open.
+    pub fn prefetch(&mut self, tabs: &[Tab]) {
+        for tab in tabs {
+            let services = &self.services;
+            self.pages
+                .entry(tab.clone())
+                .or_insert_with(|| build_page(tab, services));
+            self.prefetched.insert(tab.clone());
         }
     }
 
@@ -202,10 +223,14 @@ impl PageRegistry {
     /// Drop the pages whose tabs are no longer open.
     ///
     /// Called once per frame with the set of tabs the dock still holds, so a
-    /// closed tab's in-flight load and UI state are released.
+    /// closed tab's in-flight load and UI state are released. Prefetched pages
+    /// ([`Self::prefetch`]) are spared so a preemptive load is never thrown
+    /// away.
     pub fn retain_open<'a>(&mut self, open: impl Iterator<Item = &'a Tab>) {
-        let open: std::collections::HashSet<&Tab> = open.collect();
-        self.pages.retain(|tab, _| open.contains(tab));
+        let open: HashSet<&Tab> = open.collect();
+        let prefetched = &self.prefetched;
+        self.pages
+            .retain(|tab, _| open.contains(tab) || prefetched.contains(tab));
     }
 }
 
