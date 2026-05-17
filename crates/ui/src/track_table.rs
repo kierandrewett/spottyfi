@@ -506,7 +506,10 @@ fn link_label(ui: &mut egui::Ui, palette: &Palette, text: &str, size: f32) -> bo
 fn context_menu(ui: &mut egui::Ui, track_row: &TrackRow<'_>) -> Option<TrackAction> {
     let mut action = None;
     let track = track_row.track;
-    ui.set_min_width(170.0);
+    ui.set_min_width(180.0);
+    // egui's `menu_style` squashes button padding to (2, 0); restore a
+    // comfortable padding so the context-menu entries are not cramped.
+    ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
 
     if ui.button("Play").clicked() {
         action = Some(TrackAction::Play(track_row.position));

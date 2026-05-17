@@ -469,6 +469,16 @@ pub fn shell(
 ///
 /// This replaces the Phase 4 top bar. Search moved to the sidebar (and
 /// `Ctrl/Cmd+K`); the profile actions live under the `File` menu.
+/// Dress a freshly-opened menu's `Ui`.
+///
+/// egui's internal `menu_style` squashes button padding to `(2, 0)`, which
+/// makes dropdown entries read as cramped and ragged. This restores a
+/// comfortable, even padding and sets the menu's minimum width.
+fn dress_menu(ui: &mut egui::Ui, min_width: f32) {
+    ui.set_min_width(min_width);
+    ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
+}
+
 fn menu_bar(
     ui: &mut egui::Ui,
     state: &mut ShellState,
@@ -492,8 +502,12 @@ fn menu_bar(
         )
         .show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
+                // The menu-bar buttons themselves want a tight padding so the
+                // bar does not overflow; the dropdowns get roomy padding via
+                // `dress_menu`.
+                ui.spacing_mut().button_padding = egui::vec2(8.0, 3.0);
                 ui.menu_button("File", |ui| {
-                    ui.set_min_width(180.0);
+                    dress_menu(ui, 180.0);
                     if ui.button("Settings").clicked() {
                         nav.push(NavRequest::replace(Tab::Settings));
                         ui.close();
@@ -506,9 +520,9 @@ fn menu_bar(
                 });
 
                 ui.menu_button("View", |ui| {
-                    ui.set_min_width(200.0);
+                    dress_menu(ui, 200.0);
                     ui.menu_button("Layout", |ui| {
-                        ui.set_min_width(160.0);
+                        dress_menu(ui, 170.0);
                         for layout in Layout::all() {
                             let selected = state.persisted.layout == layout;
                             if ui.radio(selected, layout.label()).clicked() {
@@ -529,6 +543,7 @@ fn menu_bar(
                     }
                     ui.separator();
                     ui.menu_button("Theme", |ui| {
+                        dress_menu(ui, 170.0);
                         for theme in Theme::all() {
                             if ui
                                 .radio(state.persisted.theme == theme, theme.label())
@@ -540,6 +555,7 @@ fn menu_bar(
                         }
                     });
                     ui.menu_button("Density", |ui| {
+                        dress_menu(ui, 170.0);
                         for density in [Density::Comfortable, Density::Compact] {
                             if ui
                                 .radio(state.persisted.density == density, density.label())
@@ -574,7 +590,7 @@ fn menu_bar(
                 });
 
                 ui.menu_button("Playback", |ui| {
-                    ui.set_min_width(160.0);
+                    dress_menu(ui, 180.0);
                     let has_track = playback.track.is_some();
                     let label = if playback.playing { "Pause" } else { "Play" };
                     if ui
@@ -601,7 +617,7 @@ fn menu_bar(
                 });
 
                 ui.menu_button("Tools", |ui| {
-                    ui.set_min_width(180.0);
+                    dress_menu(ui, 200.0);
                     if ui.button("Search").clicked() {
                         nav.push(NavRequest::replace(Tab::Search));
                         ui.close();
@@ -628,7 +644,7 @@ fn menu_bar(
                 });
 
                 ui.menu_button("Help", |ui| {
-                    ui.set_min_width(160.0);
+                    dress_menu(ui, 180.0);
                     ui.label(spottyfi_ui::components::muted(palette, "Spottyfi", 11.0));
                     ui.label(spottyfi_ui::components::muted(
                         palette,
@@ -782,7 +798,7 @@ fn activity_indicator(ui: &mut egui::Ui, palette: &Palette, activity: &ActivityR
     // The summary: the single job's label, or a count when several run.
     let summary = match activities.as_slice() {
         [only] => only.label.clone(),
-        many => format!("{} background jobs", many.len()),
+        many => format!("{} jobs", many.len()),
     };
 
     ui.add_space(8.0);

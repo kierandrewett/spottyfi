@@ -330,7 +330,7 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
     /// / Pin menu. The dock cannot be mutated mid-draw, so each entry raises a
     /// [`TabCommand`] the shell applies once the `DockArea` draw completes.
     fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab, _path: egui_dock::NodePath) {
-        ui.set_min_width(160.0);
+        super::dress_menu(ui, 170.0);
         let is_home = matches!(tab, Tab::Home);
         let pinned = self.ctx.is_pinned(tab);
 
@@ -800,7 +800,7 @@ fn manual_row(
         intents.push(TransportIntent::SkipToManual(index));
     }
     response.context_menu(|ui| {
-        ui.set_min_width(150.0);
+        super::dress_menu(ui, 160.0);
         if ui.button("Play now").clicked() {
             intents.push(TransportIntent::SkipToManual(index));
             ui.close();
