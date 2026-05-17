@@ -80,6 +80,9 @@ pub struct Scrubber<'a> {
     /// How far one mouse-wheel notch moves the value, as a `0.0..=1.0`
     /// fraction. `0.0` disables scroll-to-adjust.
     scroll_step: f32,
+    /// Waveform intro factor `0.0..=1.0` — scales the bar amplitudes so a
+    /// freshly-decoded waveform can animate in. `1.0` draws it at full height.
+    waveform_intro: f32,
 }
 
 impl<'a> Scrubber<'a> {
@@ -95,7 +98,16 @@ impl<'a> Scrubber<'a> {
             height: None,
             waveform: None,
             scroll_step: 0.05,
+            waveform_intro: 1.0,
         }
+    }
+
+    /// Set the waveform intro factor (`0.0..=1.0`): bar amplitudes are scaled
+    /// by it, so a just-decoded full-song waveform can animate in from flat.
+    #[must_use]
+    pub fn waveform_intro(mut self, intro: f32) -> Self {
+        self.waveform_intro = intro.clamp(0.0, 1.0);
+        self
     }
 
     /// Set how far one mouse-wheel notch moves the value (`0.0..=1.0`).
@@ -371,7 +383,7 @@ impl<'a> Scrubber<'a> {
         for col in 0..columns {
             let x = track_left + col as f32 + 0.5;
             let frac = (col as f32 + 0.5) / track_span;
-            let amp = sample_envelope(envelope, frac);
+            let amp = sample_envelope(envelope, frac) * self.waveform_intro;
             let half = (min_half + amp * (max_half - min_half)).min(max_half);
 
             // Colour: accent for the played portion, a faint hover-preview

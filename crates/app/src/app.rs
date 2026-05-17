@@ -336,13 +336,15 @@ impl eframe::App for SpottyfiApp {
                     self.shell.persisted.settings.notifications.track_change,
                 );
 
-                // The live post-EQ audio envelope for the waveform scrubber —
-                // a single lock-free atomic load, empty before the engine has
-                // produced any audio (WS7).
+                // The full-song waveform for the seek bar, decoded in the
+                // background by the audio crate's analyser. Used only when its
+                // URI matches the playing track — otherwise empty, and the
+                // seek bar falls back to a plain capsule until decode lands.
                 let waveform = self
                     .playback
-                    .audio_tap()
-                    .map(|tap| tap.snapshot().waveform.clone())
+                    .waveform()
+                    .filter(|w| playback.track.as_ref().is_some_and(|t| t.uri == w.uri))
+                    .map(|w| w.envelope.clone())
                     .unwrap_or_default();
 
                 // The transport panel is added before the shell's central

@@ -113,6 +113,16 @@ impl PlaybackController {
         self.engine.tap()
     }
 
+    /// The background full-song waveform analyser the UI's seek bar reads.
+    ///
+    /// Obtain the handle once after [`Self::start`], then call
+    /// [`WaveformAnalyzer::current`](crate::WaveformAnalyzer::current) once per
+    /// UI frame. The engine drives analysis itself on every track change.
+    #[must_use]
+    pub fn waveform_analyzer(&self) -> crate::WaveformAnalyzer {
+        self.engine.waveform()
+    }
+
     /// The current playback-state snapshot.
     #[must_use]
     pub fn snapshot(&self) -> Arc<PlaybackState> {

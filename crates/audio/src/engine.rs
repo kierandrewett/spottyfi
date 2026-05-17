@@ -11,6 +11,7 @@
 //! All of this runs on the runtime thread; the UI only ever reads the
 //! [`ArcSwap`] snapshot. See `docs/threading.md`.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -18,12 +19,14 @@ use std::time::{Duration, Instant};
 use arc_swap::ArcSwap;
 use librespot::core::config::SessionConfig;
 use librespot::core::session::Session;
-use librespot::metadata::audio::{AudioItem, UniqueFields};
+use librespot::core::{FileId, SpotifyId};
+use librespot::metadata::audio::{AudioFileFormat, AudioItem, UniqueFields};
 use librespot::playback::audio_backend;
 use librespot::playback::config::{Bitrate, PlayerConfig, VolumeCtrl};
 use librespot::playback::mixer::softmixer::SoftMixer;
 use librespot::playback::mixer::{Mixer, MixerConfig};
 use librespot::playback::player::{Player, PlayerEvent};
+use tokio::runtime::Handle;
 
 use crate::config::EngineConfig;
 use crate::connect::ConnectDevice;
@@ -31,6 +34,7 @@ use crate::error::{AudioError, AudioResult};
 use crate::sink::{EqParams, SharedEqParams, TappedSink};
 use crate::state::{PlaybackState, TrackInfo};
 use crate::tap::AudioTap;
+use crate::waveform::WaveformAnalyzer;
 
 /// How often librespot is asked to emit a `PositionChanged` event.
 ///
@@ -135,8 +139,14 @@ pub(crate) struct Engine {
     /// builds. The controller swaps fresh params in; the sink picks them up on
     /// its next decoded packet.
     eq_params: SharedEqParams,
-    /// The post-EQ sample tap the UI reads for waveform/visualisations (WS7b).
+    /// The post-EQ sample tap the UI reads for visualisations (WS7b).
     tap: AudioTap,
+    /// The background full-song waveform analyser. Triggered on every track
+    /// change; the UI reads its published envelope for the seek bar.
+    waveform: WaveformAnalyzer,
+    /// A session handle kept solely so the waveform analyser can open its own
+    /// [`AudioFile`](librespot::audio::AudioFile) for an independent decode.
+    analysis_session: Session,
 }
 
 impl Engine {
@@ -197,8 +207,11 @@ impl Engine {
         let sink_params = Arc::clone(&eq_params);
         let sink_tap = tap.clone();
         // `Spirc` needs its own handle to the same session; `Session` is an
-        // `Arc` inside, so the clone is cheap and shares one connection.
+        // `Arc` inside, so the clone is cheap and shares one connection. A
+        // further clone is kept for the background waveform analyser, which
+        // opens its own audio-file streams independently of playback.
         let connect_session = session.clone();
+        let analysis_session = connect_session.clone();
         let player = Player::new(player_config, session, soft_volume, move || {
             let inner = backend(None, audio_format);
             Box::new(TappedSink::new(inner, Arc::clone(&sink_params), &sink_tap))
@@ -237,6 +250,8 @@ impl Engine {
             fade_generation: Arc::new(AtomicU64::new(0)),
             eq_params,
             tap,
+            waveform: WaveformAnalyzer::new(),
+            analysis_session,
         };
         engine.spawn_event_loop();
         Ok(engine)
@@ -269,9 +284,14 @@ impl Engine {
         self.connect.loader()
     }
 
-    /// The post-EQ sample tap the UI reads for waveform/visualisations (WS7b).
+    /// The post-EQ sample tap the UI reads for visualisations (WS7b).
     pub(crate) fn tap(&self) -> AudioTap {
         self.tap.clone()
+    }
+
+    /// The background full-song waveform analyser the seek bar reads.
+    pub(crate) fn waveform(&self) -> WaveformAnalyzer {
+        self.waveform.clone()
     }
 
     /// Update the equaliser configuration.
@@ -371,6 +391,8 @@ impl Engine {
         let mut events = self.player.get_player_event_channel();
         let state = Arc::clone(&self.state);
         let player = Arc::clone(&self.player);
+        let waveform = self.waveform.clone();
+        let session = self.analysis_session.clone();
 
         tokio::spawn(async move {
             // The poller ticks continuously; it only mutates the snapshot
@@ -387,6 +409,11 @@ impl Engine {
                             tracing::debug!("player event channel closed; engine loop ending");
                             break;
                         };
+                        // A new track: kick off background full-song waveform
+                        // analysis before folding the event into the state.
+                        if let PlayerEvent::TrackChanged { audio_item } = &event {
+                            trigger_waveform(&waveform, &session, audio_item);
+                        }
                         handle_event(&state, &mut anchor, event);
                     }
                     _ = poll.tick() => {
@@ -451,6 +478,32 @@ fn tick_position(state: &ArcSwap<PlaybackState>, anchor: &PositionAnchor) {
     if current.position != clamped {
         publish_with(state, |s| s.position = clamped);
     }
+}
+
+/// Kick off background full-song waveform analysis for a just-changed track.
+///
+/// Best-effort: a track whose id cannot be resolved is simply skipped — the
+/// seek bar then keeps its plain capsule.
+fn trigger_waveform(analyzer: &WaveformAnalyzer, session: &Session, item: &AudioItem) {
+    let track_id = match SpotifyId::try_from(&item.track_id) {
+        Ok(id) => id,
+        Err(err) => {
+            tracing::debug!(%err, "waveform: track id unavailable; skipping analysis");
+            return;
+        }
+    };
+    let files: HashMap<AudioFileFormat, FileId> = item
+        .files
+        .iter()
+        .map(|(&format, &id)| (format, id))
+        .collect();
+    analyzer.analyze(
+        &Handle::current(),
+        session.clone(),
+        track_id,
+        item.uri.clone(),
+        files,
+    );
 }
 
 /// Apply a single [`PlayerEvent`] to the shared state and position anchor.

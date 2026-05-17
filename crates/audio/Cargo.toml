@@ -34,3 +34,7 @@ rand = { workspace = true }
 # FFT for the WS7 spectrum-analyser visualiser. The analyser task computes the
 # magnitude spectrum off the UI thread; see `crate::spectrum`.
 rustfft = { workspace = true }
+
+# Pure-Rust Ogg Vorbis decoder, used by `crate::waveform` to decode a whole
+# track off-thread and build the full-song waveform envelope.
+lewton = "0.10"

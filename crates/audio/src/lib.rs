@@ -39,6 +39,7 @@ mod sink;
 mod spectrum;
 mod state;
 mod tap;
+mod waveform;
 
 pub use crate::config::{EngineConfig, StreamQuality};
 pub use crate::controller::{PlaybackController, SharedPlaybackState, SharedQueueState};
@@ -48,3 +49,4 @@ pub use crate::queue::{Queue, QueueState, QueueTrack, RepeatMode};
 pub use crate::spectrum::{SpectrumAnalyzer, SpectrumSnapshot, BAND_COUNT as SPECTRUM_BAND_COUNT};
 pub use crate::state::{normalise_uri, parse_playable, PlaybackState, TrackInfo};
 pub use crate::tap::{AudioTap, TapSnapshot, WaveformPoint, SPECTRUM_LEN, WAVEFORM_LEN};
+pub use crate::waveform::{TrackWaveform, WaveformAnalyzer, WAVEFORM_RESOLUTION};

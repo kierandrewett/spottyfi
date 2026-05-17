@@ -443,17 +443,23 @@ fn scrubber_row(
             ui.add_space(READOUT_W);
 
             let track_width = (ui.available_width() - READOUT_W).max(60.0);
-            // The waveform only reads while a track is actually playing; when
-            // paused or stopped the envelope is fed empty so the scrubber
-            // degrades to the plain capsule rather than freezing on stale audio.
-            let live_waveform: &[f32] = if playback.playing { waveform } else { &[] };
+            // The full-song waveform is valid whether or not playback is
+            // running, so it shows always; an empty envelope (decode not yet
+            // finished, or failed) degrades the scrubber to a plain capsule.
+            // It animates in from flat once the background analysis lands.
+            let intro = ui.ctx().animate_bool_with_time(
+                egui::Id::new("transport-waveform-intro"),
+                !waveform.is_empty(),
+                0.4,
+            );
             let scrub = Scrubber::new(palette, "transport-seek")
                 .width(track_width)
                 .height(SCRUBBER_HEIGHT)
                 .track_thickness(3.0)
                 .knob_radius(5.0)
                 .enabled(!duration.is_zero())
-                .waveform(live_waveform)
+                .waveform(waveform)
+                .waveform_intro(intro)
                 .show(ui, &mut ui_state.seek, live_fraction);
 
             // A tooltip at the pointer showing the time under the cursor while
