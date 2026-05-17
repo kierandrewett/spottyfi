@@ -1,5 +1,6 @@
-//! The Spottyfi application shell: top bar, left sidebar, centre dock and the
-//! settings window.
+//! The Spottyfi application shell: menu bar (with the top-right account menu),
+//! left sidebar and the centre dock. The Settings page is a dock tab; see
+//! [`crate::page::settings_page`].
 //!
 //! The shell is the logged-in surface. It is a pure projection: it reads the
 //! playback snapshot and auth profile and returns a [`ShellIntent`] describing
@@ -37,6 +38,10 @@ pub enum ShellIntent {
     Logout,
     /// Issue a transport command (e.g. from the debug panel or a page).
     Transport(TransportIntent),
+    /// The audio engine settings changed on the Settings page. `app` restarts
+    /// the engine so librespot picks up the new `PlayerConfig` (bitrate /
+    /// normalisation are baked in at connect and cannot change live).
+    AudioSettingsChanged,
 }
 
 /// The session-scoped services and live page state, attached after login.
@@ -52,14 +57,15 @@ struct ActiveSession {
 pub struct ShellState {
     /// The persisted layout + settings (dock, theme, density, sidebar).
     pub persisted: PersistedShell,
-    /// Whether the settings window is open.
-    settings_open: bool,
     /// The currently applied theme, tracked so we re-`apply` only on change.
     applied_theme: Option<Theme>,
     /// The session-scoped page state, present once the API is attached.
     session: Option<ActiveSession>,
     /// The shared background-activity registry, surfaced in the menu bar.
     activity: Arc<ActivityRegistry>,
+    /// The draft folder path being typed in the Settings page's Local Files
+    /// section — non-persisted, scoped to this session.
+    local_folder_draft: String,
 }
 
 impl ShellState {
@@ -68,10 +74,10 @@ impl ShellState {
     pub fn load() -> Self {
         Self {
             persisted: PersistedShell::load(),
-            settings_open: false,
             applied_theme: None,
             session: None,
             activity: ActivityRegistry::new(),
+            local_folder_draft: String::new(),
         }
     }
 
@@ -282,6 +288,8 @@ pub fn shell(
     let mut nav: Vec<NavRequest> = Vec::new();
     // Tab-management commands raised from the dock's tab bar this frame.
     let mut tab_commands: Vec<TabCommand> = Vec::new();
+    // Settings-page actions raised this frame, applied after the dock draw.
+    let mut settings_actions: Vec<crate::page::SettingsAction> = Vec::new();
     let mut copy_to_clipboard: Option<String> = None;
 
     // `Cmd/Ctrl+W` / `+T` / `+Shift+T` — close, new Home tab, reopen closed.
@@ -313,6 +321,7 @@ pub fn shell(
                     DockIntent::OpenInNewTab(tab) => nav.push(NavRequest::new_tab(tab)),
                     DockIntent::CopyToClipboard(text) => copy_to_clipboard = Some(text),
                     DockIntent::Tab(command) => tab_commands.push(command),
+                    DockIntent::Settings(action) => settings_actions.push(action),
                 }
             }
         });
@@ -322,6 +331,21 @@ pub fn shell(
     for command in tab_commands {
         apply_tab_command(&mut state.persisted, command);
     }
+    // Apply Settings-page actions — layout changes mutate the dock tree, so
+    // they could not be applied mid-draw; an audio change bubbles up to `app`.
+    for action in settings_actions {
+        match action {
+            crate::page::SettingsAction::ApplyLayout(layout) => {
+                apply_layout(&mut state.persisted, layout);
+            }
+            crate::page::SettingsAction::ResetLayout => {
+                apply_layout(&mut state.persisted, Layout::Default);
+            }
+            crate::page::SettingsAction::AudioChanged => {
+                intent = Some(ShellIntent::AudioSettingsChanged);
+            }
+        }
+    }
     // Apply navigation requests gathered from the sidebar, menu bar and pages.
     for request in nav {
         apply_nav(&mut state.persisted, request);
@@ -329,9 +353,6 @@ pub fn shell(
     if let Some(text) = copy_to_clipboard {
         ui.ctx().copy_text(text);
     }
-
-    // The settings window floats above everything when open.
-    settings_window(ui.ctx(), state, &palette);
 
     intent
 }
@@ -365,34 +386,18 @@ fn menu_bar(
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     ui.set_min_width(180.0);
-                    let name = profile.display_name.as_deref().unwrap_or("Spotify user");
-                    ui.horizontal(|ui| {
-                        if let Some(texture) = avatar {
-                            ui.add(egui::Image::new((texture.id(), egui::vec2(22.0, 22.0))));
-                        }
-                        ui.vertical(|ui| {
-                            ui.label(
-                                egui::RichText::new(name)
-                                    .family(spottyfi_ui::fonts::medium())
-                                    .size(11.5)
-                                    .color(palette.text),
-                            );
-                            ui.label(spottyfi_ui::components::muted(
-                                palette,
-                                profile.id.to_string(),
-                                9.5,
-                            ));
-                        });
-                    });
+                    if ui.button("Settings").clicked() {
+                        nav.push(NavRequest::replace(Tab::Settings));
+                        ui.close();
+                    }
                     ui.separator();
-                    if ui.button("Settings…").clicked() {
-                        state.settings_open = true;
-                        ui.close();
-                    }
-                    if ui.button("Log out").clicked() {
-                        intent = Some(ShellIntent::Logout);
-                        ui.close();
-                    }
+                    // Account actions live in the top-right account menu —
+                    // this is just a pointer so the File menu is not a dead
+                    // end for someone who looks here first.
+                    ui.add_enabled(
+                        false,
+                        egui::Button::new("Account: see the avatar, top-right"),
+                    );
                     ui.separator();
                     if ui.button("Quit").clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -524,15 +529,24 @@ fn menu_bar(
                         10.5,
                     ));
                     ui.separator();
-                    let _ = ui.add_enabled(false, egui::Button::new("Keyboard shortcuts"));
+                    if ui.button("Keyboard shortcuts").clicked() {
+                        nav.push(NavRequest::replace(Tab::Settings));
+                        ui.close();
+                    }
                 });
 
-                // The right side of the menu bar: the back / forward / Home
-                // navigation shortcuts, then the VSCode-style
-                // background-activity indicator. Widgets are added
-                // rightmost-first in a `right_to_left` layout, so the visual
-                // order reads back, forward, Home.
+                // The right side of the menu bar: the account menu (the
+                // single entry point for user info / Settings / Log out),
+                // then the back / forward / Home navigation shortcuts, then
+                // the VSCode-style background-activity indicator. Widgets are
+                // added rightmost-first in a `right_to_left` layout, so the
+                // visual order reads account, Home, forward, back.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(i) = account_menu(ui, palette, profile, avatar, nav) {
+                        intent = Some(i);
+                    }
+                    ui.add_space(6.0);
+
                     if spottyfi_ui::icons::icon_button(
                         ui,
                         palette,
@@ -575,6 +589,72 @@ fn menu_bar(
                 });
             });
         });
+
+    intent
+}
+
+/// The account control on the right of the menu bar: the signed-in user's
+/// avatar and display name, which open a menu with the user's info, a
+/// **Settings** entry (opens the Settings page) and **Log out**.
+///
+/// This is the single account entry point — the `File` menu only points here.
+/// Drawn inside a `right_to_left` layout, so it lands at the bar's far right.
+fn account_menu(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    profile: &UserProfile,
+    avatar: Option<&egui::TextureHandle>,
+    nav: &mut Vec<NavRequest>,
+) -> Option<ShellIntent> {
+    let mut intent = None;
+    let name = profile.display_name.as_deref().unwrap_or("Spotify user");
+
+    // The clickable trigger: the avatar thumbnail then the display name.
+    let label = egui::RichText::new(name)
+        .family(spottyfi_ui::fonts::medium())
+        .size(11.5)
+        .color(palette.text);
+    let button = match avatar {
+        Some(texture) => egui::Button::image_and_text(
+            egui::Image::new((texture.id(), egui::vec2(18.0, 18.0))),
+            label,
+        ),
+        None => egui::Button::new(label),
+    }
+    .fill(palette.elevated)
+    .corner_radius(0);
+
+    egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
+        ui.set_min_width(200.0);
+        // The user-info block: avatar, display name, Spotify id.
+        ui.horizontal(|ui| {
+            if let Some(texture) = avatar {
+                ui.add(egui::Image::new((texture.id(), egui::vec2(36.0, 36.0))));
+            }
+            ui.vertical(|ui| {
+                ui.label(
+                    egui::RichText::new(name)
+                        .family(spottyfi_ui::fonts::semibold())
+                        .size(12.5)
+                        .color(palette.text),
+                );
+                ui.label(spottyfi_ui::components::muted(
+                    palette,
+                    profile.id.to_string(),
+                    10.0,
+                ));
+            });
+        });
+        ui.separator();
+        if ui.button("Settings").clicked() {
+            nav.push(NavRequest::replace(Tab::Settings));
+            ui.close();
+        }
+        if ui.button("Log out").clicked() {
+            intent = Some(ShellIntent::Logout);
+            ui.close();
+        }
+    });
 
     intent
 }
@@ -644,9 +724,13 @@ fn dock(
     engine: &EngineStatus,
 ) -> Vec<DockIntent> {
     // Borrow the session and the persisted state as disjoint fields so the
-    // page registry, the dock tree and the dock extras can be used together.
+    // page registry, the dock tree, the dock extras and the Settings view can
+    // all be used together.
     let ShellState {
-        persisted, session, ..
+        persisted,
+        session,
+        local_folder_draft,
+        ..
     } = state;
     let Some(session) = session.as_mut() else {
         // No API attached yet (the post-login frame before `attach_api`).
@@ -668,6 +752,19 @@ fn dock(
         .retain_open(all_tabs.iter().filter(|t| t.is_page()));
     persisted.dock_extras.retain_open(all_tabs.iter());
 
+    // Destructure the persisted state into disjoint field borrows so the
+    // `DockArea` (which borrows `dock`) and the Settings view (which borrows
+    // `theme` / `density` / `settings`) can both be live this frame.
+    let PersistedShell {
+        dock,
+        theme,
+        density,
+        dock_extras,
+        layout,
+        settings,
+        ..
+    } = persisted;
+
     let mut viewer = ShellTabViewer {
         ctx: TabContext {
             palette: *palette,
@@ -676,12 +773,19 @@ fn dock(
             transport_ui,
             engine,
             pages: &mut session.pages,
-            pinned: &persisted.dock_extras.pinned,
+            settings_view: tabs::SettingsView {
+                theme,
+                density,
+                layout: *layout,
+                settings,
+                local_folder_draft,
+            },
+            pinned: &dock_extras.pinned,
             intents: Vec::new(),
         },
     };
 
-    egui_dock::DockArea::new(&mut persisted.dock)
+    egui_dock::DockArea::new(dock)
         .style(dock_style(palette, ui.style()))
         .show_leaf_close_all_buttons(false)
         .show_leaf_collapse_buttons(false)
@@ -754,74 +858,4 @@ fn dock_style(palette: &Palette, egui_style: &egui::Style) -> egui_dock::Style {
     style.buttons.close_tab_color = palette.text_muted;
 
     style
-}
-
-/// The settings window: theme + density selection (both persisted) and a
-/// Reset-layout action.
-fn settings_window(ctx: &egui::Context, state: &mut ShellState, palette: &Palette) {
-    if !state.settings_open {
-        return;
-    }
-    let mut open = state.settings_open;
-    egui::Window::new("Settings")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .default_width(280.0)
-        .show(ctx, |ui| {
-            spottyfi_ui::components::section_header(ui, palette, "Appearance");
-            ui.horizontal(|ui| {
-                ui.label("Theme");
-                egui::ComboBox::from_id_salt("theme-combo")
-                    .selected_text(state.persisted.theme.label())
-                    .show_ui(ui, |ui| {
-                        for theme in Theme::all() {
-                            ui.selectable_value(&mut state.persisted.theme, theme, theme.label());
-                        }
-                    });
-            });
-            ui.horizontal(|ui| {
-                ui.label("Density");
-                egui::ComboBox::from_id_salt("density-combo")
-                    .selected_text(state.persisted.density.label())
-                    .show_ui(ui, |ui| {
-                        for density in [Density::Comfortable, Density::Compact] {
-                            ui.selectable_value(
-                                &mut state.persisted.density,
-                                density,
-                                density.label(),
-                            );
-                        }
-                    });
-            });
-
-            ui.add_space(10.0);
-            spottyfi_ui::components::section_header(ui, palette, "Layout");
-            ui.horizontal(|ui| {
-                ui.label("Preset");
-                egui::ComboBox::from_id_salt("layout-combo")
-                    .selected_text(state.persisted.layout.label())
-                    .show_ui(ui, |ui| {
-                        for layout in Layout::all() {
-                            if ui
-                                .selectable_label(state.persisted.layout == layout, layout.label())
-                                .clicked()
-                            {
-                                apply_layout(&mut state.persisted, layout);
-                            }
-                        }
-                    });
-            });
-            if ui.button("Reset layout to default").clicked() {
-                apply_layout(&mut state.persisted, Layout::Default);
-            }
-
-            ui.add_space(8.0);
-            ui.label(spottyfi_ui::components::muted(
-                palette,
-                "Theme, density and the dock layout persist across restarts.",
-                11.0,
-            ));
-        });
-    state.settings_open = open;
 }

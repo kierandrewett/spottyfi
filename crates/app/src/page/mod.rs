@@ -33,6 +33,7 @@ mod playlist;
 mod promise;
 mod search;
 mod search_load;
+mod settings;
 mod track_view;
 
 use std::collections::HashMap;
@@ -62,6 +63,7 @@ pub use made_for_you::MadeForYouPage;
 pub use new_releases::NewReleasesPage;
 pub use playlist::PlaylistPage;
 pub use search::SearchPage;
+pub use settings::{settings_page, SettingsAction, SettingsContext};
 
 /// Shared services a page needs to load its data.
 ///
@@ -236,7 +238,8 @@ fn build_page(tab: &Tab, services: &PageServices) -> Box<dyn Page> {
         Tab::NewReleases => Box::new(NewReleasesPage::new(services)),
         Tab::MadeForYou => Box::new(MadeForYouPage::new(services)),
         // Panels are not pages; the registry is only consulted for page tabs.
-        Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Placeholder(_) => {
+        // `Settings` is self-rendered by the shell, not registry-backed.
+        Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Placeholder(_) | Tab::Settings => {
             Box::new(HomePage::new(services))
         }
     }

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use spottyfi_audio::{
-    PlaybackController, PlaybackState, QueueState, QueueTrack, SharedPlaybackState,
+    EngineConfig, PlaybackController, PlaybackState, QueueState, QueueTrack, SharedPlaybackState,
     SharedQueueState,
 };
 use spottyfi_auth::Session;
@@ -51,6 +51,11 @@ pub struct PlaybackControllerHandle {
     audio_disabled: bool,
     /// Whether a start has already been kicked off for the current session.
     start_requested: bool,
+    /// The live session, kept so the engine can be restarted in place when the
+    /// audio settings change (librespot bakes them in at connect time).
+    session: Option<Session>,
+    /// The engine config the running engine was started with.
+    engine_config: EngineConfig,
 }
 
 impl PlaybackControllerHandle {
@@ -68,6 +73,8 @@ impl PlaybackControllerHandle {
             status: Arc::new(ArcSwap::from_pointee(EngineStatus::Idle)),
             audio_disabled,
             start_requested: false,
+            session: None,
+            engine_config: EngineConfig::default(),
         }
     }
 
@@ -90,14 +97,44 @@ impl PlaybackControllerHandle {
     ///
     /// Called once per login. Does nothing when `--no-audio` is set, or when a
     /// start is already in flight. The engine authenticates librespot with the
-    /// session's current OAuth access token.
-    pub fn ensure_started(&mut self, session: &Session) {
+    /// session's current OAuth access token and applies `config` (stream
+    /// quality, normalisation) — those are baked into librespot's
+    /// `PlayerConfig` at connect time.
+    pub fn ensure_started(&mut self, session: &Session, config: EngineConfig) {
         if self.audio_disabled || self.start_requested {
             return;
         }
+        self.session = Some(session.clone());
+        self.engine_config = config;
         self.start_requested = true;
+        self.spawn_start(session.clone(), config);
+    }
 
-        let session = session.clone();
+    /// Restart the running engine so a changed [`EngineConfig`] takes effect.
+    ///
+    /// librespot bakes the stream quality and normalisation into its
+    /// `PlayerConfig` when the session connects, so a settings change can only
+    /// be applied by reconnecting. A no-op when nothing changed, `--no-audio`
+    /// is set, or no session has been seen yet. The current track is not
+    /// resumed — the engine starts idle, as after a fresh login.
+    pub fn restart_with(&mut self, config: EngineConfig) {
+        if self.audio_disabled || config == self.engine_config {
+            return;
+        }
+        let Some(session) = self.session.clone() else {
+            return;
+        };
+        tracing::info!("restarting audio engine to apply new audio settings");
+        self.engine_config = config;
+        self.controller.store(Arc::new(None));
+        self.state.store(Arc::new(PlaybackState::default()));
+        self.queue_state.store(Arc::new(QueueState::default()));
+        self.spawn_start(session, config);
+    }
+
+    /// Spawn the engine-start task: connect librespot, bridge the snapshots
+    /// and publish the lifecycle status. Shared by first start and restart.
+    fn spawn_start(&self, session: Session, config: EngineConfig) {
         let runtime = self.runtime.clone();
         let egui_ctx = self.egui_ctx.clone();
         let controller_slot = Arc::clone(&self.controller);
@@ -117,7 +154,7 @@ impl PlaybackControllerHandle {
                 return;
             };
 
-            match PlaybackController::start(&token.access_token).await {
+            match PlaybackController::start(&token.access_token, config).await {
                 Ok(controller) => {
                     // Mirror the engine's playback and queue state into our
                     // shared slots, waking the UI whenever either changes.
@@ -146,6 +183,7 @@ impl PlaybackControllerHandle {
         self.queue_state.store(Arc::new(QueueState::default()));
         self.status.store(Arc::new(EngineStatus::Idle));
         self.start_requested = false;
+        self.session = None;
     }
 
     /// Play a single track by Spotify URI or `open.spotify.com` URL.

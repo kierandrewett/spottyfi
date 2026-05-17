@@ -14,8 +14,14 @@ use serde::{Deserialize, Serialize};
 use spottyfi_audio::{PlaybackState, QueueState, QueueTrack};
 use spottyfi_ui::theme::Palette;
 
-use crate::page::{PageAction, PageContext, PageRegistry};
+use spottyfi_ui::components::Density;
+use spottyfi_ui::theme::Theme;
+
+use crate::page::SettingsContext as PageSettingsContext;
+use crate::page::{settings_page, PageAction, PageContext, PageRegistry, SettingsAction};
 use crate::playback_controller::EngineStatus;
+use crate::settings::AppSettings;
+use crate::shell::Layout;
 use crate::transport::{self, TransportIntent, TransportUiState};
 
 /// A single dock tab — the serialisable key for one centre-dock surface.
@@ -50,6 +56,8 @@ pub enum Tab {
     /// The Made For You page: recommendations seeded from the user's top
     /// artists and tracks via Last.fm.
     MadeForYou,
+    /// The Settings page: audio, equalizer, local files, appearance, hotkeys.
+    Settings,
     /// A not-yet-built page. Carries its display name; the body is a "coming
     /// soon" placeholder until the real page is implemented.
     Placeholder(String),
@@ -82,6 +90,7 @@ impl Tab {
             Tab::Charts => "Charts",
             Tab::NewReleases => "New Releases",
             Tab::MadeForYou => "Made For You",
+            Tab::Settings => "Settings",
             Tab::Placeholder(_) => "Coming soon",
             Tab::NowPlayingArt => "Now Playing",
             Tab::Queue => "Queue",
@@ -111,13 +120,15 @@ impl Tab {
     /// Panels are closeable; the Home page is kept open so the dock is never
     /// empty. `Placeholder` is a self-rendered surface — neither a
     /// registry-backed page nor an auxiliary panel — and is classified as a
-    /// panel so the page registry never tries to build it. `Search` is a
+    /// panel so the page registry never tries to build it. `Settings` is
+    /// likewise self-rendered: it needs mutable shell state the registry
+    /// cannot hand it, so it renders straight from the shell. `Search` is a
     /// real, registry-backed page (Phase 6).
     #[must_use]
     pub fn is_panel(&self) -> bool {
         matches!(
             self,
-            Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Placeholder(_)
+            Tab::NowPlayingArt | Tab::Queue | Tab::Debug | Tab::Placeholder(_) | Tab::Settings
         )
     }
 
@@ -142,6 +153,9 @@ pub enum DockIntent {
     /// A tab-management command raised from a tab's right-click menu or a
     /// middle-click — applied to the dock after the `DockArea` has been drawn.
     Tab(TabCommand),
+    /// A Settings-page action (apply/reset layout, audio settings changed) —
+    /// applied after the `DockArea` draw, since some mutate the dock tree.
+    Settings(SettingsAction),
 }
 
 /// A navigation request the shell collects this frame and applies to the dock
@@ -208,6 +222,25 @@ pub enum TabCommand {
     TogglePin(Tab),
 }
 
+/// The mutable shell state the self-rendered Settings tab needs.
+///
+/// The dock's `DockArea` borrows `PersistedShell::dock`; these are the
+/// remaining fields the Settings page mutates, borrowed disjointly so both can
+/// be live at once. Layout changes mutate the dock tree, so they are deferred
+/// — raised as [`SettingsAction`]s and applied once the `DockArea` draw ends.
+pub struct SettingsView<'a> {
+    /// The selected colour theme.
+    pub theme: &'a mut Theme,
+    /// The selected row density.
+    pub density: &'a mut Density,
+    /// The currently-applied dock layout.
+    pub layout: Layout,
+    /// The persisted power-user settings block.
+    pub settings: &'a mut AppSettings,
+    /// The draft folder path being typed in the Local Files section.
+    pub local_folder_draft: &'a mut String,
+}
+
 /// Everything the dock's [`egui_dock::TabViewer`] needs to render a tab's body,
 /// borrowed for the duration of one `DockArea::show` call.
 pub struct TabContext<'a> {
@@ -223,6 +256,8 @@ pub struct TabContext<'a> {
     pub engine: &'a EngineStatus,
     /// The live page objects, keyed by tab.
     pub pages: &'a mut PageRegistry,
+    /// The mutable shell state the Settings tab renders against.
+    pub settings_view: SettingsView<'a>,
     /// A read-only view of the pinned-tab set, so the right-click menu can
     /// show Pin vs Unpin. The dock cannot be mutated mid-draw, so pin toggles
     /// are raised as [`TabCommand`]s and applied afterwards.
@@ -337,6 +372,20 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
                         }
                     }
                     Tab::Placeholder(name) => placeholder_tab(ui, &self.ctx, name),
+                    Tab::Settings => {
+                        let view = &mut self.ctx.settings_view;
+                        let mut page_ctx = PageSettingsContext {
+                            palette,
+                            theme: view.theme,
+                            density: view.density,
+                            layout: view.layout,
+                            settings: view.settings,
+                            local_folder_draft: view.local_folder_draft,
+                        };
+                        for action in settings_page(ui, &mut page_ctx) {
+                            self.ctx.intents.push(DockIntent::Settings(action));
+                        }
+                    }
                     Tab::Debug => {
                         if let Some(intent) = debug_tab(ui, &mut self.ctx) {
                             self.ctx.intents.push(DockIntent::Transport(intent));

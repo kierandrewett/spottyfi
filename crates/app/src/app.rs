@@ -103,9 +103,14 @@ impl SpottyfiApp {
     }
 
     /// Start the audio engine the first time we see a logged-in session.
+    ///
+    /// The engine is started with the persisted audio settings — librespot
+    /// bakes the stream quality and normalisation into its `PlayerConfig` at
+    /// connect time.
     fn ensure_audio(&mut self) {
         if let Some(session) = self.auth.session() {
-            self.playback.ensure_started(&session);
+            let config = self.shell.persisted.settings.audio.engine_config();
+            self.playback.ensure_started(&session, config);
         }
     }
 
@@ -233,6 +238,13 @@ impl eframe::App for SpottyfiApp {
                 match shell_intent {
                     Some(ShellIntent::Logout) => self.handle_logout(),
                     Some(ShellIntent::Transport(intent)) => self.apply_transport_intent(intent),
+                    Some(ShellIntent::AudioSettingsChanged) => {
+                        // librespot bakes bitrate / normalisation into its
+                        // `PlayerConfig` at connect, so restart the engine to
+                        // apply the new audio settings.
+                        let config = self.shell.persisted.settings.audio.engine_config();
+                        self.playback.restart_with(config);
+                    }
                     None => {}
                 }
             }
