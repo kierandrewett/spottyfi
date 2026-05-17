@@ -282,49 +282,39 @@ fn control_row(
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
+    // Lay the row out top-down/centre-aligned and drop the button cluster in
+    // as a single `horizontal` child: egui then centres that child by its
+    // intrinsic width, which it does reliably — unlike `with_main_align`,
+    // which left the cluster visibly off-centre from the seek bar below it.
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), height),
-        egui::Layout::left_to_right(egui::Align::Center),
+        egui::Layout::top_down(egui::Align::Center),
         |ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            // A horizontally-centred cluster: an inner group whose intrinsic
-            // width egui centres within the row.
-            ui.with_layout(
-                egui::Layout::left_to_right(egui::Align::Center)
-                    .with_main_align(egui::Align::Center),
-                |ui| {
-                    if icons::icon_button(
-                        ui,
-                        palette,
-                        Icon::Shuffle,
-                        15.0,
-                        queue.shuffle,
-                        "Shuffle",
-                    )
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                if icons::icon_button(ui, palette, Icon::Shuffle, 15.0, queue.shuffle, "Shuffle")
                     .clicked()
-                    {
-                        intent = Some(TransportIntent::SetShuffle(!queue.shuffle));
-                    }
-                    if icons::icon_button(ui, palette, Icon::SkipBack, 16.0, false, "Previous")
-                        .clicked()
-                    {
-                        intent = Some(TransportIntent::Previous);
-                    }
+                {
+                    intent = Some(TransportIntent::SetShuffle(!queue.shuffle));
+                }
+                if icons::icon_button(ui, palette, Icon::SkipBack, 16.0, false, "Previous")
+                    .clicked()
+                {
+                    intent = Some(TransportIntent::Previous);
+                }
 
-                    if play_button(ui, palette, playback).clicked() {
-                        intent = Some(TransportIntent::TogglePlayPause);
-                    }
+                if play_button(ui, palette, playback).clicked() {
+                    intent = Some(TransportIntent::TogglePlayPause);
+                }
 
-                    if icons::icon_button(ui, palette, Icon::SkipForward, 16.0, false, "Next")
-                        .clicked()
-                    {
-                        intent = Some(TransportIntent::Next);
-                    }
-                    if let Some(i) = repeat_button(ui, palette, queue.repeat) {
-                        intent = Some(i);
-                    }
-                },
-            );
+                if icons::icon_button(ui, palette, Icon::SkipForward, 16.0, false, "Next").clicked()
+                {
+                    intent = Some(TransportIntent::Next);
+                }
+                if let Some(i) = repeat_button(ui, palette, queue.repeat) {
+                    intent = Some(i);
+                }
+            });
         },
     );
 
@@ -465,6 +455,27 @@ fn scrubber_row(
                 .enabled(!duration.is_zero())
                 .waveform(live_waveform)
                 .show(ui, &mut ui_state.seek, live_fraction);
+
+            // A tooltip at the pointer showing the time under the cursor while
+            // hovering, and the target time while the play head is dragged.
+            let preview = if scrub.dragging {
+                Some(scrub.fraction)
+            } else {
+                scrub.hover
+            };
+            if let Some(frac) = preview.filter(|_| !duration.is_zero()) {
+                let at = Duration::from_secs_f32(frac * duration.as_secs_f32());
+                egui::Tooltip::always_open(
+                    ui.ctx().clone(),
+                    ui.layer_id(),
+                    egui::Id::new("transport-seek-tooltip"),
+                    egui::PopupAnchor::Pointer,
+                )
+                .gap(12.0)
+                .show(|ui| {
+                    ui.label(fmt_duration(at));
+                });
+            }
 
             if let Some(fraction) = scrub.committed {
                 let target = Duration::from_secs_f32(fraction * duration.as_secs_f32());

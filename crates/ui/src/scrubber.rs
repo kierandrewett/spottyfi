@@ -77,6 +77,9 @@ pub struct Scrubber<'a> {
     /// instead of a flat capsule — the live Spotify-style seek bar. The
     /// played portion is accent-coloured, the rest dimmed.
     waveform: Option<&'a [f32]>,
+    /// How far one mouse-wheel notch moves the value, as a `0.0..=1.0`
+    /// fraction. `0.0` disables scroll-to-adjust.
+    scroll_step: f32,
 }
 
 impl<'a> Scrubber<'a> {
@@ -91,7 +94,17 @@ impl<'a> Scrubber<'a> {
             enabled: true,
             height: None,
             waveform: None,
+            scroll_step: 0.05,
         }
+    }
+
+    /// Set how far one mouse-wheel notch moves the value (`0.0..=1.0`).
+    ///
+    /// Defaults to `0.05`; pass `0.0` to disable scroll-to-adjust entirely.
+    #[must_use]
+    pub fn scroll_step(mut self, step: f32) -> Self {
+        self.scroll_step = step.clamp(0.0, 1.0);
+        self
     }
 
     /// Override the widget's total height. Useful for waveform mode, where a
@@ -201,14 +214,35 @@ impl<'a> Scrubber<'a> {
                 {
                     shown = pointer_fraction(pos.x);
                 }
-            }
-            if response.drag_stopped() || (state.dragging && ui.input(|i| i.pointer.any_released()))
-            {
-                state.dragging = false;
-                committed = Some(shown);
+                // End the drag the moment the button is no longer held — this
+                // catches a release off-widget or outside the window, which a
+                // plain `drag_stopped`/`any_released` check misses and which
+                // otherwise leaves the scrubber stuck tracking the pointer.
+                if response.drag_stopped() || !ui.input(|i| i.pointer.primary_down()) {
+                    state.dragging = false;
+                    committed = Some(shown);
+                }
             } else if response.clicked() {
                 if let Some(pos) = response.interact_pointer_pos() {
                     shown = pointer_fraction(pos.x);
+                    committed = Some(shown);
+                }
+            }
+            // Mouse-wheel over the track nudges the value one step per notch.
+            // Raw `MouseWheel` events are read (not the smoothed scroll delta)
+            // so one physical notch is exactly one discrete step.
+            if !state.dragging && response.hovered() && self.scroll_step > 0.0 {
+                let scroll: f32 = ui.input(|i| {
+                    i.events
+                        .iter()
+                        .filter_map(|e| match e {
+                            egui::Event::MouseWheel { delta, .. } => Some(delta.y),
+                            _ => None,
+                        })
+                        .sum()
+                });
+                if scroll != 0.0 {
+                    shown = (shown + scroll.signum() * self.scroll_step).clamp(0.0, 1.0);
                     committed = Some(shown);
                 }
             }
