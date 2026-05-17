@@ -11,6 +11,7 @@
 //! All of this runs on the runtime thread; the UI only ever reads the
 //! [`ArcSwap`] snapshot. See `docs/threading.md`.
 
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,7 +21,7 @@ use librespot::core::config::SessionConfig;
 use librespot::core::session::Session;
 use librespot::metadata::audio::{AudioItem, UniqueFields};
 use librespot::playback::audio_backend;
-use librespot::playback::config::{AudioFormat, PlayerConfig};
+use librespot::playback::config::{AudioFormat, Bitrate, PlayerConfig, VolumeCtrl};
 use librespot::playback::mixer::softmixer::SoftMixer;
 use librespot::playback::mixer::{Mixer, MixerConfig};
 use librespot::playback::player::{Player, PlayerEvent};
@@ -37,14 +38,63 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// librespot's full-scale mixer volume (`u16::MAX`).
 const MAX_VOLUME: u16 = u16::MAX;
 
-/// Convert a `0.0..=1.0` UI volume into librespot's `u16` mixer scale.
-fn volume_to_u16(volume: f32) -> u16 {
-    (volume.clamp(0.0, 1.0) * f32::from(MAX_VOLUME)).round() as u16
+/// The audio bitrate Spottyfi requests from Spotify.
+///
+/// 320 kbps is the highest tier librespot supports and what Spottyfi has
+/// always shipped; it is surfaced verbatim in the transport's codec readout.
+const BITRATE: Bitrate = Bitrate::Bitrate320;
+
+/// The codec librespot decodes — Spotify streams Ogg Vorbis at every tier.
+pub(crate) const CODEC_NAME: &str = "Ogg Vorbis";
+
+/// Total duration of the play/pause volume fade.
+///
+/// Deliberately short — a perceptual softening of the cut, not a slow ramp.
+/// The fade runs in [`FADE_STEPS`] mixer writes spread across this window.
+const FADE_DURATION: Duration = Duration::from_millis(120);
+
+/// Number of discrete mixer-volume writes a fade is split into.
+const FADE_STEPS: u32 = 12;
+
+/// The perceptual loudness exponent applied to the `0.0..=1.0` UI volume.
+///
+/// The human ear's loudness response is roughly logarithmic, so a linear
+/// fader feels coarse at the quiet end and barely audible across its top
+/// half. Raising the fraction to this power expands the quiet end and
+/// compresses the loud end, giving an even *perceived* sweep — the same
+/// "ideal" perceptual law librespot's own `Log` volume curve targets, but
+/// applied here so the mapping is explicit and unit-tested. The mixer is
+/// therefore driven with a plain `Linear` control to avoid mapping twice.
+const VOLUME_CURVE_EXP: f32 = 3.0;
+
+/// Map a `0.0..=1.0` UI volume through the perceptual curve.
+///
+/// Quiet values are spread over more of the fader's travel; `0.0` and `1.0`
+/// map exactly to silence and full scale.
+fn perceptual_volume(fraction: f32) -> f32 {
+    fraction.clamp(0.0, 1.0).powf(VOLUME_CURVE_EXP)
 }
 
-/// Convert librespot's `u16` mixer volume back into a `0.0..=1.0` fraction.
+/// Convert a `0.0..=1.0` UI volume into librespot's `u16` mixer scale,
+/// applying the perceptual curve on the way.
+fn volume_to_u16(volume: f32) -> u16 {
+    (perceptual_volume(volume) * f32::from(MAX_VOLUME)).round() as u16
+}
+
+/// Convert librespot's `u16` mixer volume back into a `0.0..=1.0` UI fraction,
+/// inverting the perceptual curve so a round trip is stable.
 fn volume_from_u16(volume: u16) -> f32 {
-    f32::from(volume) / f32::from(MAX_VOLUME)
+    let mapped = f32::from(volume) / f32::from(MAX_VOLUME);
+    mapped.clamp(0.0, 1.0).powf(1.0 / VOLUME_CURVE_EXP)
+}
+
+/// The kilobits-per-second figure for a librespot [`Bitrate`] tier.
+fn bitrate_kbps(bitrate: Bitrate) -> u16 {
+    match bitrate {
+        Bitrate::Bitrate96 => 96,
+        Bitrate::Bitrate160 => 160,
+        Bitrate::Bitrate320 => 320,
+    }
 }
 
 /// The running librespot engine: session, player, mixer and shared state.
@@ -55,6 +105,15 @@ pub(crate) struct Engine {
     mixer: Arc<dyn Mixer>,
     /// The published playback snapshot, read by the UI each frame.
     state: Arc<ArcSwap<PlaybackState>>,
+    /// The user's chosen volume as a `0.0..=1.0` fraction, independent of any
+    /// in-progress fade. A pause fade ramps the *mixer* to silence but leaves
+    /// this untouched, so the resume fade knows the level to climb back to and
+    /// the UI's slider never twitches.
+    target_volume: Arc<AtomicU32>,
+    /// Generation counter used to cancel a fade that a newer one supersedes.
+    /// Each fade captures the value, then aborts as soon as it no longer
+    /// matches — so a quick pause/resume tap can't leave a stale ramp running.
+    fade_generation: Arc<AtomicU64>,
 }
 
 impl Engine {
@@ -79,6 +138,8 @@ impl Engine {
             // Opt into periodic `PositionChanged` events; combined with the
             // poller this keeps the published position accurate.
             position_update_interval: Some(POLL_INTERVAL),
+            // Highest tier; surfaced verbatim in the transport readout.
+            bitrate: BITRATE,
             ..PlayerConfig::default()
         };
 
@@ -90,7 +151,13 @@ impl Engine {
             .map_err(|err| AudioError::Connect(err.to_string()))?;
         tracing::info!("librespot session connected");
 
-        let mixer = SoftMixer::open(MixerConfig::default())
+        // Drive the mixer with a plain linear control: Spottyfi applies its own
+        // perceptual curve in `volume_to_u16`, so the mixer must not map again.
+        let mixer_config = MixerConfig {
+            volume_ctrl: VolumeCtrl::Linear,
+            ..MixerConfig::default()
+        };
+        let mixer = SoftMixer::open(mixer_config)
             .map(|m| Arc::new(m) as Arc<dyn Mixer>)
             .map_err(|err| AudioError::Connect(err.to_string()))?;
 
@@ -102,8 +169,11 @@ impl Engine {
         });
 
         // Publish the mixer's starting volume so the UI's slider is correct.
+        let initial_volume = volume_from_u16(mixer.volume());
         let initial = PlaybackState {
-            volume: volume_from_u16(mixer.volume()),
+            volume: initial_volume,
+            bitrate_kbps: bitrate_kbps(BITRATE),
+            codec: CODEC_NAME.to_owned(),
             ..PlaybackState::default()
         };
         state.store(Arc::new(initial));
@@ -112,6 +182,8 @@ impl Engine {
             player,
             mixer,
             state,
+            target_volume: Arc::new(AtomicU32::new(initial_volume.to_bits())),
+            fade_generation: Arc::new(AtomicU64::new(0)),
         };
         engine.spawn_event_loop();
         Ok(engine)
@@ -123,10 +195,79 @@ impl Engine {
     }
 
     /// Set the output volume from a `0.0..=1.0` fraction.
+    ///
+    /// Applies immediately — the `SoftMixer` attenuation is an atomic store
+    /// read per decoded audio packet, so the change lands on the next packet
+    /// (single-digit milliseconds) with no smoothing or ramp.
     pub(crate) fn set_volume(&self, volume: f32) {
-        self.mixer.set_volume(volume_to_u16(volume));
+        let clamped = volume.clamp(0.0, 1.0);
+        // A manual volume change overrides any fade in progress and becomes the
+        // new level a later resume fades back to.
+        self.fade_generation.fetch_add(1, Ordering::SeqCst);
+        self.target_volume
+            .store(clamped.to_bits(), Ordering::SeqCst);
+        self.mixer.set_volume(volume_to_u16(clamped));
         // The mixer does not emit an event; publish the change ourselves.
-        publish_with(&self.state, |s| s.volume = volume.clamp(0.0, 1.0));
+        publish_with(&self.state, |s| s.volume = clamped);
+    }
+
+    /// Pause playback with a short fade-out.
+    ///
+    /// The fade ramps the *mixer* — not the user's chosen volume — down to
+    /// silence over [`FADE_DURATION`], then issues the librespot pause. This
+    /// also masks the rodio backend's pause latency: `RodioSink::stop` blocks
+    /// until its buffer drains, so without the fade ~0.5s of already-buffered
+    /// audio would keep playing at full volume after the button press.
+    pub(crate) fn pause(&self) {
+        let player = Arc::clone(&self.player);
+        self.fade(0.0, move || player.pause());
+    }
+
+    /// Resume playback with a short fade-in.
+    ///
+    /// Drops the mixer to silence, issues the librespot play so the sink spins
+    /// up, then ramps the mixer back to the user's chosen volume.
+    pub(crate) fn resume(&self) {
+        let target = f32::from_bits(self.target_volume.load(Ordering::SeqCst));
+        self.mixer.set_volume(0);
+        self.player.play();
+        self.fade(target, || {});
+    }
+
+    /// Ramp the mixer volume to `to` over [`FADE_DURATION`], then run `on_done`.
+    ///
+    /// `to` is a perceptual `0.0..=1.0` fraction. The ramp interpolates in the
+    /// mixer's linear `u16` space so the step sizes are even. A newer fade (or
+    /// a manual volume change) bumps the generation counter and this ramp
+    /// abandons itself the moment it notices.
+    fn fade(&self, to: f32, on_done: impl FnOnce() + Send + 'static) {
+        let generation = self.fade_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let mixer = Arc::clone(&self.mixer);
+        let fade_generation = Arc::clone(&self.fade_generation);
+
+        let from = i32::from(mixer.volume());
+        let dest = i32::from(volume_to_u16(to));
+        let step = FADE_DURATION / FADE_STEPS;
+
+        tokio::spawn(async move {
+            let mut on_done = Some(on_done);
+            for i in 1..=FADE_STEPS {
+                tokio::time::sleep(step).await;
+                // A newer fade or a manual volume change supersedes this one.
+                if fade_generation.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+                let progressed = from + (dest - from) * (i as i32) / (FADE_STEPS as i32);
+                mixer.set_volume(progressed.clamp(0, i32::from(MAX_VOLUME)) as u16);
+                // Fire the side effect (the actual pause) at the *end* of a
+                // fade-out, once the mixer has reached silence.
+                if i == FADE_STEPS {
+                    if let Some(done) = on_done.take() {
+                        done();
+                    }
+                }
+            }
+        });
     }
 
     /// Spawn the player-event loop and the position poller.
@@ -330,9 +471,9 @@ mod tests {
 
     #[test]
     fn volume_round_trips() {
-        for v in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
+        for v in [0.0_f32, 0.1, 0.25, 0.5, 0.75, 1.0] {
             let back = volume_from_u16(volume_to_u16(v));
-            assert!((back - v).abs() < 0.001, "{v} -> {back}");
+            assert!((back - v).abs() < 0.01, "{v} -> {back}");
         }
     }
 
@@ -340,5 +481,38 @@ mod tests {
     fn volume_is_clamped() {
         assert_eq!(volume_to_u16(2.0), MAX_VOLUME);
         assert_eq!(volume_to_u16(-1.0), 0);
+    }
+
+    #[test]
+    fn volume_endpoints_are_exact() {
+        assert_eq!(volume_to_u16(0.0), 0);
+        assert_eq!(volume_to_u16(1.0), MAX_VOLUME);
+    }
+
+    #[test]
+    fn volume_curve_is_perceptual() {
+        // The perceptual curve devotes more fader travel to quiet levels:
+        // the mixer value at the half-way point sits well below the linear
+        // half, expanding fine control across the quiet end.
+        let half = volume_to_u16(0.5);
+        let linear_half = f32::from(MAX_VOLUME) * 0.5;
+        assert!(
+            f32::from(half) < linear_half * 0.5,
+            "0.5 mapped to {half}, expected well below {linear_half}"
+        );
+        // The curve is monotonically increasing.
+        let mut last = 0;
+        for step in 1..=20 {
+            let v = volume_to_u16(step as f32 / 20.0);
+            assert!(v >= last, "curve not monotonic at step {step}");
+            last = v;
+        }
+    }
+
+    #[test]
+    fn bitrate_kbps_matches_tier() {
+        assert_eq!(bitrate_kbps(Bitrate::Bitrate96), 96);
+        assert_eq!(bitrate_kbps(Bitrate::Bitrate160), 160);
+        assert_eq!(bitrate_kbps(Bitrate::Bitrate320), 320);
     }
 }

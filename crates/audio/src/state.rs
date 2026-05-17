@@ -51,9 +51,28 @@ pub struct PlaybackState {
     pub buffering: bool,
     /// Output volume, normalised to `0.0..=1.0`.
     pub volume: f32,
+    /// The configured stream bitrate in kilobits per second (96 / 160 / 320).
+    ///
+    /// Zero before the engine has connected; the transport shows it verbatim.
+    pub bitrate_kbps: u16,
+    /// The decoder codec librespot is using (e.g. `"Ogg Vorbis"`).
+    ///
+    /// Empty before the engine has connected.
+    pub codec: String,
 }
 
 impl PlaybackState {
+    /// The transport's codec/bitrate readout (e.g. `"Ogg Vorbis 320 kbps"`).
+    ///
+    /// Returns `None` before the engine has connected and reported a bitrate.
+    #[must_use]
+    pub fn codec_line(&self) -> Option<String> {
+        if self.bitrate_kbps == 0 || self.codec.is_empty() {
+            return None;
+        }
+        Some(format!("{} {} kbps", self.codec, self.bitrate_kbps))
+    }
+
     /// Playback progress through the current track as a `0.0..=1.0` fraction.
     ///
     /// Returns `0.0` when no track is loaded or the duration is unknown.

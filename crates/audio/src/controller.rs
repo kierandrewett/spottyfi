@@ -284,25 +284,38 @@ impl PlaybackController {
         self.publish_queue();
     }
 
+    /// Turn shuffle on or off.
+    ///
+    /// The currently-playing track is preserved; only the upcoming context
+    /// order changes. See [`Queue::set_shuffle`].
+    #[tracing::instrument(skip(self))]
+    pub async fn set_shuffle(&self, shuffle: bool) {
+        lock(&self.queue).set_shuffle(shuffle);
+        self.publish_queue();
+    }
+
     /// Pause playback, keeping the current track and position.
+    ///
+    /// Applies a short volume fade-out before the librespot pause so the cut
+    /// is not abrupt — see [`Engine::pause`].
     ///
     /// # Errors
     ///
     /// Currently infallible; returns [`AudioResult`] for API symmetry.
     #[tracing::instrument(skip(self))]
     pub async fn pause(&self) -> AudioResult<()> {
-        self.engine.player().pause();
+        self.engine.pause();
         Ok(())
     }
 
-    /// Resume playback of the current track.
+    /// Resume playback of the current track with a short volume fade-in.
     ///
     /// # Errors
     ///
     /// Currently infallible; see [`Self::pause`].
     #[tracing::instrument(skip(self))]
     pub async fn resume(&self) -> AudioResult<()> {
-        self.engine.player().play();
+        self.engine.resume();
         Ok(())
     }
 
