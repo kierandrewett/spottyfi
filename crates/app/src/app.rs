@@ -166,6 +166,8 @@ impl SpottyfiApp {
                 self.playback.reorder_manual(from, to);
             }
             TransportIntent::RemoveManual(index) => self.playback.remove_manual(index),
+            TransportIntent::SetShuffle(shuffle) => self.playback.set_shuffle(shuffle),
+            TransportIntent::SetRepeat(mode) => self.playback.set_repeat(mode),
         }
     }
 
@@ -206,8 +208,13 @@ impl eframe::App for SpottyfiApp {
 
                 // The transport panel is added before the shell's central
                 // dock so the dock fills the space above it.
-                let transport_intent =
-                    transport::transport_bar(ui, &palette, &mut self.transport_ui, &playback);
+                let transport_intent = transport::transport_bar(
+                    ui,
+                    &palette,
+                    &mut self.transport_ui,
+                    &playback,
+                    &queue,
+                );
 
                 let shell_intent = shell::shell(
                     ui,

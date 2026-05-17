@@ -248,6 +248,20 @@ impl PlaybackControllerHandle {
         });
     }
 
+    /// Set shuffle on or off. The currently-playing track is preserved.
+    pub fn set_shuffle(&self, shuffle: bool) {
+        self.dispatch(move |controller| async move {
+            controller.set_shuffle(shuffle).await;
+        });
+    }
+
+    /// Set the repeat mode (off / repeat-all / repeat-one).
+    pub fn set_repeat(&self, mode: spottyfi_audio::RepeatMode) {
+        self.dispatch(move |controller| async move {
+            controller.set_repeat(mode).await;
+        });
+    }
+
     /// Seek to `position` within the current track.
     pub fn seek(&self, position: Duration) {
         self.dispatch(move |controller| async move {

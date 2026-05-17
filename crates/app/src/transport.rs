@@ -10,13 +10,14 @@
 //! [`spottyfi_ui::scrubber::Scrubber`] widget: hover-to-preview, click/drag to
 //! seek, the seek committed on release so the engine is not spammed mid-drag.
 //!
-//! Shuffle, repeat and the right-cluster toggles are visual placeholders —
-//! they have no engine wiring until later phases — but they are themed and
+//! Shuffle and repeat are wired to the engine: they project the live
+//! [`spottyfi_audio::QueueState`] and emit intents on click. The right-cluster
+//! toggles (settings / devices / queue) remain visual placeholders, themed and
 //! laid out so the bar reads as complete.
 
 use std::time::Duration;
 
-use spottyfi_audio::PlaybackState;
+use spottyfi_audio::{PlaybackState, QueueState, RepeatMode};
 use spottyfi_ui::components;
 use spottyfi_ui::icons::{self, Icon};
 use spottyfi_ui::scrubber::{Scrubber, ScrubberState};
@@ -70,13 +71,18 @@ pub enum TransportIntent {
     },
     /// Remove manual-queue entry `index`.
     RemoveManual(usize),
+    /// Set shuffle on or off.
+    SetShuffle(bool),
+    /// Set the repeat mode (off / repeat-all / repeat-one).
+    SetRepeat(RepeatMode),
 }
 
 /// Per-frame, mutable UI state for the transport widgets.
 ///
-/// Held by the app so the seek/volume scrubbers' drag state, the debug field,
-/// and the state of the (not-yet-wired) shuffle / repeat toggles survive
-/// between frames.
+/// Held by the app so the seek/volume scrubbers' drag state and the debug
+/// field survive between frames. Shuffle and repeat are *not* held here —
+/// they are projected from the live [`QueueState`] so the buttons always
+/// reflect the engine's real state.
 #[derive(Default)]
 pub struct TransportUiState {
     /// The track URI typed into the debug control.
@@ -88,10 +94,6 @@ pub struct TransportUiState {
     /// While the user drags the volume scrubber, the in-progress fraction so
     /// the icon and fill follow the drag before the engine catches up.
     volume_preview: Option<f32>,
-    /// Visual-only shuffle toggle (no engine wiring yet).
-    shuffle: bool,
-    /// Visual-only repeat toggle (no engine wiring yet).
-    repeat: bool,
 }
 
 /// Render the bottom transport bar. Returns any [`TransportIntent`] issued.
@@ -112,6 +114,7 @@ pub fn transport_bar(
     palette: &Palette,
     ui_state: &mut TransportUiState,
     playback: &PlaybackState,
+    queue: &QueueState,
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
@@ -157,7 +160,7 @@ pub fn transport_bar(
                     .max_rect(centre_rect)
                     .layout(egui::Layout::top_down(egui::Align::Center)),
             );
-            if let Some(i) = centre_controls(&mut centre, palette, ui_state, playback) {
+            if let Some(i) = centre_controls(&mut centre, palette, ui_state, playback, queue) {
                 intent = Some(i);
             }
 
@@ -202,7 +205,10 @@ fn now_playing(ui: &mut egui::Ui, palette: &Palette, playback: &PlaybackState) {
                     egui::Label::new(components::muted(palette, track.artist_line(), 11.0))
                         .truncate(),
                 );
-                ui.label(components::muted(palette, "Ogg Vorbis 320 kbps", 9.5));
+                // The real configured codec/bitrate, reported by the engine.
+                if let Some(codec_line) = playback.codec_line() {
+                    ui.label(components::muted(palette, codec_line, 9.5));
+                }
             }
             None => {
                 ui.label(components::muted(palette, "Nothing playing", 12.5));
@@ -223,6 +229,7 @@ fn centre_controls(
     palette: &Palette,
     ui_state: &mut TransportUiState,
     playback: &PlaybackState,
+    queue: &QueueState,
 ) -> Option<TransportIntent> {
     let mut intent = None;
 
@@ -244,7 +251,7 @@ fn centre_controls(
     );
     block.spacing_mut().item_spacing.y = ROW_GAP;
     // The transport control row, centred horizontally.
-    if let Some(i) = control_row(&mut block, palette, ui_state, playback, CONTROL_ROW_H) {
+    if let Some(i) = control_row(&mut block, palette, playback, queue, CONTROL_ROW_H) {
         intent = Some(i);
     }
     // The seek scrubber row, spanning the full block width.
@@ -257,11 +264,15 @@ fn centre_controls(
 
 /// The shuffle / prev / play-pause / next / repeat control row, sized to a
 /// fixed height and centred horizontally by the enclosing top-down layout.
+///
+/// Shuffle and repeat are projected from the live [`QueueState`]: the buttons
+/// reflect the engine's real state and emit an intent on click rather than
+/// holding any UI-local toggle.
 fn control_row(
     ui: &mut egui::Ui,
     palette: &Palette,
-    ui_state: &mut TransportUiState,
     playback: &PlaybackState,
+    queue: &QueueState,
     height: f32,
 ) -> Option<TransportIntent> {
     let mut intent = None;
@@ -282,12 +293,12 @@ fn control_row(
                         palette,
                         Icon::Shuffle,
                         15.0,
-                        ui_state.shuffle,
+                        queue.shuffle,
                         "Shuffle",
                     )
                     .clicked()
                     {
-                        ui_state.shuffle = !ui_state.shuffle;
+                        intent = Some(TransportIntent::SetShuffle(!queue.shuffle));
                     }
                     if icons::icon_button(ui, palette, Icon::SkipBack, 16.0, false, "Previous")
                         .clicked()
@@ -304,17 +315,8 @@ fn control_row(
                     {
                         intent = Some(TransportIntent::Next);
                     }
-                    if icons::icon_button(
-                        ui,
-                        palette,
-                        Icon::Repeat,
-                        15.0,
-                        ui_state.repeat,
-                        "Repeat",
-                    )
-                    .clicked()
-                    {
-                        ui_state.repeat = !ui_state.repeat;
+                    if let Some(i) = repeat_button(ui, palette, queue.repeat) {
+                        intent = Some(i);
                     }
                 },
             );
@@ -322,6 +324,36 @@ fn control_row(
     );
 
     intent
+}
+
+/// The repeat control: cycles `off → repeat-all → repeat-one → off`.
+///
+/// There is no dedicated repeat-one glyph, so all three states reuse the
+/// [`Icon::Repeat`] glyph: off is muted, repeat-all is accent-tinted, and
+/// repeat-one is accent-tinted with a small accent dot below to mark the
+/// "single track" variant — matching the Spotify client's affordance.
+fn repeat_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    repeat: RepeatMode,
+) -> Option<TransportIntent> {
+    let active = repeat != RepeatMode::Off;
+    let tooltip = match repeat {
+        RepeatMode::Off => "Repeat: off",
+        RepeatMode::Context => "Repeat: all",
+        RepeatMode::Track => "Repeat: one",
+    };
+    let response = icons::icon_button(ui, palette, Icon::Repeat, 15.0, active, tooltip);
+
+    if repeat == RepeatMode::Track && ui.is_rect_visible(response.rect) {
+        // A small accent dot under the glyph marks the repeat-one variant.
+        let dot = egui::pos2(response.rect.center().x, response.rect.center().y + 9.0);
+        ui.painter().circle_filled(dot, 1.6, palette.accent);
+    }
+
+    response
+        .clicked()
+        .then(|| TransportIntent::SetRepeat(repeat.cycled()))
 }
 
 /// The central play/pause control: a filled accent-green **circle**, bigger
