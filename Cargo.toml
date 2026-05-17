@@ -75,6 +75,11 @@ rand = "0.10"
 # State snapshots read by the UI thread.
 arc-swap = "1"
 
+# FFT for the WS7 spectrum-analyser visualiser. The magnitude spectrum is
+# computed off the UI thread on a tokio task; the egui thread only reads the
+# published snapshot.
+rustfft = "6"
+
 # Authentication: Spotify Web API client + OAuth PKCE flow.
 rspotify = { version = "0.16", default-features = false, features = [
     "client-reqwest",

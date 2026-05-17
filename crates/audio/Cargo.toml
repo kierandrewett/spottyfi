@@ -30,3 +30,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 arc-swap = { workspace = true }
 rand = { workspace = true }
+
+# FFT for the WS7 spectrum-analyser visualiser. The analyser task computes the
+# magnitude spectrum off the UI thread; see `crate::spectrum`.
+rustfft = { workspace = true }
