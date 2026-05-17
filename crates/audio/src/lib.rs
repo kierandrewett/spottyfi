@@ -16,7 +16,10 @@
 //!
 //! The output backend is selected at compile time by a Cargo feature; the
 //! default is librespot's `rodio` backend (`rodio-backend`), which goes
-//! through ALSA on Linux.
+//! through ALSA on Linux. Spottyfi wraps that stock sink in its own
+//! [`TappedSink`](crate::sink::TappedSink), which applies the 10-band
+//! [`Equalizer`](crate::dsp::Equalizer) DSP and feeds the post-EQ PCM into the
+//! [`AudioTap`] the UI reads for waveform/visualisations.
 //!
 //! [`Session`]: librespot::core::session::Session
 //! [`Player`]: librespot::playback::player::Player
@@ -27,13 +30,18 @@
 
 mod config;
 mod controller;
+mod dsp;
 mod engine;
 mod error;
 mod queue;
+mod sink;
 mod state;
+mod tap;
 
 pub use crate::config::{EngineConfig, StreamQuality};
 pub use crate::controller::{PlaybackController, SharedPlaybackState, SharedQueueState};
+pub use crate::dsp::BAND_COUNT as EQ_BAND_COUNT;
 pub use crate::error::{AudioError, AudioResult};
 pub use crate::queue::{Queue, QueueState, QueueTrack, RepeatMode};
 pub use crate::state::{normalise_uri, parse_playable, PlaybackState, TrackInfo};
+pub use crate::tap::{AudioTap, TapSnapshot, WaveformPoint, SPECTRUM_LEN, WAVEFORM_LEN};

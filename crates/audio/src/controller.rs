@@ -98,6 +98,16 @@ impl PlaybackController {
         Arc::clone(&self.queue_state)
     }
 
+    /// The post-EQ sample tap the UI reads for waveform / visualisations.
+    ///
+    /// This is the WS7b contract: obtain the handle once after
+    /// [`Self::start`], then call [`crate::AudioTap::snapshot`] once per UI
+    /// frame. See the [`tap`](crate::tap) module docs for the snapshot shape.
+    #[must_use]
+    pub fn audio_tap(&self) -> crate::AudioTap {
+        self.engine.tap()
+    }
+
     /// The current playback-state snapshot.
     #[must_use]
     pub fn snapshot(&self) -> Arc<PlaybackState> {
@@ -345,6 +355,31 @@ impl PlaybackController {
     #[tracing::instrument(skip(self))]
     pub async fn set_volume(&self, volume: f32) -> AudioResult<()> {
         self.engine.set_volume(volume);
+        Ok(())
+    }
+
+    /// Update the 10-band graphic equaliser.
+    ///
+    /// `enabled` toggles the whole EQ — when `false` the DSP is a true bypass
+    /// with zero per-sample cost. `band_gains_db` carries the ten ISO-band
+    /// gains in decibels, low-to-high. The change is published into a shared
+    /// slot and the active audio sink picks it up on its next decoded packet
+    /// (single-digit milliseconds), with no click — the filter state carries
+    /// across the coefficient update.
+    ///
+    /// `app` calls this on startup and whenever the equaliser settings change,
+    /// mirroring how the audio settings already flow.
+    ///
+    /// # Errors
+    ///
+    /// Currently infallible; returns [`AudioResult`] for API symmetry.
+    #[tracing::instrument(skip(self))]
+    pub async fn set_equalizer(
+        &self,
+        enabled: bool,
+        band_gains_db: [f32; crate::EQ_BAND_COUNT],
+    ) -> AudioResult<()> {
+        self.engine.set_equalizer(enabled, band_gains_db);
         Ok(())
     }
 

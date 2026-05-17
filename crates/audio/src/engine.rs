@@ -21,14 +21,16 @@ use librespot::core::config::SessionConfig;
 use librespot::core::session::Session;
 use librespot::metadata::audio::{AudioItem, UniqueFields};
 use librespot::playback::audio_backend;
-use librespot::playback::config::{AudioFormat, Bitrate, PlayerConfig, VolumeCtrl};
+use librespot::playback::config::{Bitrate, PlayerConfig, VolumeCtrl};
 use librespot::playback::mixer::softmixer::SoftMixer;
 use librespot::playback::mixer::{Mixer, MixerConfig};
 use librespot::playback::player::{Player, PlayerEvent};
 
 use crate::config::EngineConfig;
 use crate::error::{AudioError, AudioResult};
+use crate::sink::{EqParams, SharedEqParams, TappedSink};
 use crate::state::{PlaybackState, TrackInfo};
+use crate::tap::AudioTap;
 
 /// How often the position poller refreshes the published snapshot.
 ///
@@ -118,6 +120,12 @@ pub(crate) struct Engine {
     /// Each fade captures the value, then aborts as soon as it no longer
     /// matches — so a quick pause/resume tap can't leave a stale ramp running.
     fade_generation: Arc<AtomicU64>,
+    /// Live equaliser parameters, shared with every [`TappedSink`] the player
+    /// builds. The controller swaps fresh params in; the sink picks them up on
+    /// its next decoded packet.
+    eq_params: SharedEqParams,
+    /// The post-EQ sample tap the UI reads for waveform/visualisations (WS7b).
+    tap: AudioTap,
 }
 
 impl Engine {
@@ -169,11 +177,19 @@ impl Engine {
             .map(|m| Arc::new(m) as Arc<dyn Mixer>)
             .map_err(|err| AudioError::Connect(err.to_string()))?;
 
+        // The stock backend builder (the `rodio` sink), wrapped per-stream by
+        // Spottyfi's `TappedSink` so the EQ DSP and the UI sample tap sit
+        // between librespot and the real output.
         let backend = audio_backend::find(None).ok_or(AudioError::NoBackend)?;
-        let audio_format = AudioFormat::default();
+        let audio_format = crate::sink::DECODE_FORMAT;
         let soft_volume = mixer.get_soft_volume();
+        let eq_params: SharedEqParams = Arc::new(ArcSwap::from_pointee(EqParams::default()));
+        let tap = AudioTap::new();
+        let sink_params = Arc::clone(&eq_params);
+        let sink_tap = tap.clone();
         let player = Player::new(player_config, session, soft_volume, move || {
-            backend(None, audio_format)
+            let inner = backend(None, audio_format);
+            Box::new(TappedSink::new(inner, Arc::clone(&sink_params), &sink_tap))
         });
 
         // Publish the mixer's starting volume so the UI's slider is correct.
@@ -192,6 +208,8 @@ impl Engine {
             state,
             target_volume: Arc::new(AtomicU32::new(initial_volume.to_bits())),
             fade_generation: Arc::new(AtomicU64::new(0)),
+            eq_params,
+            tap,
         };
         engine.spawn_event_loop();
         Ok(engine)
@@ -200,6 +218,27 @@ impl Engine {
     /// The librespot player handle.
     pub(crate) fn player(&self) -> Arc<Player> {
         Arc::clone(&self.player)
+    }
+
+    /// The post-EQ sample tap the UI reads for waveform/visualisations (WS7b).
+    pub(crate) fn tap(&self) -> AudioTap {
+        self.tap.clone()
+    }
+
+    /// Update the equaliser configuration.
+    ///
+    /// Publishes fresh [`EqParams`] into the shared slot; the active
+    /// [`TappedSink`] picks them up on its next decoded packet (single-digit
+    /// milliseconds). When `enabled` is `false` the EQ is a true bypass.
+    pub(crate) fn set_equalizer(
+        &self,
+        enabled: bool,
+        band_gains_db: [f32; crate::dsp::BAND_COUNT],
+    ) {
+        self.eq_params.store(Arc::new(EqParams {
+            enabled,
+            band_gains_db,
+        }));
     }
 
     /// Set the output volume from a `0.0..=1.0` fraction.
