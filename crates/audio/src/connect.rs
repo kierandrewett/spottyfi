@@ -36,6 +36,7 @@
 //! [`Player`]: librespot::playback::player::Player
 //! [`PlayerEvent`]: librespot::playback::player::PlayerEvent
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use librespot::connect::{ConnectConfig, LoadRequest, LoadRequestOptions, Spirc};
@@ -62,6 +63,13 @@ pub(crate) struct ConnectDevice {
     /// Spotify's dealer, so calls made immediately after construction are not
     /// lost.
     spirc: Arc<Spirc>,
+    /// Whether Spottyfi has become the *active* Connect device yet.
+    ///
+    /// The device registers at startup so it is visible in other devices'
+    /// pickers, but it does **not** seize playback until the user actually
+    /// plays something — the first [`load_track`] activates it. Shared with
+    /// every [`ConnectLoader`] so the auto-advance task sees the same flag.
+    activated: Arc<AtomicBool>,
 }
 
 /// A cheap, cloneable handle that loads tracks through the Connect device.
@@ -72,6 +80,8 @@ pub(crate) struct ConnectDevice {
 pub(crate) struct ConnectLoader {
     /// Shared `Spirc` handle; see [`ConnectDevice::spirc`].
     spirc: Arc<Spirc>,
+    /// Shared activation flag; see [`ConnectDevice::activated`].
+    activated: Arc<AtomicBool>,
 }
 
 impl ConnectLoader {
@@ -84,14 +94,29 @@ impl ConnectLoader {
     ///
     /// Returns [`AudioError::Connect`] if the Connect device has shut down.
     pub(crate) fn load_track(&self, uri: &str, position_ms: u32) -> AudioResult<()> {
-        load_track(&self.spirc, uri, position_ms)
+        load_track(&self.spirc, &self.activated, uri, position_ms)
     }
 }
 
 /// Issue a one-track [`LoadRequest`] to `spirc`.
 ///
-/// Shared by [`ConnectDevice::load_track`] and [`ConnectLoader::load_track`].
-fn load_track(spirc: &Spirc, uri: &str, position_ms: u32) -> AudioResult<()> {
+/// On the very first call this also makes Spottyfi the *active* Connect
+/// device: activation is deferred from startup to the first actual play, so
+/// launching Spottyfi never yanks playback off whatever device is already
+/// playing. Shared by [`ConnectDevice::load_track`] and
+/// [`ConnectLoader::load_track`].
+fn load_track(
+    spirc: &Spirc,
+    activated: &AtomicBool,
+    uri: &str,
+    position_ms: u32,
+) -> AudioResult<()> {
+    if !activated.swap(true, Ordering::SeqCst) {
+        tracing::info!("activating spottyfi as the active connect device on first play");
+        spirc
+            .activate()
+            .map_err(|err| AudioError::Connect(err.to_string()))?;
+    }
     let options = LoadRequestOptions {
         start_playing: true,
         seek_to: position_ms,
@@ -155,19 +180,18 @@ impl ConnectDevice {
             tracing::debug!("spirc task ended; connect device deregistered");
         });
 
-        // Become the active Connect device immediately so subsequent
-        // `load_track` calls are accepted (a `Load` is ignored by `Spirc`
-        // while the device is not active). `activate` is buffered until the
-        // device has registered, so this is safe to call right away.
-        spirc
-            .activate()
-            .map_err(|err| AudioError::Connect(err.to_string()))?;
-
+        // Deliberately *not* activated here: the device registers so it is
+        // visible to the account, but stays inactive so launching Spottyfi
+        // does not seize playback from another device. The first `load_track`
+        // activates it (a `Load` is ignored by `Spirc` while inactive).
         tracing::info!(
             device = DEVICE_NAME,
-            "registered as a spotify connect device"
+            "registered as a spotify connect device (inactive until first play)"
         );
-        Ok(Self { spirc })
+        Ok(Self {
+            spirc,
+            activated: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     /// Load a single track or episode by canonical Spotify URI through `Spirc`.
@@ -185,13 +209,14 @@ impl ConnectDevice {
     /// Returns [`AudioError::Connect`] if the command channel to the `Spirc`
     /// task is closed (the device has shut down).
     pub(crate) fn load_track(&self, uri: &str, position_ms: u32) -> AudioResult<()> {
-        load_track(&self.spirc, uri, position_ms)
+        load_track(&self.spirc, &self.activated, uri, position_ms)
     }
 
     /// A cheap cloneable handle for loading tracks from a background task.
     pub(crate) fn loader(&self) -> ConnectLoader {
         ConnectLoader {
             spirc: Arc::clone(&self.spirc),
+            activated: Arc::clone(&self.activated),
         }
     }
 
