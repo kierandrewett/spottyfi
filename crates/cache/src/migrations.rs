@@ -22,10 +22,16 @@ struct Migration {
 ///
 /// Append new migrations here with the next version number; never edit or
 /// reorder an already-shipped entry.
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("../migrations/0001_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("../migrations/0001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("../migrations/0002_playlist_tracks.sql"),
+    },
+];
 
 /// Read the schema version stored in the database (`0` for a fresh DB).
 fn current_version(conn: &Connection) -> CacheResult<i64> {
@@ -94,7 +100,13 @@ mod tests {
         assert_eq!(current_version(&conn).expect("read version"), latest);
 
         // The expected tables now exist.
-        for table in ["tracks", "albums", "artists", "playlists"] {
+        for table in [
+            "tracks",
+            "albums",
+            "artists",
+            "playlists",
+            "playlist_tracks",
+        ] {
             let count: i64 = conn
                 .query_row(
                     "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",

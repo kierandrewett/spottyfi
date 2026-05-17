@@ -34,6 +34,9 @@ pub enum Kind {
     Artist,
     /// A full [`Playlist`](spottyfi_models::Playlist).
     Playlist,
+    /// A playlist's fully-resolved track listing — a JSON array of
+    /// [`PlaylistTrack`](spottyfi_models::PlaylistTrack), keyed by playlist id.
+    PlaylistTracks,
 }
 
 impl Kind {
@@ -47,6 +50,7 @@ impl Kind {
             Kind::Album => "albums",
             Kind::Artist => "artists",
             Kind::Playlist => "playlists",
+            Kind::PlaylistTracks => "playlist_tracks",
         }
     }
 }
@@ -186,7 +190,13 @@ impl MetadataCache {
     /// Returns an error if any `DELETE` fails.
     pub fn clear(&self) -> CacheResult<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        for kind in [Kind::Track, Kind::Album, Kind::Artist, Kind::Playlist] {
+        for kind in [
+            Kind::Track,
+            Kind::Album,
+            Kind::Artist,
+            Kind::Playlist,
+            Kind::PlaylistTracks,
+        ] {
             conn.execute(&format!("DELETE FROM {}", kind.table()), [])?;
         }
         Ok(())
@@ -244,6 +254,27 @@ mod tests {
         let t: Option<Cached<String>> = cache.get(Kind::Track, "t").expect("get");
         let a: Option<Cached<String>> = cache.get(Kind::Album, "a").expect("get");
         assert!(t.is_none() && a.is_none());
+    }
+
+    #[test]
+    fn playlist_tracks_kind_round_trips_a_list() {
+        // The playlist-content cache stores a JSON array keyed by playlist id.
+        let cache = MetadataCache::open_in_memory().expect("open");
+        let listing = vec!["t1".to_owned(), "t2".to_owned(), "t3".to_owned()];
+        cache
+            .put(Kind::PlaylistTracks, "pl1", &listing)
+            .expect("put");
+        let hit: Cached<Vec<String>> = cache
+            .get(Kind::PlaylistTracks, "pl1")
+            .expect("get")
+            .expect("hit");
+        assert_eq!(hit.value, listing);
+        assert_eq!(hit.staleness, Staleness::Fresh);
+        // `clear` empties the playlist-content table too.
+        cache.clear().expect("clear");
+        let miss: Option<Cached<Vec<String>>> =
+            cache.get(Kind::PlaylistTracks, "pl1").expect("get");
+        assert!(miss.is_none());
     }
 
     #[test]

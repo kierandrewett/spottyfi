@@ -1,37 +1,39 @@
 //! The playlist page: a playlist header over a sortable track table.
 //!
-//! The track list streams in **incrementally** — the playlist header and its
-//! first page of tracks render the instant they arrive, and the rest of the
-//! tracks stream in underneath without ever blocking the UI thread.
+//! The playlist metadata and its track list both load through the `api`
+//! crate's stale-while-revalidate cache: a revisited playlist renders instantly
+//! from the SQLite metadata cache, then a background refresh updates it. The
+//! track list is fetched as one cached `Vec` rather than streamed — the cache
+//! makes the common (revisit) path instant, which a stream cannot.
 
 use std::sync::Arc;
 
-use futures::StreamExt as _;
 use spottyfi_api::ApiError;
 use spottyfi_models::{Playlist, PlaylistTrack, SpotifyId as _};
 use spottyfi_ui::components;
 use spottyfi_ui::track_table::{self, TrackColumns, TrackRow, TrackTableState};
 
-use super::incremental::IncrementalLoad;
 use super::track_view::{self, Entry, PlayContext};
 use super::{load_error, loading_spinner, Loadable, Page, PageAction, PageContext, PageServices};
 
 /// The playlist metadata load: name, description, art, owner.
 type LoadedMeta = Result<Playlist, ApiError>;
 
+/// The playlist track-list load: every resolved track, served from cache.
+type LoadedTracks = Result<Vec<Entry>, ApiError>;
+
 /// A playlist tab: header card plus a sortable track table.
 pub struct PlaylistPage {
-    /// The async load of the playlist metadata (one fetch).
+    /// The async load of the playlist metadata.
     meta: Loadable<LoadedMeta>,
-    /// The incremental stream of the playlist's tracks.
-    tracks: IncrementalLoad<Entry>,
+    /// The async load of the playlist's full (cached) track list.
+    tracks: Loadable<LoadedTracks>,
     /// The track table's sort state (column + direction).
     sort: TrackTableState,
-    /// The currently displayed (sorted) rows; rebuilt when the sort changes
-    /// or more tracks stream in.
+    /// The currently displayed (sorted) rows; rebuilt when the sort changes.
     sorted: Vec<Entry>,
-    /// The sort + track-count the `sorted` cache was built for, so it is
-    /// rebuilt only when the sort changes or new tracks arrive.
+    /// The sort the `sorted` cache was built for, so it is rebuilt only when
+    /// the sort changes or the track list first arrives.
     sorted_for: Option<(TrackTableState, usize)>,
 }
 
@@ -63,29 +65,32 @@ fn spawn_meta(services: &PageServices, id: String) -> Loadable<LoadedMeta> {
     )
 }
 
-/// Spawn the incremental stream of the playlist's tracks. Each track is mapped
-/// to an [`Entry`] as it arrives so the table renders it immediately.
-fn spawn_tracks(services: &PageServices, id: String) -> IncrementalLoad<Entry> {
-    let stream = services.api.playlist_tracks_stream(&id).filter_map(
-        |item: Result<PlaylistTrack, ApiError>| async move {
-            match item {
-                Ok(track) => track.track.map(|t| {
-                    Ok(Entry {
-                        track: t,
-                        added_at: track.added_at,
-                    })
-                }),
-                Err(err) => Some(Err(err)),
-            }
-        },
-    );
-    IncrementalLoad::spawn(
+/// Spawn the cached load of the playlist's complete track list.
+///
+/// `playlist_tracks_all` resolves from the SQLite metadata cache when the
+/// listing has been seen before — so a revisit is instant — and refreshes in
+/// the background when the cached copy is stale.
+fn spawn_tracks(services: &PageServices, id: String) -> Loadable<LoadedTracks> {
+    let api = Arc::clone(&services.api);
+    Loadable::spawn_tracked(
         &services.runtime,
         &services.ctx,
         &services.activity,
         "Loading playlist tracks…",
-        stream,
+        async move {
+            let tracks = api.playlist_tracks_all(&id).await?;
+            Ok(tracks.into_iter().filter_map(to_entry).collect())
+        },
     )
+}
+
+/// Project a [`PlaylistTrack`] into a table [`Entry`], dropping items with no
+/// resolved track (an unavailable track, or a non-track playlist item).
+fn to_entry(item: PlaylistTrack) -> Option<Entry> {
+    item.track.map(|track| Entry {
+        track,
+        added_at: item.added_at,
+    })
 }
 
 impl Page for PlaylistPage {
@@ -114,24 +119,20 @@ impl Page for PlaylistPage {
         let playing_uri = ctx.playback.track.as_ref().map(|t| t.uri.as_str());
         let sort = self.sort;
 
-        // Rebuild the sorted view when the sort changed or more tracks
-        // streamed in; keep it cheap by checking the streamed item count.
-        self.tracks.with(|snapshot| {
-            let key = (sort, snapshot.items.len());
-            if self.sorted_for != Some(key) {
-                self.sorted = snapshot.items.to_vec();
-                track_view::sort_entries(
-                    &mut self.sorted,
-                    snapshot.items,
-                    sort.column,
-                    sort.descending,
-                );
-                self.sorted_for = Some(key);
-            }
-        });
+        // The track list resolves separately; show its state below the header.
+        let tracks_loaded = self.tracks.value();
+        let original: &[Entry] = match tracks_loaded {
+            Some(Ok(tracks)) => tracks,
+            _ => &[],
+        };
 
-        let still_loading = !self.tracks.is_done();
-        let stream_error = self.tracks.with(|s| s.error.map(ToString::to_string));
+        // Rebuild the sorted view when the sort changed or the list arrived.
+        let key = (sort, original.len());
+        if self.sorted_for != Some(key) {
+            self.sorted = original.to_vec();
+            track_view::sort_entries(&mut self.sorted, original, sort.column, sort.descending);
+            self.sorted_for = Some(key);
+        }
 
         let context = PlayContext {
             uri: playlist.id.uri(),
@@ -155,51 +156,52 @@ impl Page for PlaylistPage {
                 }
                 ui.add_space(14.0);
 
-                let rows: Vec<TrackRow<'_>> = self
-                    .sorted
-                    .iter()
-                    .enumerate()
-                    .map(|(i, entry)| TrackRow {
-                        track: &entry.track,
-                        position: i + 1,
-                        date_added: entry.added_at.as_deref(),
-                        is_playing: is_playing(&entry.track, playing_uri),
-                    })
-                    .collect();
-
-                if let Some(table_action) = track_table::track_table(
-                    ui,
-                    &palette,
-                    self.sort,
-                    TrackColumns::full(),
-                    &rows,
-                    38.0,
-                ) {
-                    if let track_table::TrackAction::Sort(column) = &table_action {
-                        self.sort.toggle(*column);
-                    } else {
-                        action = track_view::resolve_action(table_action, &self.sorted, &context);
+                match tracks_loaded {
+                    None => {
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Spinner::new().size(13.0).color(palette.accent));
+                            ui.label(components::muted(&palette, "Loading tracks…", 11.0));
+                        });
                     }
-                }
+                    Some(Err(err)) => {
+                        ui.label(
+                            egui::RichText::new(format!("Couldn't load tracks: {err}"))
+                                .size(11.0)
+                                .color(palette.error),
+                        );
+                    }
+                    Some(Ok(_)) => {
+                        let rows: Vec<TrackRow<'_>> = self
+                            .sorted
+                            .iter()
+                            .enumerate()
+                            .map(|(i, entry)| TrackRow {
+                                track: &entry.track,
+                                position: i + 1,
+                                date_added: entry.added_at.as_deref(),
+                                is_playing: is_playing(&entry.track, playing_uri),
+                            })
+                            .collect();
 
-                // A thin "still streaming" / error footer beneath the table.
-                if still_loading {
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ui.add(egui::Spinner::new().size(13.0).color(palette.accent));
-                        ui.label(components::muted(
+                        if let Some(table_action) = track_table::track_table(
+                            ui,
                             &palette,
-                            format!("Loading more tracks… ({} so far)", self.sorted.len()),
-                            11.0,
-                        ));
-                    });
-                } else if let Some(err) = &stream_error {
-                    ui.add_space(8.0);
-                    ui.label(
-                        egui::RichText::new(format!("Some tracks failed to load: {err}"))
-                            .size(11.0)
-                            .color(palette.error),
-                    );
+                            self.sort,
+                            TrackColumns::full(),
+                            &rows,
+                            38.0,
+                        ) {
+                            if let track_table::TrackAction::Sort(column) = &table_action {
+                                self.sort.toggle(*column);
+                            } else {
+                                action = track_view::resolve_action(
+                                    table_action,
+                                    &self.sorted,
+                                    &context,
+                                );
+                            }
+                        }
+                    }
                 }
             });
         action

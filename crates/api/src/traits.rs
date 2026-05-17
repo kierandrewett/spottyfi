@@ -77,6 +77,17 @@ pub trait SpotifyApi: Send + Sync {
     /// Every track in a playlist, as a stream.
     fn playlist_tracks_stream(&self, playlist_id: &str) -> ItemStream<PlaylistTrack>;
 
+    /// A playlist's **complete** track listing, served with
+    /// stale-while-revalidate caching.
+    ///
+    /// Unlike [`Self::playlist_tracks_stream`] this resolves and caches the
+    /// whole list (every page, following Spotify's `next` links): a fresh
+    /// cache hit returns instantly with no network call, a stale hit returns
+    /// instantly and refreshes in the background, and a miss fetches the full
+    /// listing and caches it. Revisiting a playlist therefore shows its tracks
+    /// immediately instead of re-streaming them every time.
+    async fn playlist_tracks_all(&self, playlist_id: &str) -> ApiResult<Vec<PlaylistTrack>>;
+
     /// One page of the user's saved ("Liked Songs") tracks (`GET /me/tracks`).
     ///
     /// Each item is a [`SavedTrack`] carrying Spotify's `added_at`, so the

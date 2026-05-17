@@ -156,6 +156,7 @@ fn hot_key(kind: Kind, id: &str) -> String {
         Kind::Album => "album",
         Kind::Artist => "artist",
         Kind::Playlist => "playlist",
+        Kind::PlaylistTracks => "playlist-tracks",
     };
     format!("{prefix}:{id}")
 }
@@ -174,6 +175,28 @@ mod tests {
                 assert!(!stale, "a hot-cache hit is always fresh");
             }
             Lookup::Miss => panic!("expected a hit"),
+        }
+    }
+
+    #[tokio::test]
+    async fn caches_a_playlist_track_listing() {
+        // The playlist-content cache stores the whole resolved listing under
+        // `Kind::PlaylistTracks`; a revisit reads it back from the hot cache
+        // with no network round-trip.
+        let layer = MetadataLayer::in_memory_only();
+        let listing = vec!["track-a".to_owned(), "track-b".to_owned()];
+        layer
+            .put(Kind::PlaylistTracks, "playlist-1", &listing)
+            .await;
+        match layer
+            .get::<Vec<String>>(Kind::PlaylistTracks, "playlist-1")
+            .await
+        {
+            Lookup::Hit { value, stale } => {
+                assert_eq!(value, listing);
+                assert!(!stale, "a hot-cache hit is fresh — no refetch");
+            }
+            Lookup::Miss => panic!("expected a cached playlist listing"),
         }
     }
 
