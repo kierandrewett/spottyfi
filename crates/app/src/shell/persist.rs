@@ -14,7 +14,54 @@ use serde::{Deserialize, Serialize};
 use spottyfi_ui::components::Density;
 use spottyfi_ui::theme::Theme;
 
+use super::dock_model::DockExtras;
 use super::tabs::Tab;
+
+/// A predefined dock layout, selectable from the View menu.
+///
+/// Switching a layout rebuilds the dock tree (and, for [`Layout::PowerUser`],
+/// nudges the density). [`Layout::custom`] is the implicit state after the
+/// user drags a panel — no named layout is "selected" any more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Layout {
+    /// The first-launch layout: a centre Home tab with a right-hand column of
+    /// Now Playing Art over Queue.
+    #[default]
+    Default,
+    /// Compact, table-dense: the Queue (and Lyrics, once Phase 11 ships it)
+    /// docked in a right column, density nudged to compact.
+    PowerUser,
+    /// A single centre tab, no right-hand panel column.
+    Minimal,
+}
+
+impl Layout {
+    /// Every selectable layout, in menu order.
+    #[must_use]
+    pub fn all() -> [Layout; 3] {
+        [Layout::Default, Layout::PowerUser, Layout::Minimal]
+    }
+
+    /// The human-readable menu label.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Layout::Default => "Default",
+            Layout::PowerUser => "Power user",
+            Layout::Minimal => "Minimal",
+        }
+    }
+
+    /// Build this layout's dock tree.
+    #[must_use]
+    pub fn build_dock(self) -> egui_dock::DockState<Tab> {
+        match self {
+            Layout::Default => default_dock(),
+            Layout::PowerUser => power_user_dock(),
+            Layout::Minimal => minimal_dock(),
+        }
+    }
+}
 
 /// The full persisted shell state: the dock layout plus user settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +80,14 @@ pub struct PersistedShell {
     /// `playlists`). A key present here is collapsed; absent means expanded.
     #[serde(default)]
     pub collapsed_sections: Vec<String>,
+    /// The app-layer dock state — tab pinning, per-tab history, the
+    /// closed-tab stack. `#[serde(default)]` so a pre-Phase-10 file loads.
+    #[serde(default)]
+    pub dock_extras: DockExtras,
+    /// The currently-applied predefined layout (Phase 10). `#[serde(default)]`
+    /// so a pre-Phase-10 file loads as [`Layout::Default`].
+    #[serde(default)]
+    pub layout: Layout,
 }
 
 impl Default for PersistedShell {
@@ -44,6 +99,8 @@ impl Default for PersistedShell {
             sidebar_collapsed: false,
             sidebar_width: 240.0,
             collapsed_sections: Vec::new(),
+            dock_extras: DockExtras::default(),
+            layout: Layout::default(),
         }
     }
 }
@@ -126,4 +183,33 @@ pub fn default_dock() -> egui_dock::DockState<Tab> {
     dock[surface].split_below(right, 0.55, vec![Tab::Queue]);
 
     dock
+}
+
+/// Build the **Power user** layout: a centre Home tab with the Queue docked in
+/// a slim right column.
+///
+/// The Lyrics panel lands in Phase 11; this layout is forward-compatible —
+/// once a `Tab::Lyrics` variant exists it can be stacked above the Queue here.
+/// Until then the layout degrades gracefully to Queue-only, exactly as
+/// specified. Switching to this layout also nudges the density to compact (see
+/// [`Layout::PowerUser`] handling in the View menu).
+#[must_use]
+pub fn power_user_dock() -> egui_dock::DockState<Tab> {
+    use egui_dock::{NodeIndex, SurfaceIndex};
+
+    let mut dock = egui_dock::DockState::new(vec![Tab::Home]);
+    let surface = SurfaceIndex::main();
+
+    // A slim right column for the Queue panel — narrower than Default's, so
+    // the dense centre tables get more width.
+    dock[surface].split_right(NodeIndex::root(), 0.8, vec![Tab::Queue]);
+
+    dock
+}
+
+/// Build the **Minimal** layout: a single centre Home tab, no right-hand panel
+/// column at all.
+#[must_use]
+pub fn minimal_dock() -> egui_dock::DockState<Tab> {
+    egui_dock::DockState::new(vec![Tab::Home])
 }

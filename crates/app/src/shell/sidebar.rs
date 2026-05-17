@@ -14,6 +14,7 @@ use spottyfi_models::{SimplifiedPlaylist, SpotifyId as _};
 use spottyfi_ui::icons::Icon;
 use spottyfi_ui::theme::Palette;
 
+use super::tabs::NavRequest;
 use super::{ShellState, Tab};
 
 /// One static navigation entry: an icon, a label and the tab it opens.
@@ -114,7 +115,7 @@ pub(super) fn sidebar(
     ui: &mut egui::Ui,
     state: &mut ShellState,
     palette: &Palette,
-    nav: &mut Vec<Tab>,
+    nav: &mut Vec<NavRequest>,
 ) {
     let collapsed = state.persisted.sidebar_collapsed;
     let width = if collapsed {
@@ -145,8 +146,9 @@ pub(super) fn sidebar(
                 // MAIN.
                 if section_header(ui, state, palette, "MAIN", "main", collapsed, false) {
                     for entry in main_entries() {
-                        if row(ui, palette, entry.icon, entry.label, collapsed) {
-                            nav.push(entry.tab);
+                        if let Some(new_tab) = row(ui, palette, entry.icon, entry.label, collapsed)
+                        {
+                            nav.push(nav_request(entry.tab, new_tab));
                         }
                     }
                 }
@@ -163,8 +165,9 @@ pub(super) fn sidebar(
                     false,
                 ) {
                     for entry in library_entries() {
-                        if row(ui, palette, entry.icon, entry.label, collapsed) {
-                            nav.push(entry.tab);
+                        if let Some(new_tab) = row(ui, palette, entry.icon, entry.label, collapsed)
+                        {
+                            nav.push(nav_request(entry.tab, new_tab));
                         }
                     }
                 }
@@ -294,7 +297,7 @@ fn playlists(
     state: &mut ShellState,
     palette: &Palette,
     collapsed: bool,
-    nav: &mut Vec<Tab>,
+    nav: &mut Vec<NavRequest>,
 ) {
     let Some(session) = state.session.as_ref() else {
         ui.add(egui::Spinner::new().size(14.0).color(palette.accent));
@@ -303,8 +306,11 @@ fn playlists(
 
     session.sidebar_playlists.with(|snapshot| {
         for playlist in snapshot.items {
-            if playlist_row(ui, palette, playlist, collapsed) {
-                nav.push(Tab::Playlist(playlist.id.id().to_owned()));
+            if let Some(new_tab) = playlist_row(ui, palette, playlist, collapsed) {
+                nav.push(nav_request(
+                    Tab::Playlist(playlist.id.id().to_owned()),
+                    new_tab,
+                ));
             }
         }
 
@@ -340,18 +346,41 @@ fn playlists(
 }
 
 /// One playlist row: a music-note icon and the playlist name.
+///
+/// Returns the same `Some(new_tab)` click signal as [`row`].
 fn playlist_row(
     ui: &mut egui::Ui,
     palette: &Palette,
     playlist: &SimplifiedPlaylist,
     collapsed: bool,
-) -> bool {
+) -> Option<bool> {
     row(ui, palette, Icon::Queue, &playlist.name, collapsed)
 }
 
+/// Build a [`NavRequest`] for a sidebar click — a plain click replaces the
+/// focused tab, a Ctrl/Cmd-held click opens a new tab.
+fn nav_request(tab: Tab, new_tab: bool) -> NavRequest {
+    if new_tab {
+        NavRequest::new_tab(tab)
+    } else {
+        NavRequest::replace(tab)
+    }
+}
+
 /// Draw one tight sidebar row — a leading line icon and a label — with a flat
-/// full-width hover highlight. Returns `true` when clicked.
-fn row(ui: &mut egui::Ui, palette: &Palette, icon: Icon, label: &str, collapsed: bool) -> bool {
+/// full-width hover highlight.
+///
+/// Returns `Some(new_tab)` when the row was clicked: `new_tab` is `true` for a
+/// Ctrl/Cmd-held click (open a new tab) and `false` for a plain click (replace
+/// the focused tab) — the `docs/docking.md` navigation rule. Returns `None`
+/// when the row was not clicked.
+fn row(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    icon: Icon,
+    label: &str,
+    collapsed: bool,
+) -> Option<bool> {
     let height = 26.0;
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
@@ -383,9 +412,12 @@ fn row(ui: &mut egui::Ui, palette: &Palette, icon: Icon, label: &str, collapsed:
     }
 
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    if collapsed {
-        response.on_hover_text(label).clicked()
+    let response = if collapsed {
+        response.on_hover_text(label)
     } else {
-        response.clicked()
-    }
+        response
+    };
+    response
+        .clicked()
+        .then(|| ui.input(|i| i.modifiers.command || i.modifiers.ctrl))
 }

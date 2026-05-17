@@ -6,6 +6,8 @@
 //! what the user asked for; `app` applies it. The bottom transport is rendered
 //! separately by [`crate::transport`].
 
+mod dock_model;
+mod nav;
 mod persist;
 mod sidebar;
 mod tabs;
@@ -19,14 +21,14 @@ use spottyfi_ui::components::Density;
 use spottyfi_ui::theme::{Palette, Theme};
 use tokio::runtime::Handle;
 
-pub use persist::{default_dock, PersistedShell};
-pub use tabs::{DockIntent, Tab};
+pub use persist::{Layout, PersistedShell};
+pub use tabs::{DockIntent, Tab, TabCommand};
 
 use crate::page::{IncrementalLoad, PageRegistry, PageServices};
 use crate::playback_controller::EngineStatus;
 use crate::transport::{TransportIntent, TransportUiState};
 use spottyfi_audio::{PlaybackState, QueueState};
-use tabs::{ShellTabViewer, TabContext};
+use tabs::{NavRequest, ShellTabViewer, TabContext};
 
 /// Something the user asked the shell to do this frame.
 #[derive(Debug, Clone, PartialEq)]
@@ -151,13 +153,103 @@ impl ShellState {
     }
 }
 
-/// Open `tab` in the dock: focus it if already open, else add it to the
-/// focused leaf.
-fn open_tab(dock: &mut egui_dock::DockState<Tab>, tab: Tab) {
-    if let Some(path) = dock.find_tab(&tab) {
-        let _ = dock.set_active_tab(path);
+/// Apply one [`NavRequest`] to the persisted dock.
+///
+/// A plain request replaces the focused tab (recording history); a
+/// Ctrl/Cmd-held request opens a new tab. See [`nav`].
+fn apply_nav(persisted: &mut PersistedShell, request: NavRequest) {
+    if request.new_tab {
+        nav::open_new_tab(&mut persisted.dock, request.tab);
     } else {
-        dock.push_to_focused_leaf(tab);
+        nav::navigate_replace(&mut persisted.dock, &mut persisted.dock_extras, request.tab);
+    }
+}
+
+/// Apply one [`TabCommand`] to the persisted dock — the right-click menu's
+/// close family, duplicate and pin toggle.
+fn apply_tab_command(persisted: &mut PersistedShell, command: TabCommand) {
+    let PersistedShell {
+        dock, dock_extras, ..
+    } = persisted;
+    match command {
+        TabCommand::Close(tab) => nav::close_tab(dock, dock_extras, &tab),
+        TabCommand::CloseOthers(tab) => nav::close_others(dock, dock_extras, &tab),
+        TabCommand::CloseToRight(tab) => nav::close_to_right(dock, dock_extras, &tab),
+        TabCommand::Duplicate(tab) => nav::duplicate_tab(dock, &tab),
+        TabCommand::TogglePin(tab) => dock_extras.toggle_pin(&tab),
+    }
+}
+
+/// Apply a predefined [`Layout`] to the persisted shell.
+///
+/// Rebuilds the dock tree and records the selection. The **Power user** layout
+/// also nudges the density to compact, matching its dense-tables intent; the
+/// other layouts leave density alone.
+fn apply_layout(persisted: &mut PersistedShell, layout: Layout) {
+    persisted.dock = layout.build_dock();
+    persisted.layout = layout;
+    // Pin / history bookkeeping for tabs the new tree no longer holds is stale
+    // — drop it. The closed-tab stack is preserved (it outlives tabs).
+    let open: Vec<Tab> = persisted
+        .dock
+        .iter_all_tabs()
+        .map(|(_, tab)| tab.clone())
+        .collect();
+    persisted.dock_extras.retain_open(open.iter());
+    if layout == Layout::PowerUser {
+        persisted.density = Density::Compact;
+    }
+}
+
+/// A menu-bar navigation icon button that reflects availability: when
+/// `enabled` is false it renders muted and does not report clicks.
+fn nav_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    icon: spottyfi_ui::Icon,
+    enabled: bool,
+    tooltip: &str,
+) -> bool {
+    if enabled {
+        spottyfi_ui::icons::icon_button(ui, palette, icon, 13.0, false, tooltip).clicked()
+    } else {
+        // Disabled — draw the glyph dimmed, allocate the same space, ignore
+        // any interaction so it reads as unavailable.
+        let pad = egui::vec2(6.0, 6.0);
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(13.0, 13.0) + pad * 2.0, egui::Sense::hover());
+        let glyph_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(13.0, 13.0));
+        icon.image(13.0, palette.outline).paint_at(ui, glyph_rect);
+        false
+    }
+}
+
+/// Apply the `Cmd/Ctrl+W` / `+T` / `+Shift+T` keyboard shortcuts.
+///
+/// Returns any [`NavRequest`] raised (a new Home tab), already handled close
+/// and reopen mutate the dock directly.
+fn apply_shortcuts(ui: &egui::Ui, persisted: &mut PersistedShell) {
+    let (close, new_tab, reopen) = ui.input(|i| {
+        let cmd = i.modifiers.command || i.modifiers.ctrl;
+        (
+            cmd && i.key_pressed(egui::Key::W),
+            cmd && !i.modifiers.shift && i.key_pressed(egui::Key::T),
+            cmd && i.modifiers.shift && i.key_pressed(egui::Key::T),
+        )
+    });
+    if close {
+        if let Some(tab) = nav::focused_tab(&persisted.dock) {
+            let PersistedShell {
+                dock, dock_extras, ..
+            } = persisted;
+            nav::close_tab(dock, dock_extras, &tab);
+        }
+    }
+    if new_tab {
+        nav::open_new_tab(&mut persisted.dock, Tab::Home);
+    }
+    if reopen {
+        nav::reopen_last_closed(&mut persisted.dock, &mut persisted.dock_extras);
     }
 }
 
@@ -180,8 +272,13 @@ pub fn shell(
     let mut intent = None;
     // Navigation requests collected this frame, applied to the dock after the
     // panels have been drawn (the dock and sidebar both borrow `state`).
-    let mut nav: Vec<Tab> = Vec::new();
+    let mut nav: Vec<NavRequest> = Vec::new();
+    // Tab-management commands raised from the dock's tab bar this frame.
+    let mut tab_commands: Vec<TabCommand> = Vec::new();
     let mut copy_to_clipboard: Option<String> = None;
+
+    // `Cmd/Ctrl+W` / `+T` / `+Shift+T` — close, new Home tab, reopen closed.
+    apply_shortcuts(ui, &mut state.persisted);
 
     // Menu bar — fixed height, drawn first so panels below dock under it.
     if let Some(i) = menu_bar(ui, state, &palette, profile, avatar, playback, &mut nav) {
@@ -192,7 +289,7 @@ pub fn shell(
     let open_search =
         ui.input(|i| i.key_pressed(egui::Key::K) && (i.modifiers.command || i.modifiers.ctrl));
     if open_search {
-        nav.push(Tab::Search);
+        nav.push(NavRequest::replace(Tab::Search));
     }
 
     // Left sidebar — resizable, collapsible, real playlists.
@@ -205,15 +302,22 @@ pub fn shell(
             for dock_intent in dock(ui, state, &palette, playback, queue, transport_ui, engine) {
                 match dock_intent {
                     DockIntent::Transport(t) => intent = Some(ShellIntent::Transport(t)),
-                    DockIntent::Open(tab) => nav.push(tab),
+                    DockIntent::Open(tab) => nav.push(NavRequest::replace(tab)),
+                    DockIntent::OpenInNewTab(tab) => nav.push(NavRequest::new_tab(tab)),
                     DockIntent::CopyToClipboard(text) => copy_to_clipboard = Some(text),
+                    DockIntent::Tab(command) => tab_commands.push(command),
                 }
             }
         });
 
-    // Apply navigation requests gathered from the sidebar, top bar and pages.
-    for tab in nav {
-        open_tab(&mut state.persisted.dock, tab);
+    // Apply tab-management commands before navigation so a "Close others"
+    // followed by a navigation behaves predictably.
+    for command in tab_commands {
+        apply_tab_command(&mut state.persisted, command);
+    }
+    // Apply navigation requests gathered from the sidebar, menu bar and pages.
+    for request in nav {
+        apply_nav(&mut state.persisted, request);
     }
     if let Some(text) = copy_to_clipboard {
         ui.ctx().copy_text(text);
@@ -236,7 +340,7 @@ fn menu_bar(
     profile: &UserProfile,
     avatar: Option<&egui::TextureHandle>,
     playback: &PlaybackState,
-    nav: &mut Vec<Tab>,
+    nav: &mut Vec<NavRequest>,
 ) -> Option<ShellIntent> {
     let mut intent = None;
     // A cheap `Arc` clone so the right-side activity indicator can read the
@@ -291,8 +395,18 @@ fn menu_bar(
 
                 ui.menu_button("View", |ui| {
                     ui.set_min_width(200.0);
+                    ui.menu_button("Layout", |ui| {
+                        ui.set_min_width(160.0);
+                        for layout in Layout::all() {
+                            let selected = state.persisted.layout == layout;
+                            if ui.radio(selected, layout.label()).clicked() {
+                                apply_layout(&mut state.persisted, layout);
+                                ui.close();
+                            }
+                        }
+                    });
                     if ui.button("Reset layout to default").clicked() {
-                        state.persisted.dock = default_dock();
+                        apply_layout(&mut state.persisted, Layout::Default);
                         ui.close();
                     }
                     if ui
@@ -368,9 +482,22 @@ fn menu_bar(
                 });
 
                 ui.menu_button("Tools", |ui| {
-                    ui.set_min_width(160.0);
+                    ui.set_min_width(180.0);
                     if ui.button("Search").clicked() {
-                        nav.push(Tab::Search);
+                        nav.push(NavRequest::replace(Tab::Search));
+                        ui.close();
+                    }
+                    // Reopen the most recently closed tab — the menu twin of
+                    // `Cmd/Ctrl+Shift+T`, disabled when nothing was closed.
+                    let can_reopen = state.persisted.dock_extras.can_reopen_closed();
+                    if ui
+                        .add_enabled(can_reopen, egui::Button::new("Reopen closed tab"))
+                        .clicked()
+                    {
+                        nav::reopen_last_closed(
+                            &mut state.persisted.dock,
+                            &mut state.persisted.dock_extras,
+                        );
                         ui.close();
                     }
                     if ui.button("Open Debug panel").clicked() {
@@ -393,8 +520,11 @@ fn menu_bar(
                     let _ = ui.add_enabled(false, egui::Button::new("Keyboard shortcuts"));
                 });
 
-                // The right side of the menu bar: the Home shortcut, then the
-                // VSCode-style background-activity indicator.
+                // The right side of the menu bar: the back / forward / Home
+                // navigation shortcuts, then the VSCode-style
+                // background-activity indicator. Widgets are added
+                // rightmost-first in a `right_to_left` layout, so the visual
+                // order reads back, forward, Home.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if spottyfi_ui::icons::icon_button(
                         ui,
@@ -406,8 +536,34 @@ fn menu_bar(
                     )
                     .clicked()
                     {
-                        nav.push(Tab::Home);
+                        nav.push(NavRequest::replace(Tab::Home));
                     }
+
+                    // Forward then Back — both reflect availability for the
+                    // focused tab and are disabled when its history is empty.
+                    let can_forward =
+                        nav::can_go_forward(&state.persisted.dock, &state.persisted.dock_extras);
+                    let can_back =
+                        nav::can_go_back(&state.persisted.dock, &state.persisted.dock_extras);
+                    let forward = nav_button(
+                        ui,
+                        palette,
+                        spottyfi_ui::Icon::ArrowRight,
+                        can_forward,
+                        "Forward",
+                    );
+                    if forward {
+                        nav::go_forward(
+                            &mut state.persisted.dock,
+                            &mut state.persisted.dock_extras,
+                        );
+                    }
+                    let back =
+                        nav_button(ui, palette, spottyfi_ui::Icon::ArrowLeft, can_back, "Back");
+                    if back {
+                        nav::go_back(&mut state.persisted.dock, &mut state.persisted.dock_extras);
+                    }
+
                     activity_indicator(ui, palette, &activity);
                 });
             });
@@ -480,7 +636,12 @@ fn dock(
     transport_ui: &mut TransportUiState,
     engine: &EngineStatus,
 ) -> Vec<DockIntent> {
-    let Some(session) = state.session.as_mut() else {
+    // Borrow the session and the persisted state as disjoint fields so the
+    // page registry, the dock tree and the dock extras can be used together.
+    let ShellState {
+        persisted, session, ..
+    } = state;
+    let Some(session) = session.as_mut() else {
         // No API attached yet (the post-login frame before `attach_api`).
         ui.centered_and_justified(|ui| {
             ui.add(egui::Spinner::new().size(28.0).color(palette.accent));
@@ -488,15 +649,17 @@ fn dock(
         return Vec::new();
     };
 
-    // Drop pages whose tabs have been closed since the last frame.
-    let open_pages: Vec<Tab> = state
-        .persisted
+    // Drop pages — and pin / history bookkeeping — for tabs closed since the
+    // last frame. The closed-tab stack is intentionally left alone.
+    let all_tabs: Vec<Tab> = persisted
         .dock
         .iter_all_tabs()
-        .filter(|(_, tab)| tab.is_page())
         .map(|(_, tab)| tab.clone())
         .collect();
-    session.pages.retain_open(open_pages.iter());
+    session
+        .pages
+        .retain_open(all_tabs.iter().filter(|t| t.is_page()));
+    persisted.dock_extras.retain_open(all_tabs.iter());
 
     let mut viewer = ShellTabViewer {
         ctx: TabContext {
@@ -506,11 +669,12 @@ fn dock(
             transport_ui,
             engine,
             pages: &mut session.pages,
+            pinned: &persisted.dock_extras.pinned,
             intents: Vec::new(),
         },
     };
 
-    egui_dock::DockArea::new(&mut state.persisted.dock)
+    egui_dock::DockArea::new(&mut persisted.dock)
         .style(dock_style(palette, ui.style()))
         .show_leaf_close_all_buttons(false)
         .show_leaf_collapse_buttons(false)
@@ -626,8 +790,23 @@ fn settings_window(ctx: &egui::Context, state: &mut ShellState, palette: &Palett
 
             ui.add_space(10.0);
             spottyfi_ui::components::section_header(ui, palette, "Layout");
+            ui.horizontal(|ui| {
+                ui.label("Preset");
+                egui::ComboBox::from_id_salt("layout-combo")
+                    .selected_text(state.persisted.layout.label())
+                    .show_ui(ui, |ui| {
+                        for layout in Layout::all() {
+                            if ui
+                                .selectable_label(state.persisted.layout == layout, layout.label())
+                                .clicked()
+                            {
+                                apply_layout(&mut state.persisted, layout);
+                            }
+                        }
+                    });
+            });
             if ui.button("Reset layout to default").clicked() {
-                state.persisted.dock = default_dock();
+                apply_layout(&mut state.persisted, Layout::Default);
             }
 
             ui.add_space(8.0);

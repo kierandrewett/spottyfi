@@ -135,8 +135,61 @@ pub enum DockIntent {
     Transport(TransportIntent),
     /// Open (navigate to) a page tab, replacing the focused leaf.
     Open(Tab),
+    /// Open (navigate to) a page tab in a brand-new tab (Ctrl/Cmd-click).
+    OpenInNewTab(Tab),
     /// Copy a string to the system clipboard (a Spotify URI).
     CopyToClipboard(String),
+    /// A tab-management command raised from a tab's right-click menu or a
+    /// middle-click — applied to the dock after the `DockArea` has been drawn.
+    Tab(TabCommand),
+}
+
+/// A navigation request the shell collects this frame and applies to the dock
+/// once the panels have been drawn.
+///
+/// `new_tab` carries the Ctrl/Cmd modifier: a plain navigation **replaces**
+/// the focused tab (the `docs/docking.md` rule), Ctrl/Cmd-held **opens a new
+/// tab**. The rule is identical for the sidebar, in-page links and search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NavRequest {
+    /// The tab to navigate to.
+    pub tab: Tab,
+    /// Whether to open a new tab (Ctrl/Cmd-held) rather than replace.
+    pub new_tab: bool,
+}
+
+impl NavRequest {
+    /// A plain navigation: replace the focused tab.
+    #[must_use]
+    pub fn replace(tab: Tab) -> Self {
+        Self {
+            tab,
+            new_tab: false,
+        }
+    }
+
+    /// A Ctrl/Cmd-held navigation: open a new tab.
+    #[must_use]
+    pub fn new_tab(tab: Tab) -> Self {
+        Self { tab, new_tab: true }
+    }
+}
+
+/// A tab-management command raised from the dock's tab bar (right-click menu,
+/// middle-click). Applied to the dock by the shell once the `DockArea` draw is
+/// complete — the dock cannot be mutated mid-draw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TabCommand {
+    /// Close this exact tab.
+    Close(Tab),
+    /// Close every tab except this one (pinned tabs are spared).
+    CloseOthers(Tab),
+    /// Close every tab to the right of this one in its leaf (pinned spared).
+    CloseToRight(Tab),
+    /// Open a second tab carrying the same surface as this one.
+    Duplicate(Tab),
+    /// Toggle this tab's pinned state.
+    TogglePin(Tab),
 }
 
 /// Everything the dock's [`egui_dock::TabViewer`] needs to render a tab's body,
@@ -154,8 +207,19 @@ pub struct TabContext<'a> {
     pub engine: &'a EngineStatus,
     /// The live page objects, keyed by tab.
     pub pages: &'a mut PageRegistry,
+    /// A read-only view of the pinned-tab set, so the right-click menu can
+    /// show Pin vs Unpin. The dock cannot be mutated mid-draw, so pin toggles
+    /// are raised as [`TabCommand`]s and applied afterwards.
+    pub pinned: &'a [Tab],
     /// Any [`DockIntent`]s raised this frame, in order.
     pub intents: Vec<DockIntent>,
+}
+
+impl TabContext<'_> {
+    /// Whether `tab` is currently pinned.
+    fn is_pinned(&self, tab: &Tab) -> bool {
+        self.pinned.iter().any(|t| t == tab)
+    }
 }
 
 /// The `egui_dock` tab viewer: renders tab titles and bodies.
@@ -180,9 +244,66 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
         egui::Id::new(("spottyfi-tab", tab.clone()))
     }
 
-    fn closeable(&mut self, tab: &mut Self::Tab) -> bool {
-        // Home stays open so the dock is never empty; everything else closes.
-        !matches!(tab, Tab::Home)
+    fn is_closeable(&self, tab: &Self::Tab) -> bool {
+        // Home stays open so the dock is never empty; a pinned tab keeps no
+        // close button (browser behaviour) — it closes only via its menu.
+        !matches!(tab, Tab::Home) && !self.ctx.is_pinned(tab)
+    }
+
+    /// Right-click a tab: the Close / Close others / Close to right / Duplicate
+    /// / Pin menu. The dock cannot be mutated mid-draw, so each entry raises a
+    /// [`TabCommand`] the shell applies once the `DockArea` draw completes.
+    fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab, _path: egui_dock::NodePath) {
+        ui.set_min_width(160.0);
+        let is_home = matches!(tab, Tab::Home);
+        let pinned = self.ctx.is_pinned(tab);
+
+        // Home is never closeable; a pinned tab is spared by Close/others/right.
+        if ui
+            .add_enabled(!is_home && !pinned, egui::Button::new("Close"))
+            .clicked()
+        {
+            self.ctx
+                .intents
+                .push(DockIntent::Tab(TabCommand::Close(tab.clone())));
+            ui.close();
+        }
+        if ui.button("Close others").clicked() {
+            self.ctx
+                .intents
+                .push(DockIntent::Tab(TabCommand::CloseOthers(tab.clone())));
+            ui.close();
+        }
+        if ui.button("Close to the right").clicked() {
+            self.ctx
+                .intents
+                .push(DockIntent::Tab(TabCommand::CloseToRight(tab.clone())));
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Duplicate").clicked() {
+            self.ctx
+                .intents
+                .push(DockIntent::Tab(TabCommand::Duplicate(tab.clone())));
+            ui.close();
+        }
+        let pin_label = if pinned { "Unpin tab" } else { "Pin tab" };
+        if ui.button(pin_label).clicked() {
+            self.ctx
+                .intents
+                .push(DockIntent::Tab(TabCommand::TogglePin(tab.clone())));
+            ui.close();
+        }
+    }
+
+    /// Middle-clicking a tab button closes it (browser behaviour). Home and
+    /// pinned tabs are spared — the close is raised as a [`TabCommand`].
+    fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &egui::Response) {
+        if response.middle_clicked() && !matches!(tab, Tab::Home) && !self.ctx.is_pinned(tab) {
+            self.ctx
+                .intents
+                .push(DockIntent::Tab(TabCommand::Close(tab.clone())));
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
@@ -211,7 +332,13 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
                             playback: self.ctx.playback,
                         };
                         if let Some(action) = self.ctx.pages.ui(page_tab, ui, &page_ctx) {
-                            self.ctx.intents.push(page_action_to_intent(action));
+                            // A Ctrl/Cmd-held in-page link opens a new tab; a
+                            // plain click replaces the focused tab. The
+                            // modifier is read at click time, this frame.
+                            let new_tab = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+                            self.ctx
+                                .intents
+                                .push(page_action_to_intent(action, new_tab));
                         }
                     }
                 }
@@ -220,7 +347,11 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
 }
 
 /// Translate a [`PageAction`] into the shell-level [`DockIntent`].
-fn page_action_to_intent(action: PageAction) -> DockIntent {
+///
+/// `new_tab` carries the Ctrl/Cmd modifier state read at click time: an
+/// [`PageAction::Open`] becomes [`DockIntent::OpenInNewTab`] when it is held,
+/// [`DockIntent::Open`] (replace the focused tab) otherwise.
+fn page_action_to_intent(action: PageAction, new_tab: bool) -> DockIntent {
     match action {
         PageAction::PlayContext {
             uri,
@@ -235,6 +366,7 @@ fn page_action_to_intent(action: PageAction) -> DockIntent {
         }),
         PageAction::PlayNext(track) => DockIntent::Transport(TransportIntent::PlayNext(track)),
         PageAction::Enqueue(track) => DockIntent::Transport(TransportIntent::Enqueue(track)),
+        PageAction::Open(tab) if new_tab => DockIntent::OpenInNewTab(tab),
         PageAction::Open(tab) => DockIntent::Open(tab),
         PageAction::CopyToClipboard(text) => DockIntent::CopyToClipboard(text),
     }
@@ -581,12 +713,25 @@ mod tests {
     #[test]
     fn page_actions_map_to_dock_intents() {
         assert_eq!(
-            page_action_to_intent(PageAction::Open(Tab::LikedSongs)),
+            page_action_to_intent(PageAction::Open(Tab::LikedSongs), false),
             DockIntent::Open(Tab::LikedSongs)
         );
         assert_eq!(
-            page_action_to_intent(PageAction::CopyToClipboard("uri".into())),
+            page_action_to_intent(PageAction::CopyToClipboard("uri".into()), false),
             DockIntent::CopyToClipboard("uri".into())
+        );
+    }
+
+    #[test]
+    fn ctrl_held_open_action_opens_a_new_tab() {
+        // A plain click replaces the focused tab; Ctrl/Cmd-held opens a new one.
+        assert_eq!(
+            page_action_to_intent(PageAction::Open(Tab::Browse), false),
+            DockIntent::Open(Tab::Browse)
+        );
+        assert_eq!(
+            page_action_to_intent(PageAction::Open(Tab::Browse), true),
+            DockIntent::OpenInNewTab(Tab::Browse)
         );
     }
 
@@ -599,7 +744,7 @@ mod tests {
             offset: 0,
         };
         assert!(matches!(
-            page_action_to_intent(action),
+            page_action_to_intent(action, false),
             DockIntent::Transport(TransportIntent::PlayContext { .. })
         ));
     }
