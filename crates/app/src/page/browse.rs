@@ -277,6 +277,7 @@ fn category_tile(ui: &mut egui::Ui, palette: &Palette, category: &Category, inde
                 let angle = tilt(index);
                 egui::Image::from_uri(icon.url.clone())
                     .fit_to_exact_size(egui::vec2(art, art))
+                    .texture_options(egui::TextureOptions::LINEAR)
                     .rotate(angle, egui::Vec2::splat(0.5))
                     .paint_at(ui, art_rect);
             }

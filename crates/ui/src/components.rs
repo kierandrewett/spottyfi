@@ -84,6 +84,10 @@ pub fn album_art(
             egui::Image::from_uri(url.to_owned())
                 .fit_to_exact_size(desired)
                 .corner_radius(corner_radius)
+                // Photographic cover art is almost always drawn scaled down
+                // from a larger source; linear min/mag filtering keeps scaled
+                // covers smooth instead of hard-edged ("crispy").
+                .texture_options(egui::TextureOptions::LINEAR)
                 .show_loading_spinner(true),
         ),
         _ => {
