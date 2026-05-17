@@ -141,6 +141,13 @@ pub fn track_table(
     let mut builder = TableBuilder::new(ui)
         .striped(false)
         .resizable(false)
+        // The table never owns a scroll viewport: every caller already nests it
+        // inside a page-level `ScrollArea`. A `TableBuilder` defaults to wrapping
+        // its body in its own vertical `ScrollArea`, and nesting two vertical
+        // scroll areas causes the scroll jitter / size-glitching the maintainer
+        // saw. With `vscroll(false)` the table lays out at full content height
+        // and the single outer `ScrollArea` scrolls the whole page.
+        .vscroll(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .sense(egui::Sense::click())
         .column(Column::exact(40.0)) // #
