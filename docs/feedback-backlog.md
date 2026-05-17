@@ -14,12 +14,13 @@ one at a time). `[ ]` todo · `[~]` in progress · `[x]` done.
 - [x] Smoother image rendering — currently "crispy" (linear texture filtering,
       not nearest)
 
-## WS2 — Transport: custom controls & layout `[ ]`
-- [ ] Custom Spotify-style progress bar component — hover-scrub, drag; reuse the
+## WS2 — Transport: custom controls & layout `[~]`
+- [x] Custom Spotify-style progress bar component — hover-scrub, drag; reuse the
       same component for the volume control
-- [ ] Bigger, rounded play/pause button
-- [ ] Properly centre the seek bar + control cluster (still off)
-- [ ] Fix the gap below the tab bar / align the tab bar
+- [x] Bigger, rounded play/pause button
+- [x] Properly centre the seek bar + control cluster
+- [ ] Fix the gap below the tab bar / align the tab bar — *needs a maintainer
+      screenshot to pin down; a blind agent couldn't locate it precisely*
 
 ## WS3 — Audio engine: playback feel `[ ]`
 - [ ] Fix pause latency — press-to-pause has a noticeable delay
