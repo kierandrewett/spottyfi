@@ -325,20 +325,53 @@ fn render_row(
                 )
                 .truncate(),
             );
-            ui.add(
-                egui::Label::new(components::muted(palette, artist_line(track), 11.5)).truncate(),
-            );
+            // The artist line: each artist with an id is a clickable link that
+            // navigates to that artist's page.
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                for (i, artist) in track.artists.iter().enumerate() {
+                    if i > 0 {
+                        ui.label(components::muted(palette, ", ", 11.5));
+                    }
+                    match &artist.id {
+                        Some(id) => {
+                            if link_label(ui, palette, &artist.name, 11.5) {
+                                action = Some(TrackAction::GoToArtist(id.id().to_owned()));
+                            }
+                        }
+                        None => {
+                            ui.add(
+                                egui::Label::new(components::muted(palette, &artist.name, 11.5))
+                                    .truncate(),
+                            );
+                        }
+                    }
+                }
+            });
         });
     });
 
-    // Album.
+    // Album — a clickable link to the album page when it carries an id.
     if columns.album {
         row.col(|ui| {
             column_rule(ui, palette);
-            ui.add(
-                egui::Label::new(components::muted(palette, track.album.name.clone(), 12.0))
-                    .truncate(),
-            );
+            match &track.album.id {
+                Some(id) if !track.album.name.is_empty() => {
+                    if link_label(ui, palette, &track.album.name, 12.0) {
+                        action = Some(TrackAction::GoToAlbum(id.id().to_owned()));
+                    }
+                }
+                _ => {
+                    ui.add(
+                        egui::Label::new(components::muted(
+                            palette,
+                            track.album.name.clone(),
+                            12.0,
+                        ))
+                        .truncate(),
+                    );
+                }
+            }
         });
     }
 
@@ -373,6 +406,43 @@ fn render_row(
     });
 
     action
+}
+
+/// Draw an inline, clickable link inside a track-table cell.
+///
+/// Renders as muted secondary text; on hover it brightens to the primary text
+/// colour and gains an underline, with a pointing-hand cursor — the affordance
+/// the maintainer asked for on artist and album names. Returns `true` when the
+/// link was clicked this frame.
+fn link_label(ui: &mut egui::Ui, palette: &Palette, text: &str, size: f32) -> bool {
+    let response = ui.add(
+        egui::Label::new(
+            egui::RichText::new(text)
+                .size(size)
+                .color(palette.text_muted),
+        )
+        .sense(egui::Sense::click())
+        .truncate(),
+    );
+    if response.hovered() {
+        // Repaint the label brighter, underlined, over the muted original.
+        let rect = response.rect;
+        ui.painter().text(
+            rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            text,
+            egui::FontId::proportional(size),
+            palette.text,
+        );
+        ui.painter().hline(
+            rect.x_range(),
+            rect.bottom() - 1.0,
+            egui::Stroke::new(1.0, palette.text),
+        );
+    }
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
 }
 
 /// The right-click context menu for a track row.
@@ -426,16 +496,6 @@ fn context_menu(ui: &mut egui::Ui, track_row: &TrackRow<'_>) -> Option<TrackActi
 /// The largest-available album-art URL for a track, if any.
 fn primary_image(track: &Track) -> Option<&str> {
     track.album.images.first().map(|image| image.url.as_str())
-}
-
-/// The track's artists joined into a display string.
-fn artist_line(track: &Track) -> String {
-    track
-        .artists
-        .iter()
-        .map(|a| a.name.as_str())
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 /// Format a track duration (milliseconds) as `m:ss`.
