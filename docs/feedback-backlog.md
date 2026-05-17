@@ -75,6 +75,17 @@ one at a time). `[ ]` todo · `[~]` in progress · `[x]` done.
       title/artist/album) to pick the right lyrics version; lrclib's API takes
       a duration and has a search endpoint returning candidates.
 
+## WS9 — fix the activity-cancel panic `[ ]`
+(Bug. Runs right after Phase 12, before WS8 — both are `app`-crate work.)
+- [ ] Cancelling an activity from the top-bar indicator panics:
+      `poll-promise: The Promise Sender was dropped`. The cancel hook
+      `JoinHandle::abort()`s the task, dropping the `Loadable`'s promise
+      Sender unsent; the owning page then polls a dead promise and panics.
+      Fix: make `Loadable` cancellation-aware — a shared cancel flag/token the
+      cancel hook trips instead of `abort()`; `Loadable::value()` checks it and
+      stops polling the promise once cancelled; pages render a "cancelled"
+      state. Audit `search_load.rs` for the same abort-then-poll hazard.
+
 ## Notes on the big ones
 - **Connect device, equalizer, waveform/visualisations** are each substantial
   features, not tweaks — equalizer and visualisations both require a custom
