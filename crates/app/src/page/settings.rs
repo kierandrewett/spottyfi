@@ -213,7 +213,7 @@ fn audio_section(
             });
 
             setting_row(ui, palette, "Crossfade", |ui| {
-                ui.add(
+                let slider = ui.add(
                     egui::Slider::new(
                         &mut audio.crossfade_seconds,
                         0.0..=AudioSettings::MAX_CROSSFADE_SECONDS,
@@ -221,6 +221,11 @@ fn audio_section(
                     .suffix(" s")
                     .fixed_decimals(1),
                 );
+                let scroll = wheel_over(ui, &slider);
+                if scroll != 0.0 {
+                    audio.crossfade_seconds = (audio.crossfade_seconds + scroll.signum() * 0.5)
+                        .clamp(0.0, AudioSettings::MAX_CROSSFADE_SECONDS);
+                }
             });
             ui.label(components::muted(
                 palette,
@@ -283,16 +288,22 @@ fn equalizer_section(
                     for (index, freq) in EQ_BAND_FREQUENCIES_HZ.iter().enumerate() {
                         ui.vertical(|ui| {
                             ui.set_width(54.0);
-                            changed |= ui
-                                .add(
-                                    egui::Slider::new(
-                                        &mut eq.band_gains_db[index],
-                                        -EQ_GAIN_LIMIT_DB..=EQ_GAIN_LIMIT_DB,
-                                    )
-                                    .vertical()
-                                    .show_value(false),
+                            let slider = ui.add(
+                                egui::Slider::new(
+                                    &mut eq.band_gains_db[index],
+                                    -EQ_GAIN_LIMIT_DB..=EQ_GAIN_LIMIT_DB,
                                 )
-                                .changed();
+                                .vertical()
+                                .show_value(false),
+                            );
+                            changed |= slider.changed();
+                            let scroll = wheel_over(ui, &slider);
+                            if scroll != 0.0 {
+                                eq.band_gains_db[index] = (eq.band_gains_db[index]
+                                    + scroll.signum())
+                                .clamp(-EQ_GAIN_LIMIT_DB, EQ_GAIN_LIMIT_DB);
+                                changed = true;
+                            }
                             ui.vertical_centered(|ui| {
                                 ui.label(
                                     egui::RichText::new(format!("{:+.0}", eq.band_gains_db[index]))
@@ -328,6 +339,26 @@ fn equalizer_section(
             }
         },
     );
+}
+
+/// The net mouse-wheel travel over `response` this frame: `+1` per notch
+/// scrolled up, `-1` per notch down, `0` when the pointer is elsewhere.
+///
+/// egui's [`Slider`](egui::Slider) does not itself respond to the wheel; this
+/// lets the Settings sliders be nudged by scrolling, as the maintainer asked.
+fn wheel_over(ui: &egui::Ui, response: &egui::Response) -> f32 {
+    if !response.hovered() {
+        return 0.0;
+    }
+    ui.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::MouseWheel { delta, .. } => Some(delta.y),
+                _ => None,
+            })
+            .sum()
+    })
 }
 
 /// Format a band centre frequency for its slider caption (`500`, `1k`, `16k`).
