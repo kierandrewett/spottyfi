@@ -10,8 +10,8 @@ use rspotify::{AuthCodePkceSpotify, ClientResult};
 
 use spottyfi_auth::Session;
 use spottyfi_models::{
-    Album, Artist, Category, Page, Playlist, PlaylistTrack, SearchResults, SimplifiedAlbum,
-    SimplifiedPlaylist, Track, User,
+    Album, Artist, Category, Page, Playlist, PlaylistTrack, SavedTrack, SearchResults,
+    SimplifiedAlbum, SimplifiedPlaylist, Track, User,
 };
 
 use spottyfi_cache::Kind;
@@ -329,7 +329,7 @@ impl SpotifyApi for SpotifyClient {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn saved_tracks(&self, offset: u32, limit: u32) -> ApiResult<Page<Track>> {
+    async fn saved_tracks(&self, offset: u32, limit: u32) -> ApiResult<Page<SavedTrack>> {
         let page = self
             .request(|| {
                 self.rspotify.current_user_saved_tracks_manual(
@@ -343,7 +343,7 @@ impl SpotifyApi for SpotifyClient {
     }
 
     #[tracing::instrument(skip(self))]
-    fn saved_tracks_stream(&self) -> ItemStream<Track> {
+    fn saved_tracks_stream(&self) -> ItemStream<SavedTrack> {
         let this = self.clone();
         paginate(move |offset, limit| {
             let this = this.clone();

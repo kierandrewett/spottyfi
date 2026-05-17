@@ -4,7 +4,7 @@
 //! instant it arrives rather than waiting for every page to be collected.
 
 use spottyfi_api::ApiError;
-use spottyfi_models::{SpotifyId as _, Track};
+use spottyfi_models::{SavedTrack, SpotifyId as _};
 use spottyfi_ui::components;
 use spottyfi_ui::track_table::{self, TrackColumns, TrackRow, TrackTableState};
 
@@ -37,18 +37,17 @@ impl LikedSongsPage {
     }
 }
 
-/// Spawn the incremental saved-tracks stream. Spotify's saved-tracks endpoint
-/// does not carry the per-track add date in the mapped
-/// [`Track`](spottyfi_models::Track), so the date-added column stays empty.
+/// Spawn the incremental saved-tracks stream. Each [`SavedTrack`] carries
+/// Spotify's `added_at`, so the date-added column and its sort are populated.
 fn spawn_tracks(services: &PageServices) -> IncrementalLoad<Entry> {
     use futures::StreamExt as _;
     let stream = services
         .api
         .saved_tracks_stream()
-        .map(|item: Result<Track, ApiError>| {
-            item.map(|track| Entry {
-                track,
-                added_at: None,
+        .map(|item: Result<SavedTrack, ApiError>| {
+            item.map(|saved| Entry {
+                track: saved.track,
+                added_at: saved.added_at,
             })
         });
     IncrementalLoad::spawn(

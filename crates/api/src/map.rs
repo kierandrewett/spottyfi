@@ -195,9 +195,15 @@ pub fn playlist_item(src: &rs::PlaylistItem) -> m::PlaylistTrack {
     }
 }
 
-/// Map a saved track (a "Liked Songs" entry).
-pub fn saved_track(src: &rs::SavedTrack) -> m::Track {
-    track(&src.track)
+/// Map a saved track (a "Liked Songs" entry), carrying Spotify's `added_at`.
+///
+/// `GET /me/tracks` returns a `{ added_at, track }` wrapper; both halves are
+/// kept so the Liked Songs "Date added" column and its sort work.
+pub fn saved_track(src: &rs::SavedTrack) -> m::SavedTrack {
+    m::SavedTrack {
+        track: track(&src.track),
+        added_at: Some(src.added_at.to_rfc3339()),
+    }
 }
 
 /// Map a saved album.
@@ -311,6 +317,50 @@ mod tests {
         assert_eq!(mapped.artists[0].name, "Daft Punk");
         assert_eq!(mapped.album.name, "Random Access Memories");
         assert!(!mapped.is_local);
+    }
+
+    #[test]
+    fn saved_track_carries_added_at() {
+        // A `SavedTrack` is a `{ added_at, track }` wrapper; the mapper must
+        // keep the `added_at` the bare `Track` cannot carry.
+        let json = r#"{
+            "added_at": "2024-03-15T09:30:00Z",
+            "track": {
+                "album": {
+                    "album_type": "album",
+                    "artists": [{"external_urls":{},"href":null,"id":"4tZwfgrHOc3mvqYlEYSvVi","name":"Daft Punk"}],
+                    "external_urls": {},
+                    "href": null,
+                    "id": "4m2880jivSbbyEGAKfITCa",
+                    "images": [],
+                    "name": "Random Access Memories",
+                    "release_date": "2013-05-17",
+                    "release_date_precision": "day"
+                },
+                "artists": [{"external_urls":{},"href":null,"id":"4tZwfgrHOc3mvqYlEYSvVi","name":"Daft Punk"}],
+                "disc_number": 1,
+                "duration_ms": 224000,
+                "explicit": false,
+                "external_ids": {},
+                "external_urls": {},
+                "href": null,
+                "id": "0DiWol3AO6WpXZgp0goxAV",
+                "is_local": false,
+                "name": "Get Lucky",
+                "preview_url": null,
+                "track_number": 8,
+                "type": "track"
+            }
+        }"#;
+
+        let saved: rs::SavedTrack = deser(json);
+        let mapped = saved_track(&saved);
+
+        assert_eq!(mapped.track.name, "Get Lucky");
+        assert_eq!(
+            mapped.added_at.as_deref(),
+            Some("2024-03-15T09:30:00+00:00")
+        );
     }
 
     #[test]

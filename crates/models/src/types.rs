@@ -190,6 +190,19 @@ pub struct PlaylistTrack {
     pub added_by: Option<UserId>,
 }
 
+/// A saved ("Liked Songs") entry: a track plus the date it was saved.
+///
+/// Spotify's `GET /me/tracks` response is a `{ added_at, track }` wrapper, not
+/// a bare track; this type carries the `added_at` timestamp the bare
+/// [`Track`] cannot, so the Liked Songs "Date added" column and its sort work.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedTrack {
+    /// The saved track itself.
+    pub track: Track,
+    /// When the track was saved, as an RFC 3339 string, if Spotify reported it.
+    pub added_at: Option<String>,
+}
+
 /// A browse category (a tile on the Browse page).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Category {

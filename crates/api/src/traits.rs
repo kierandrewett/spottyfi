@@ -19,8 +19,8 @@ use async_trait::async_trait;
 use futures::stream::Stream;
 
 use spottyfi_models::{
-    Album, Artist, Category, Page, Playlist, PlaylistTrack, SearchResults, SimplifiedAlbum,
-    SimplifiedPlaylist, Track, User,
+    Album, Artist, Category, Page, Playlist, PlaylistTrack, SavedTrack, SearchResults,
+    SimplifiedAlbum, SimplifiedPlaylist, Track, User,
 };
 
 #[cfg(test)]
@@ -78,10 +78,13 @@ pub trait SpotifyApi: Send + Sync {
     fn playlist_tracks_stream(&self, playlist_id: &str) -> ItemStream<PlaylistTrack>;
 
     /// One page of the user's saved ("Liked Songs") tracks (`GET /me/tracks`).
-    async fn saved_tracks(&self, offset: u32, limit: u32) -> ApiResult<Page<Track>>;
+    ///
+    /// Each item is a [`SavedTrack`] carrying Spotify's `added_at`, so the
+    /// Liked Songs "Date added" column can be populated.
+    async fn saved_tracks(&self, offset: u32, limit: u32) -> ApiResult<Page<SavedTrack>>;
 
     /// Every saved track, as a stream.
-    fn saved_tracks_stream(&self) -> ItemStream<Track>;
+    fn saved_tracks_stream(&self) -> ItemStream<SavedTrack>;
 
     /// One page of the user's saved albums (`GET /me/albums`).
     async fn saved_albums(&self, offset: u32, limit: u32) -> ApiResult<Page<Album>>;

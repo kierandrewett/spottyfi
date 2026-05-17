@@ -26,6 +26,6 @@ mod types;
 pub use crate::id::{AlbumId, ArtistId, PlaylistId, SpotifyId, TrackId, UserId};
 pub use crate::page::Page;
 pub use crate::types::{
-    Album, Artist, Category, Image, Playlist, PlaylistTrack, SearchResults, SimplifiedAlbum,
-    SimplifiedArtist, SimplifiedPlaylist, SimplifiedTrack, Track, User,
+    Album, Artist, Category, Image, Playlist, PlaylistTrack, SavedTrack, SearchResults,
+    SimplifiedAlbum, SimplifiedArtist, SimplifiedPlaylist, SimplifiedTrack, Track, User,
 };
