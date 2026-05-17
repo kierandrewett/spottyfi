@@ -5,6 +5,25 @@ them. Don't guess endpoint shapes or auth flows — add a question here and ask.
 
 ## Open
 
+12. **Lyrics providers (Phase 11).** The Lyrics panel sources lyrics from the
+    `api` crate's `lyrics` module. Two providers, both opt-in:
+
+    - **musixmatch** — the legitimate, documented path. Behind the
+      off-by-default `musixmatch` Cargo feature; needs an API key in
+      `SPOTTYFI_MUSIXMATCH_KEY`. **The maintainer must create a free
+      musixmatch key** (https://developer.musixmatch.com/) and build with
+      `--features spottyfi-api/musixmatch` for lyrics to work. Until then
+      the panel shows a calm "no lyrics source configured" note.
+    - **Internal Spotify color-lyrics endpoint** — `spclient.wg.spotify.com`
+      carries synced lyrics (licensed from musixmatch) for the official
+      apps. It is **undocumented and reverse-engineered, and using it from a
+      third-party client is against Spotify's Terms of Service.** Spottyfi
+      only attempts it when `SPOTTYFI_LYRICS_TOKEN` is set — it is never on
+      by default and is not advertised in the README. The token is
+      short-lived; this path is a convenience for users who knowingly opt
+      in, not a supported feature. Treat it as best-effort and expect it to
+      break when Spotify rotates the contract.
+
 11. **Spotify Connect device — scope & limitations (WS4).** Spottyfi now
     registers as a real Spotify Connect device ("Spottyfi", a *computer*
     device type) via librespot 0.8's `librespot-connect` / `Spirc`. The

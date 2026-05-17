@@ -55,6 +55,21 @@ RUST_LOG=spottyfi=debug cargo run
 | `SPOTTYFI_CLIENT_ID` | for live login | the registered Spotify app's Client ID (PKCE, no secret) |
 | `SPOTTYFI_REDIRECT_PORT` | optional | overrides the loopback callback port (default `8888`) |
 | `SPOTTYFI_LASTFM_API_KEY` | optional | a free [Last.fm API key](https://www.last.fm/api/account/create); enables Browse's charts and recommendations. Without it, Browse still shows the Spotify category grid and those sections show a "set the key" note. |
+| `SPOTTYFI_MUSIXMATCH_KEY` | optional | a [musixmatch API key](https://developer.musixmatch.com/); enables the Lyrics panel. Requires a build with the `musixmatch` Cargo feature (off by default — see below). Without a key the Lyrics panel shows a calm "no lyrics source configured" note. |
+
+### Lyrics
+
+The Lyrics panel sources time-synced lyrics from [musixmatch](https://developer.musixmatch.com/),
+the legitimate provider. It is behind an off-by-default Cargo feature, so a
+lyrics-enabled build is opt-in:
+
+```sh
+cargo run --features spottyfi-api/musixmatch
+```
+
+With the feature compiled in, set `SPOTTYFI_MUSIXMATCH_KEY` to your musixmatch
+API key to enable lyrics fetching. Without the feature or the key, the Lyrics
+panel degrades gracefully to a "no lyrics source configured" state.
 
 ## Workspace layout
 

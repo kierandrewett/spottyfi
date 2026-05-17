@@ -194,6 +194,27 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
   back/forward buttons live in the menu bar — Phase 4 replaced the Phase-0
   top bar with the menu bar, so there is no separate top bar to host them.
 
-## Phase 11 — Lyrics `[ ]`
+## Phase 11 — Lyrics `[x]`
+
+- [x] `lyrics` module in `api`: `Lyrics` model (synced timestamped lines /
+      plain unsynced), an LRC parser and a current-line selector, with its
+      own `thiserror` error (`LyricsError`)
+- [x] **musixmatch** provider — the legitimate path, behind the off-by-default
+      `musixmatch` Cargo feature, keyed by `SPOTTYFI_MUSIXMATCH_KEY`
+- [x] **Internal Spotify color-lyrics** provider — undocumented, opt-in only
+      via `SPOTTYFI_LYRICS_TOKEN`, clearly commented as against Spotify ToS;
+      never on by default
+- [x] `LyricsService::from_env` assembles whichever providers are configured;
+      with none set, lookups return `NoSourceConfigured` — never panics
+- [x] `LyricsPanel` (`Tab::Lyrics`) — a dock panel that re-fetches on track
+      change; synced lyrics highlight the current line from the live playback
+      position and auto-scroll; click a line to seek; plain lyrics render as a
+      static scrollable column; calm empty/loading/unavailable states
+- [x] Openable from the View menu; wired into the Power user layout slot
+- [x] Unit tests for LRC parsing and current-line selection from a position
+- Note: lyrics need a musixmatch key — the maintainer must create a free key
+  and build with `--features spottyfi-api/musixmatch`. See `docs/questions.md`
+  #12.
+
 ## Phase 12 — Platform polish `[ ]`
 ## Phase 13 — Packaging `[ ]`
