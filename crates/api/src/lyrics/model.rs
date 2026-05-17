@@ -24,7 +24,7 @@ pub struct SyncedLine {
     pub text: String,
 }
 
-/// Lyrics for one track — either time-synced or plain (unsynced).
+/// Lyrics for one track — time-synced, plain, or a known-instrumental marker.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Lyrics {
     /// Time-synced lyrics: lines ordered by their start time.
@@ -35,15 +35,25 @@ pub enum Lyrics {
     Synced(Vec<SyncedLine>),
     /// Plain, unsynced lyrics: an ordered list of text lines.
     Plain(Vec<String>),
+    /// The track is **instrumental** — it has no lyrics *by design*.
+    ///
+    /// This is a real, successful answer, distinct from "no lyrics were
+    /// found": the panel shows "instrumental" rather than a missing-lyrics
+    /// note. Currently produced by the lrclib provider's `instrumental` flag.
+    Instrumental,
 }
 
 impl Lyrics {
     /// Whether these lyrics carry any line at all.
+    ///
+    /// [`Lyrics::Instrumental`] is empty — it has no lines — but callers that
+    /// want to message it specially should match the variant first.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         match self {
             Lyrics::Synced(lines) => lines.is_empty(),
             Lyrics::Plain(lines) => lines.is_empty(),
+            Lyrics::Instrumental => true,
         }
     }
 
@@ -296,6 +306,13 @@ mod tests {
     #[test]
     fn current_line_on_empty_is_none() {
         assert_eq!(current_synced_line(&[], ms(1000)), None);
+    }
+
+    #[test]
+    fn instrumental_is_empty_and_has_no_current_line() {
+        let lyrics = Lyrics::Instrumental;
+        assert!(lyrics.is_empty());
+        assert_eq!(lyrics.current_line(ms(5000)), None);
     }
 
     #[test]

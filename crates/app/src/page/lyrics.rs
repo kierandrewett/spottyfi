@@ -23,7 +23,7 @@
 
 use std::time::Duration;
 
-use spottyfi_api::lyrics::{Lyrics, LyricsError, LyricsService, TrackRef};
+use spottyfi_api::lyrics::{Lyrics, LyricsError, LyricsProvider, LyricsService, TrackRef};
 use spottyfi_ui::components;
 
 use super::{LoadState, Loadable, Page, PageAction, PageContext, PageServices};
@@ -39,6 +39,8 @@ pub struct LyricsPanel {
     lyrics: LyricsService,
     /// The track URI the current load is for; `None` before the first track.
     loaded_uri: Option<String>,
+    /// The provider choice the current load used — re-fetch when it changes.
+    loaded_provider: LyricsProvider,
     /// The in-flight (or resolved) lyrics fetch for [`Self::loaded_uri`].
     data: Option<Loadable<Loaded>>,
 }
@@ -52,38 +54,47 @@ impl LyricsPanel {
             services: services.clone(),
             lyrics: services.lyrics.clone(),
             loaded_uri: None,
+            loaded_provider: LyricsProvider::default(),
             data: None,
         }
     }
 
-    /// Spawn a lyrics fetch for `track`, replacing any in-flight load.
-    fn fetch(&mut self, track: TrackRef) {
+    /// Spawn a lyrics fetch for `track` via `provider`, replacing any in-flight
+    /// load.
+    fn fetch(&mut self, track: TrackRef, provider: LyricsProvider) {
         let lyrics = self.lyrics.clone();
         self.loaded_uri = Some(track.uri.clone());
+        self.loaded_provider = provider;
         self.data = Some(Loadable::spawn_tracked(
             &self.services.runtime,
             &self.services.ctx,
             &self.services.activity,
             "Loading lyrics…",
-            async move { lyrics.lyrics(&track).await },
+            async move { lyrics.lyrics_with(&track, provider).await },
         ));
     }
 
-    /// Re-fetch if the playing track changed since the last load.
+    /// Re-fetch if the playing track or the chosen provider changed.
     fn sync_track(&mut self, ctx: &PageContext<'_>) {
         let current = ctx.playback.track.as_ref();
         let current_uri = current.map(|t| t.uri.as_str());
-        if current_uri == self.loaded_uri.as_deref() {
+        // A change of either the track or the provider preference re-fetches.
+        let unchanged = current_uri == self.loaded_uri.as_deref()
+            && ctx.lyrics_provider == self.loaded_provider;
+        if unchanged {
             return;
         }
         match current {
-            Some(track) => self.fetch(TrackRef {
-                uri: track.uri.clone(),
-                title: track.title.clone(),
-                artist: track.artists.first().cloned().unwrap_or_default(),
-                album: track.album.clone(),
-                duration: track.duration,
-            }),
+            Some(track) => self.fetch(
+                TrackRef {
+                    uri: track.uri.clone(),
+                    title: track.title.clone(),
+                    artist: track.artists.first().cloned().unwrap_or_default(),
+                    album: track.album.clone(),
+                    duration: track.duration,
+                },
+                ctx.lyrics_provider,
+            ),
             None => {
                 // Nothing playing — drop any stale load.
                 self.loaded_uri = None;
@@ -142,6 +153,15 @@ impl Page for LyricsPanel {
         };
 
         match loaded {
+            Ok(Lyrics::Instrumental) => {
+                empty_state(
+                    ui,
+                    &palette,
+                    "Instrumental",
+                    "This track is instrumental — it has no lyrics.",
+                );
+                None
+            }
             Ok(lyrics) if lyrics.is_empty() => {
                 empty_state(
                     ui,
@@ -161,8 +181,8 @@ impl Page for LyricsPanel {
                     ui,
                     &palette,
                     "No lyrics source configured",
-                    "Build with the `musixmatch` feature and set SPOTTYFI_MUSIXMATCH_KEY \
-                     to enable lyrics.",
+                    "No lyrics provider is available. lrclib.net normally needs \
+                     no setup — check your network connection.",
                 );
                 None
             }

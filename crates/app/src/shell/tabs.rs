@@ -415,6 +415,7 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
                         let page_ctx = PageContext {
                             palette,
                             playback: self.ctx.playback,
+                            lyrics_provider: self.ctx.settings_view.settings.lyrics.provider,
                         };
                         if let Some(action) = self.ctx.pages.ui(page_tab, ui, &page_ctx) {
                             // A Ctrl/Cmd-held in-page link opens a new tab; a

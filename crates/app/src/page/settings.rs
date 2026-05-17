@@ -16,7 +16,8 @@ use spottyfi_ui::theme::{Palette, Theme};
 
 use crate::hotkeys::{HotkeyAction, HotkeyCapture};
 use crate::settings::{
-    AppSettings, AudioSettings, EqPreset, StreamTier, EQ_BAND_FREQUENCIES_HZ, EQ_GAIN_LIMIT_DB,
+    lyrics_provider_choices, lyrics_provider_label, AppSettings, AudioSettings, EqPreset,
+    StreamTier, EQ_BAND_FREQUENCIES_HZ, EQ_GAIN_LIMIT_DB,
 };
 use crate::shell::Layout;
 
@@ -84,6 +85,8 @@ pub fn settings_page(ui: &mut egui::Ui, ctx: &mut SettingsContext<'_>) -> Vec<Se
             local_files_section(ui, &palette, ctx);
             ui.add_space(20.0);
             notifications_section(ui, &palette, ctx);
+            ui.add_space(20.0);
+            lyrics_section(ui, &palette, ctx);
             ui.add_space(20.0);
             appearance_section(ui, &palette, ctx, &mut actions);
             ui.add_space(20.0);
@@ -478,6 +481,37 @@ fn notifications_section(ui: &mut egui::Ui, palette: &Palette, ctx: &mut Setting
                 palette,
                 "Notifications are posted through the desktop's notification \
                  daemon; on Linux this is the standard freedesktop service.",
+                10.5,
+            ));
+        },
+    );
+}
+
+/// The Lyrics section: the lyrics-provider preference.
+fn lyrics_section(ui: &mut egui::Ui, palette: &Palette, ctx: &mut SettingsContext<'_>) {
+    section(
+        ui,
+        palette,
+        "Lyrics",
+        "Where the Lyrics panel sources lyrics from.",
+        |ui| {
+            let lyrics = &mut ctx.settings.lyrics;
+            setting_row(ui, palette, "Provider", |ui| {
+                egui::ComboBox::from_id_salt("settings-lyrics-provider")
+                    .selected_text(lyrics_provider_label(lyrics.provider))
+                    .show_ui(ui, |ui| {
+                        for (provider, label) in lyrics_provider_choices() {
+                            ui.selectable_value(&mut lyrics.provider, provider, label);
+                        }
+                    });
+            });
+            ui.label(components::muted(
+                palette,
+                "Automatic tries every available provider, starting with \
+                 lrclib.net — free and open, needs no setup. Musixmatch needs \
+                 the `musixmatch` build feature and an API key; the internal \
+                 Spotify source needs an opt-in token. Fetched lyrics are \
+                 cached, so changing this affects only new lookups.",
                 10.5,
             ));
         },

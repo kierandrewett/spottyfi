@@ -103,6 +103,8 @@ pub struct PageContext<'a> {
     pub palette: Palette,
     /// The live playback snapshot — used to highlight the playing track.
     pub playback: &'a PlaybackState,
+    /// The user's chosen lyrics provider — read by the Lyrics panel.
+    pub lyrics_provider: spottyfi_api::lyrics::LyricsProvider,
 }
 
 /// Something a page asked the app to do this frame.

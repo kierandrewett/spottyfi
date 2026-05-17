@@ -227,8 +227,8 @@ impl LrclibRecord {
     ///
     /// Prefers the synced LRC; falls back to plain lyrics. An `instrumental`
     /// record carries no lyrics by design — that is a real, *successful*
-    /// answer (the panel shows "instrumental"), not a [`LyricsError::NotFound`]
-    /// miss, so it maps to an empty [`Lyrics::Plain`].
+    /// answer ([`Lyrics::Instrumental`], shown as "instrumental"), not a
+    /// [`LyricsError::NotFound`] miss.
     ///
     /// # Errors
     ///
@@ -237,7 +237,7 @@ impl LrclibRecord {
     fn into_lyrics(self) -> LyricsResult<Lyrics> {
         if self.instrumental {
             // An instrumental track legitimately has no lyrics.
-            return Ok(Lyrics::Plain(Vec::new()));
+            return Ok(Lyrics::Instrumental);
         }
         if let Some(lrc) = self.synced_lyrics.as_deref() {
             if !lrc.trim().is_empty() {
@@ -300,14 +300,15 @@ mod tests {
     }
 
     #[test]
-    fn an_instrumental_record_is_empty_lyrics_not_a_miss() {
+    fn an_instrumental_record_maps_to_the_instrumental_variant() {
         let json = r#"{"trackName":"x","artistName":"y","albumName":"z",
             "duration":100.0,"instrumental":true,
             "plainLyrics":null,"syncedLyrics":null}"#;
         let record: LrclibRecord = serde_json::from_str(json).expect("parse record");
-        // An instrumental is a successful result: empty lyrics, not NotFound.
+        // An instrumental is a successful result: the Instrumental variant,
+        // not a NotFound miss and not generic empty lyrics.
         let lyrics = record.into_lyrics().expect("instrumental is not an error");
-        assert!(lyrics.is_empty());
+        assert_eq!(lyrics, Lyrics::Instrumental);
     }
 
     #[test]

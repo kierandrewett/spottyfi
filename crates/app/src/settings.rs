@@ -228,6 +228,45 @@ pub struct NotificationSettings {
     pub track_change: bool,
 }
 
+/// Which lyrics provider the Lyrics panel uses.
+///
+/// Re-exports [`spottyfi_api::lyrics::LyricsProvider`] under a settings name;
+/// the api enum is already a `serde` type, so it persists directly.
+pub type LyricsProvider = spottyfi_api::lyrics::LyricsProvider;
+
+/// Lyrics settings: the chosen provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct LyricsSettings {
+    /// Which provider to source lyrics from.
+    ///
+    /// [`LyricsProvider::Auto`] (the default) tries every configured provider,
+    /// lrclib first.
+    #[serde(default)]
+    pub provider: LyricsProvider,
+}
+
+/// Every selectable lyrics provider, in menu order, with a display label.
+///
+/// Used to build the Settings page's provider selector.
+#[must_use]
+pub fn lyrics_provider_choices() -> [(LyricsProvider, &'static str); 4] {
+    [
+        (LyricsProvider::Auto, "Automatic (recommended)"),
+        (LyricsProvider::Lrclib, "lrclib.net"),
+        (LyricsProvider::Musixmatch, "Musixmatch"),
+        (LyricsProvider::SpotifyInternal, "Spotify (internal)"),
+    ]
+}
+
+/// A human-readable label for one [`LyricsProvider`].
+#[must_use]
+pub fn lyrics_provider_label(provider: LyricsProvider) -> &'static str {
+    lyrics_provider_choices()
+        .into_iter()
+        .find(|(candidate, _)| *candidate == provider)
+        .map_or("Automatic (recommended)", |(_, label)| label)
+}
+
 /// The full persisted user-settings model surfaced on the Settings page.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -243,6 +282,9 @@ pub struct AppSettings {
     /// Desktop-integration / notification settings.
     #[serde(default)]
     pub notifications: NotificationSettings,
+    /// Lyrics settings — the chosen lyrics provider.
+    #[serde(default)]
+    pub lyrics: LyricsSettings,
     /// The user-rebindable keyboard shortcuts.
     #[serde(default)]
     pub hotkeys: crate::hotkeys::HotkeyMap,
@@ -275,8 +317,31 @@ mod tests {
         assert!(settings.local_files.folders.is_empty());
         // Track-change notifications are opt-in — off by default.
         assert!(!settings.notifications.track_change);
+        // Lyrics default to the Automatic provider order (lrclib first).
+        assert_eq!(settings.lyrics.provider, LyricsProvider::Auto);
         // The hotkey map starts at its first-launch defaults.
         assert_eq!(settings.hotkeys, crate::hotkeys::HotkeyMap::default());
+    }
+
+    #[test]
+    fn lyrics_provider_choice_round_trips_through_ron() {
+        let settings = AppSettings {
+            lyrics: LyricsSettings {
+                provider: LyricsProvider::Lrclib,
+            },
+            ..AppSettings::default()
+        };
+        let text = ron::ser::to_string(&settings).expect("serialise settings");
+        let restored: AppSettings = ron::from_str(&text).expect("deserialise settings");
+        assert_eq!(restored.lyrics.provider, LyricsProvider::Lrclib);
+    }
+
+    #[test]
+    fn every_lyrics_provider_has_a_label() {
+        for (provider, label) in lyrics_provider_choices() {
+            assert!(!label.is_empty());
+            assert_eq!(lyrics_provider_label(provider), label);
+        }
     }
 
     #[test]
