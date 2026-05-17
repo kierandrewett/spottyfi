@@ -1,0 +1,87 @@
+# Flatpak manifest for Spottyfi.
+#
+# Build (from the repo root):
+#
+#   # 1. Install the runtime + SDK and the rust-stable SDK extension:
+#   flatpak install flathub org.freedesktop.Platform//24.08 \
+#                            org.freedesktop.Sdk//24.08 \
+#                            org.freedesktop.Sdk.Extension.rust-stable//24.08
+#
+#   # 2. Generate the offline cargo dependency sources. Flatpak builds run with
+#   #    no network, so every crate must be vendored as a flatpak source. The
+#   #    flatpak-builder-tools `cargo` generator turns Cargo.lock into that list:
+#   #      https://github.com/flatpak/flatpak-builder-tools/tree/master/cargo
+#   #    python3 flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
+#   #    (cargo-sources.json is generated, not committed; regenerate on lock changes.)
+#
+#   # 3. Build and install:
+#   flatpak-builder --user --install --force-clean \
+#       build-dir packaging/flatpak/dev.drewett.spottyfi.yml
+#
+# Per PLAN.md Phase 13 this is "don't actually publish; just have it building".
+app-id: dev.drewett.spottyfi
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+
+command: spottyfi
+
+finish-args:
+  # Windowing — Wayland with an X11 fallback.
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # Audio.
+  - --socket=pulseaudio
+  # Network — Spotify Web API, librespot streaming, Last.fm, lyrics providers.
+  - --share=network
+  # MPRIS2 media-key / indicator integration, the Secret Service keyring,
+  # the tray icon and desktop notifications.
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.Notifications
+  - --own-name=org.mpris.MediaPlayer2.spottyfi
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  build-args:
+    # Offline build: deps come from the vendored cargo-sources module below.
+    - --share=network
+  env:
+    CARGO_HOME: /run/build/spottyfi/cargo
+
+modules:
+  - name: spottyfi
+    buildsystem: simple
+    build-options:
+      env:
+        # Point cargo at the vendored registry assembled by cargo-sources.json.
+        CARGO_NET_OFFLINE: '1'
+    build-commands:
+      - cargo --offline build --release --workspace
+      - install -Dm755 target/release/spottyfi /app/bin/spottyfi
+      - install -Dm644 packaging/dev.drewett.spottyfi.desktop
+          /app/share/applications/dev.drewett.spottyfi.desktop
+      - install -Dm644 packaging/dev.drewett.spottyfi.metainfo.xml
+          /app/share/metainfo/dev.drewett.spottyfi.metainfo.xml
+      - install -Dm644 packaging/icons/dev.drewett.spottyfi-64.png
+          /app/share/icons/hicolor/64x64/apps/dev.drewett.spottyfi.png
+      - install -Dm644 packaging/icons/dev.drewett.spottyfi-128.png
+          /app/share/icons/hicolor/128x128/apps/dev.drewett.spottyfi.png
+      - install -Dm644 packaging/icons/dev.drewett.spottyfi-256.png
+          /app/share/icons/hicolor/256x256/apps/dev.drewett.spottyfi.png
+      - install -Dm644 packaging/icons/dev.drewett.spottyfi-512.png
+          /app/share/icons/hicolor/512x512/apps/dev.drewett.spottyfi.png
+      - install -Dm644 packaging/icons/dev.drewett.spottyfi.svg
+          /app/share/icons/hicolor/scalable/apps/dev.drewett.spottyfi.svg
+    sources:
+      # The project tree. For a real publish this would be a git/archive
+      # source pinned to a tag; a local dir keeps the manifest buildable now.
+      - type: dir
+        path: ../..
+      # Vendored crate sources — generated, see the header. Uncomment once
+      # cargo-sources.json has been produced:
+      # - cargo-sources.json

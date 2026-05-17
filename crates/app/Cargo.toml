@@ -13,6 +13,44 @@ default-run = "spottyfi"
 name = "spottyfi"
 path = "src/main.rs"
 
+# --- Packaging metadata -------------------------------------------------------
+#
+# AppImage (Linux). `cargo appimage` reads this block, drops the release binary
+# and the icon/desktop assets into an AppDir, and runs `appimagetool`.
+#   cargo install cargo-appimage      # needs `appimagetool` on PATH
+#   cargo appimage --release
+# The produced AppImage lands in `target/appimage/`. The icon path is relative
+# to this crate; the desktop file at the repo's `packaging/` directory is the
+# canonical freedesktop entry installed by every other packaging route.
+[package.metadata.appimage]
+assets = ["../../packaging/icons/dev.drewett.spottyfi-256.png"]
+icon = "../../packaging/icons/dev.drewett.spottyfi-256.png"
+auto_link = true
+auto_link_exclude_list = [
+    "libc.so*",
+    "libdl.so*",
+    "libpthread.so*",
+    "ld-linux*.so*",
+    "libGL.so*",
+    "libEGL.so*",
+    "libvulkan.so*",
+]
+
+# macOS .app bundle via `cargo-bundle`. STUB — not a current target; Linux is
+# the supported platform. Kept so a future macOS build is a one-liner:
+#   cargo install cargo-bundle && cargo bundle --release
+[package.metadata.bundle]
+name = "Spottyfi"
+identifier = "dev.drewett.spottyfi"
+icon = ["../../packaging/icons/dev.drewett.spottyfi-512.png"]
+category = "Music"
+short_description = "A native Rust Spotify client with a docking workspace UI"
+copyright = "Copyright (c) 2026 Kieran Drewett. MIT OR Apache-2.0."
+
+# Windows MSI is built with `cargo-wix` (`cargo install cargo-wix`). STUB —
+# also not a current target. `cargo wix init` generates `wix/main.wxs`; that
+# file is intentionally not committed yet. See README "Packaging".
+
 [dependencies]
 spottyfi-models.workspace = true
 spottyfi-state.workspace = true
