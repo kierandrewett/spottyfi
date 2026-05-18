@@ -97,6 +97,16 @@ pub trait SpotifyApi: Send + Sync {
     /// Every saved track, as a stream.
     fn saved_tracks_stream(&self) -> ItemStream<SavedTrack>;
 
+    /// The user's **complete** saved-tracks ("Liked Songs") listing, served
+    /// with stale-while-revalidate caching.
+    ///
+    /// Like [`Self::playlist_tracks_all`] but for the saved-tracks library: a
+    /// fresh cache hit returns instantly with no network call, a stale hit
+    /// returns instantly and refreshes in the background, and a miss streams
+    /// the whole library and caches it — so a relaunch does not re-download
+    /// every liked song.
+    async fn saved_tracks_all(&self) -> ApiResult<Vec<SavedTrack>>;
+
     /// One page of the user's saved albums (`GET /me/albums`).
     async fn saved_albums(&self, offset: u32, limit: u32) -> ApiResult<Page<Album>>;
 

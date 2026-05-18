@@ -41,6 +41,9 @@ pub enum Kind {
     /// a "not found" marker), the source provider and a fetched-at stamp,
     /// keyed by Spotify track id. Stored by the `api` crate's lyrics layer.
     Lyrics,
+    /// A list-shaped result not keyed by a single Spotify object id — e.g.
+    /// the user's full saved-tracks listing — keyed by a fixed string.
+    Collection,
 }
 
 impl Kind {
@@ -56,6 +59,7 @@ impl Kind {
             Kind::Playlist => "playlists",
             Kind::PlaylistTracks => "playlist_tracks",
             Kind::Lyrics => "lyrics",
+            Kind::Collection => "collections",
         }
     }
 }

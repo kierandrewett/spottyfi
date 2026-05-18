@@ -37,19 +37,32 @@ impl LikedSongsPage {
     }
 }
 
-/// Spawn the incremental saved-tracks stream. Each [`SavedTrack`] carries
-/// Spotify's `added_at`, so the date-added column and its sort are populated.
+/// Spawn the saved-tracks load. Resolves the **cached** full saved-tracks
+/// listing ([`SpotifyApi::saved_tracks_all`]) then yields each [`SavedTrack`]
+/// as an [`Entry`]: a cache hit makes this effectively instant, while a cold
+/// miss streams the whole library once and caches it so the next launch is
+/// fast. Each `SavedTrack` carries Spotify's `added_at`, so the date-added
+/// column and its sort stay populated.
 fn spawn_tracks(services: &PageServices) -> IncrementalLoad<Entry> {
     use futures::StreamExt as _;
-    let stream = services
-        .api
-        .saved_tracks_stream()
-        .map(|item: Result<SavedTrack, ApiError>| {
-            item.map(|saved| Entry {
-                track: saved.track,
-                added_at: saved.added_at,
-            })
-        });
+    let api = std::sync::Arc::clone(&services.api);
+    let stream = futures::stream::once(async move { api.saved_tracks_all().await }).flat_map(
+        |result: Result<Vec<SavedTrack>, ApiError>| {
+            let entries: Vec<Result<Entry, ApiError>> = match result {
+                Ok(saved) => saved
+                    .into_iter()
+                    .map(|saved| {
+                        Ok(Entry {
+                            track: saved.track,
+                            added_at: saved.added_at,
+                        })
+                    })
+                    .collect(),
+                Err(err) => vec![Err(err)],
+            };
+            futures::stream::iter(entries)
+        },
+    );
     IncrementalLoad::spawn(
         &services.runtime,
         &services.ctx,

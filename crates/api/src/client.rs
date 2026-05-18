@@ -375,6 +375,25 @@ impl SpotifyApi for SpotifyClient {
     }
 
     #[tracing::instrument(skip(self))]
+    async fn saved_tracks_all(&self) -> ApiResult<Vec<SavedTrack>> {
+        use futures::StreamExt as _;
+        let this = self.clone();
+        self.cached(Kind::Collection, "saved-tracks", move || {
+            let this = this.clone();
+            async move {
+                // Drive every page of the library, collecting into one Vec.
+                let mut stream = this.saved_tracks_stream();
+                let mut tracks = Vec::new();
+                while let Some(item) = stream.next().await {
+                    tracks.push(item?);
+                }
+                Ok(tracks)
+            }
+        })
+        .await
+    }
+
+    #[tracing::instrument(skip(self))]
     async fn saved_albums(&self, offset: u32, limit: u32) -> ApiResult<Page<Album>> {
         let page = self
             .request(|| {

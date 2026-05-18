@@ -35,6 +35,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 3,
         sql: include_str!("../migrations/0003_lyrics.sql"),
     },
+    Migration {
+        version: 4,
+        sql: include_str!("../migrations/0004_collections.sql"),
+    },
 ];
 
 /// Read the schema version stored in the database (`0` for a fresh DB).

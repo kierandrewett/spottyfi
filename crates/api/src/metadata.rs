@@ -158,6 +158,7 @@ fn hot_key(kind: Kind, id: &str) -> String {
         Kind::Playlist => "playlist",
         Kind::PlaylistTracks => "playlist-tracks",
         Kind::Lyrics => "lyrics",
+        Kind::Collection => "collection",
     };
     format!("{prefix}:{id}")
 }
