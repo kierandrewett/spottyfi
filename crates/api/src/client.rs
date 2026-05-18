@@ -577,6 +577,36 @@ impl SpotifyApi for SpotifyClient {
     }
 
     #[tracing::instrument(skip(self))]
+    async fn save_tracks(&self, track_ids: &[String]) -> ApiResult<()> {
+        if track_ids.is_empty() {
+            return Ok(());
+        }
+        self.request(|| {
+            let items = track_ids
+                .iter()
+                .filter_map(|id| rs::TrackId::from_id(id.as_str()).ok())
+                .map(rs::LibraryId::Track);
+            self.rspotify.library_add(items)
+        })
+        .await
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn remove_saved_tracks(&self, track_ids: &[String]) -> ApiResult<()> {
+        if track_ids.is_empty() {
+            return Ok(());
+        }
+        self.request(|| {
+            let items = track_ids
+                .iter()
+                .filter_map(|id| rs::TrackId::from_id(id.as_str()).ok())
+                .map(rs::LibraryId::Track);
+            self.rspotify.library_remove(items)
+        })
+        .await
+    }
+
+    #[tracing::instrument(skip(self))]
     async fn search(
         &self,
         query: &str,

@@ -474,6 +474,11 @@ fn page_action_to_intent(action: PageAction, new_tab: bool) -> DockIntent {
         PageAction::Open(tab) if new_tab => DockIntent::OpenInNewTab(tab),
         PageAction::Open(tab) => DockIntent::Open(tab),
         PageAction::CopyToClipboard(text) => DockIntent::CopyToClipboard(text),
+        // Liked Songs mutations are dispatched inside `PageRegistry::ui` and
+        // never reach the shell as an intent.
+        PageAction::SaveTrack(_) | PageAction::UnsaveTrack(_) => {
+            unreachable!("Liked Songs mutations are handled in the page registry")
+        }
     }
 }
 

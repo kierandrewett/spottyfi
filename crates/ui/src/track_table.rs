@@ -111,6 +111,10 @@ pub enum TrackAction {
     PlayNext(usize),
     /// "Add to queue" was chosen for the row at `position`.
     AddToQueue(usize),
+    /// "Save to Liked Songs" was chosen for the row at `position`.
+    SaveToLiked(usize),
+    /// "Remove from Liked Songs" was chosen for the row at `position`.
+    RemoveFromLiked(usize),
     /// "Copy URI" was chosen for the row at `position`.
     CopyUri(usize),
     /// "Go to album" was chosen — navigate to this album id.
@@ -522,6 +526,15 @@ fn context_menu(ui: &mut egui::Ui, track_row: &TrackRow<'_>) -> Option<TrackActi
     }
     if ui.button("Add to queue").clicked() {
         action = Some(TrackAction::AddToQueue(track_row.position));
+        ui.close();
+    }
+    ui.separator();
+    if ui.button("Save to Liked Songs").clicked() {
+        action = Some(TrackAction::SaveToLiked(track_row.position));
+        ui.close();
+    }
+    if ui.button("Remove from Liked Songs").clicked() {
+        action = Some(TrackAction::RemoveFromLiked(track_row.position));
         ui.close();
     }
     ui.separator();

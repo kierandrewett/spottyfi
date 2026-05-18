@@ -136,6 +136,12 @@ pub enum PageAction {
     Open(Tab),
     /// Copy a string (a Spotify URI) to the system clipboard.
     CopyToClipboard(String),
+    /// Save a track (by bare Spotify id) to the user's Liked Songs. Handled
+    /// inside [`PageRegistry::ui`] — never bubbles further.
+    SaveTrack(String),
+    /// Remove a track (by bare Spotify id) from the user's Liked Songs.
+    /// Handled inside [`PageRegistry::ui`] — never bubbles further.
+    UnsaveTrack(String),
 }
 
 /// One navigable page: a typed, stateful surface in the centre dock.
@@ -210,6 +216,10 @@ impl PageRegistry {
     }
 
     /// Render `tab`'s page, creating it on first use. Returns its action.
+    ///
+    /// Library mutations ([`PageAction::SaveTrack`] / [`PageAction::Unsave
+    /// Track`]) are dispatched here — the registry holds the API client — and
+    /// not bubbled up as navigation/transport intents.
     pub fn ui(
         &mut self,
         tab: &Tab,
@@ -221,7 +231,34 @@ impl PageRegistry {
             .pages
             .entry(tab.clone())
             .or_insert_with(|| build_page(tab, services));
-        page.ui(ui, ctx)
+        let action = page.ui(ui, ctx);
+        match action {
+            Some(PageAction::SaveTrack(id)) => {
+                self.set_track_saved(id, true);
+                None
+            }
+            Some(PageAction::UnsaveTrack(id)) => {
+                self.set_track_saved(id, false);
+                None
+            }
+            other => other,
+        }
+    }
+
+    /// Dispatch a Liked Songs add/remove for `track_id` in the background.
+    fn set_track_saved(&self, track_id: String, saved: bool) {
+        let api = Arc::clone(&self.services.api);
+        self.services.runtime.spawn(async move {
+            let ids = std::slice::from_ref(&track_id);
+            let result = if saved {
+                api.save_tracks(ids).await
+            } else {
+                api.remove_saved_tracks(ids).await
+            };
+            if let Err(err) = result {
+                tracing::warn!(%err, %track_id, saved, "Liked Songs update failed");
+            }
+        });
     }
 
     /// Drop the pages whose tabs are no longer open.

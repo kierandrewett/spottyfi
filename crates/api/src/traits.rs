@@ -162,6 +162,14 @@ pub trait SpotifyApi: Send + Sync {
     /// `limit` artists.
     async fn followed_artists(&self, limit: u32) -> ApiResult<Vec<Artist>>;
 
+    /// Save tracks to the user's "Liked Songs" library (`PUT /me/tracks`).
+    /// Unparseable ids are skipped; an empty list is a no-op.
+    async fn save_tracks(&self, track_ids: &[String]) -> ApiResult<()>;
+
+    /// Remove tracks from the user's "Liked Songs" library
+    /// (`DELETE /me/tracks`). Unparseable ids are skipped.
+    async fn remove_saved_tracks(&self, track_ids: &[String]) -> ApiResult<()>;
+
     /// A multi-type catalogue search (`GET /search`).
     async fn search(
         &self,

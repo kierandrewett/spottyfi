@@ -152,6 +152,20 @@ pub fn resolve_action(
             let track = track_at(entries, position)?;
             to_queue_track(track).map(PageAction::Enqueue)
         }
+        TrackAction::SaveToLiked(position) => {
+            let track = track_at(entries, position)?;
+            track
+                .id
+                .as_ref()
+                .map(|id| PageAction::SaveTrack(id.id().to_owned()))
+        }
+        TrackAction::RemoveFromLiked(position) => {
+            let track = track_at(entries, position)?;
+            track
+                .id
+                .as_ref()
+                .map(|id| PageAction::UnsaveTrack(id.id().to_owned()))
+        }
         // The page applies header sorts itself; nothing to dispatch.
         TrackAction::Sort(_) => None,
     }
