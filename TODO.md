@@ -14,24 +14,23 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
 - [x] CI: build + clippy + fmt + test on Linux
 - [x] Public GitHub repo, regular commits + pushes
 
-## Phase 1 — Authentication `[~]`
+## Phase 1 — Authentication `[x]`
 
 - [x] OAuth 2.0 PKCE against `accounts.spotify.com`
 - [x] Local HTTP callback server (fixed port `127.0.0.1:8888`)
 - [x] Token stored in keyring (`dev.drewett.spottyfi`)
 - [x] Auto-refresh background task
 - [x] Login screen + logout flow
-- [ ] **Live test, blocked on maintainer:** register a Spotify app, set
-      `SPOTTYFI_CLIENT_ID`, register redirect `http://127.0.0.1:8888/callback`
+- [x] **Live-tested:** registered Spotify app, `SPOTTYFI_CLIENT_ID` set,
+      redirect `http://127.0.0.1:8888/callback` — login flow verified
 
-## Phase 2 — Audio engine `[~]`
+## Phase 2 — Audio engine `[x]`
 
 - [x] `audio` wraps librespot 0.8 `Player`/`Session`
 - [x] `PlaybackController` async API (play/pause/seek/volume)
 - [x] Playback state snapshot, refreshed ~10Hz
 - [x] Transport bar wired + debug "play a URI" control
-- [ ] **Live test, blocked on maintainer:** sign in with a Premium account and
-      play a `spotify:track:` URI
+- [x] **Live-tested:** signed in with a Premium account and played tracks
 
 ## Phase 3 — Web API client `[x]`
 
@@ -273,3 +272,30 @@ See `PLAN.md` for the full brief. Each phase ends with a runnable binary.
   flake packaging. The AppImage / Flatpak manifests are correct and complete
   but not built here (no display / packaging tooling in the dev environment);
   Windows and macOS remain configuration-only.
+
+## Post-roadmap — 1.0.0 polish `[x]`
+
+After the roadmap, a maintainer-feedback round landed (see
+`docs/feedback-backlog.md` and the git history):
+
+- [x] Smooth playback position (30/60Hz interpolation); per-packet allocation
+      removed from the audio path
+- [x] Full-song waveform seek bar — decoded in the background, animates in
+- [x] Scrubber polish — scroll-to-adjust, drag-out recovery, seek tooltip
+- [x] Spotify Connect — device picker, "playing elsewhere" banner, remote
+      playback control, and the device is no longer seized at launch
+- [x] End-to-end caching + prefetch — playlists, Liked Songs, lyrics, Last.fm
+      charts and every fixed page are warmed so navigation is instant
+- [x] Recently Played and Your Artists pages; placeholder sidebar entries
+      removed
+- [x] Save / remove tracks to Liked Songs from the track menu
+- [x] Theme + menu spacing QOL; AMOLED and Nord themes; VSCode-style activity
+      dropdown
+
+### Known issues — need a maintainer with the running app
+
+- [ ] Spotify Connect device-switching reportedly misbehaves — needs concrete
+      repro detail
+- [ ] The official Spotify client shows the Spottyfi device stuck at `0:00` —
+      needs a `RUST_LOG=librespot_connect=trace` capture to diagnose
+- [ ] Tab-bar alignment — a screenshot of the tab strip would pin the fix

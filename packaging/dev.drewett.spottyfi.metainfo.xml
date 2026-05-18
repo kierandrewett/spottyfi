@@ -59,6 +59,18 @@
   </recommends>
 
   <releases>
+    <release version="1.0.0" date="2026-05-18">
+      <description>
+        <p>First stable release.</p>
+        <ul>
+          <li>Full-song waveform seek bar, decoded in the background</li>
+          <li>Spotify Connect device picker with remote playback control</li>
+          <li>Recently Played and Your Artists library pages</li>
+          <li>Save tracks to Liked Songs from the track menu</li>
+          <li>End-to-end caching and prefetch so pages open instantly</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-05-17">
       <description>
         <p>Initial development release.</p>

@@ -8,10 +8,11 @@ and devices panels drag into splits), and stays keyboard-first and
 information-dense — the layout of the leaked internal Spotify imgui tool with
 the feature surface of the modern client.
 
-> **Status:** early development. See [`PLAN.md`](PLAN.md) for the full roadmap
-> and [`TODO.md`](TODO.md) for the phase tracker. All roadmap phases (0–13) are
-> implemented; live playback still needs a maintainer-supplied Spotify app —
-> see [`docs/questions.md`](docs/questions.md).
+> **Status:** 1.0.0. All roadmap phases (0–13) and the post-roadmap polish
+> round are implemented. See [`PLAN.md`](PLAN.md) for the architecture and
+> [`TODO.md`](TODO.md) for the phase tracker. Playback needs a Spotify
+> **Premium** account and a registered Spotify app id — see
+> [`docs/questions.md`](docs/questions.md).
 
 ## Requirements
 
