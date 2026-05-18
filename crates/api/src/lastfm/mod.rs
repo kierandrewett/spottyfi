@@ -30,7 +30,11 @@
 mod model;
 mod resolve;
 
+use std::sync::Arc;
+
 use serde::de::DeserializeOwned;
+use serde::Serialize;
+use spottyfi_cache::{Kind, MetadataCache};
 
 pub use model::{LastfmArtist, LastfmTrack};
 pub use resolve::LastfmResolver;
@@ -78,13 +82,18 @@ pub type LastfmResult<T> = Result<T, LastfmError>;
 
 /// A client for the slice of the Last.fm API that Spottyfi's Browse uses.
 ///
-/// Cloning is cheap — the inner `reqwest::Client` and the key are shared.
+/// Cloning is cheap — the inner `reqwest::Client`, the key and the cache
+/// handle are all shared.
 #[derive(Clone)]
 pub struct LastfmClient {
     /// The shared HTTP client.
     http: reqwest::Client,
     /// The Last.fm API key.
     api_key: String,
+    /// The persistent metadata store, when configured. Last.fm chart and
+    /// similarity results are cached here stale-while-revalidate, so a
+    /// relaunch serves Browse / Charts / Made For You without re-fetching.
+    cache: Option<Arc<MetadataCache>>,
 }
 
 impl std::fmt::Debug for LastfmClient {
@@ -101,7 +110,63 @@ impl LastfmClient {
         Self {
             http: reqwest::Client::new(),
             api_key: api_key.into(),
+            cache: None,
         }
+    }
+
+    /// Attach a persistent metadata store, enabling stale-while-revalidate
+    /// caching of every Last.fm chart and similarity call.
+    #[must_use]
+    pub fn with_cache(mut self, cache: Arc<MetadataCache>) -> Self {
+        self.cache = Some(cache);
+        self
+    }
+
+    /// Run `fetch` through the cache: a hit is served immediately (and, when
+    /// stale, refreshed in the background); a miss fetches and stores.
+    ///
+    /// With no cache configured this is a transparent passthrough to `fetch`.
+    async fn cached_call<T, F, Fut>(&self, key: String, fetch: F) -> LastfmResult<T>
+    where
+        T: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = LastfmResult<T>> + Send + 'static,
+    {
+        let Some(cache) = self.cache.clone() else {
+            return fetch().await;
+        };
+
+        // The SQLite store is blocking — read it off a blocking worker.
+        let lookup = {
+            let (cache, key) = (Arc::clone(&cache), key.clone());
+            tokio::task::spawn_blocking(move || cache.get::<T>(Kind::Collection, &key))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .flatten()
+        };
+
+        if let Some(hit) = lookup {
+            if hit.staleness.should_revalidate() {
+                tokio::spawn(async move {
+                    if let Ok(value) = fetch().await {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            cache.put(Kind::Collection, &key, &value)
+                        })
+                        .await;
+                    }
+                });
+            }
+            return Ok(hit.value);
+        }
+
+        let value = fetch().await?;
+        {
+            let value = value.clone();
+            let _ = tokio::task::spawn_blocking(move || cache.put(Kind::Collection, &key, &value))
+                .await;
+        }
+        Ok(value)
     }
 
     /// Build a client from the `SPOTTYFI_LASTFM_API_KEY` environment variable.
@@ -164,39 +229,70 @@ impl LastfmClient {
     /// The global top artists chart (`chart.getTopArtists`).
     #[tracing::instrument(skip(self))]
     pub async fn chart_top_artists(&self, limit: u32) -> LastfmResult<Vec<LastfmArtist>> {
-        let limit = limit.to_string();
-        let resp: ArtistsResponse = self
-            .get("chart.gettopartists", &[("limit", &limit)])
-            .await?;
-        Ok(resp.artists.artist.into_iter().map(Into::into).collect())
+        let this = self.clone();
+        self.cached_call(
+            format!("lastfm:chart-top-artists:{limit}"),
+            move || async move {
+                let limit = limit.to_string();
+                let resp: ArtistsResponse = this
+                    .get("chart.gettopartists", &[("limit", &limit)])
+                    .await?;
+                Ok(resp.artists.artist.into_iter().map(Into::into).collect())
+            },
+        )
+        .await
     }
 
     /// The global top tracks chart (`chart.getTopTracks`).
     #[tracing::instrument(skip(self))]
     pub async fn chart_top_tracks(&self, limit: u32) -> LastfmResult<Vec<LastfmTrack>> {
-        let limit = limit.to_string();
-        let resp: TracksResponse = self.get("chart.gettoptracks", &[("limit", &limit)]).await?;
-        Ok(resp.tracks.track.into_iter().map(Into::into).collect())
+        let this = self.clone();
+        self.cached_call(
+            format!("lastfm:chart-top-tracks:{limit}"),
+            move || async move {
+                let limit = limit.to_string();
+                let resp: TracksResponse =
+                    this.get("chart.gettoptracks", &[("limit", &limit)]).await?;
+                Ok(resp.tracks.track.into_iter().map(Into::into).collect())
+            },
+        )
+        .await
     }
 
     /// The top artists for a tag/genre (`tag.getTopArtists`).
     #[tracing::instrument(skip(self))]
     pub async fn tag_top_artists(&self, tag: &str, limit: u32) -> LastfmResult<Vec<LastfmArtist>> {
-        let limit = limit.to_string();
-        let resp: ArtistsResponse = self
-            .get("tag.gettopartists", &[("tag", tag), ("limit", &limit)])
-            .await?;
-        Ok(resp.artists.artist.into_iter().map(Into::into).collect())
+        let this = self.clone();
+        let tag = tag.to_owned();
+        self.cached_call(
+            format!("lastfm:tag-top-artists:{tag}:{limit}"),
+            move || async move {
+                let limit = limit.to_string();
+                let resp: ArtistsResponse = this
+                    .get("tag.gettopartists", &[("tag", &tag), ("limit", &limit)])
+                    .await?;
+                Ok(resp.artists.artist.into_iter().map(Into::into).collect())
+            },
+        )
+        .await
     }
 
     /// The top tracks for a tag/genre (`tag.getTopTracks`).
     #[tracing::instrument(skip(self))]
     pub async fn tag_top_tracks(&self, tag: &str, limit: u32) -> LastfmResult<Vec<LastfmTrack>> {
-        let limit = limit.to_string();
-        let resp: TracksResponse = self
-            .get("tag.gettoptracks", &[("tag", tag), ("limit", &limit)])
-            .await?;
-        Ok(resp.tracks.track.into_iter().map(Into::into).collect())
+        let this = self.clone();
+        let tag = tag.to_owned();
+        self.cached_call(
+            format!("lastfm:tag-top-tracks:{tag}:{limit}"),
+            move || async move {
+                let limit = limit.to_string();
+                let resp: TracksResponse = this
+                    .get("tag.gettoptracks", &[("tag", &tag), ("limit", &limit)])
+                    .await?;
+                Ok(resp.tracks.track.into_iter().map(Into::into).collect())
+            },
+        )
+        .await
     }
 
     /// Artists similar to a named artist (`artist.getSimilar`).
@@ -206,19 +302,27 @@ impl LastfmClient {
         artist: &str,
         limit: u32,
     ) -> LastfmResult<Vec<LastfmArtist>> {
-        let limit = limit.to_string();
-        let resp: SimilarArtistsResponse = self
-            .get(
-                "artist.getsimilar",
-                &[("artist", artist), ("limit", &limit), ("autocorrect", "1")],
-            )
-            .await?;
-        Ok(resp
-            .similarartists
-            .artist
-            .into_iter()
-            .map(Into::into)
-            .collect())
+        let this = self.clone();
+        let artist = artist.to_owned();
+        self.cached_call(
+            format!("lastfm:similar-artists:{artist}:{limit}"),
+            move || async move {
+                let limit = limit.to_string();
+                let resp: SimilarArtistsResponse = this
+                    .get(
+                        "artist.getsimilar",
+                        &[("artist", &artist), ("limit", &limit), ("autocorrect", "1")],
+                    )
+                    .await?;
+                Ok(resp
+                    .similarartists
+                    .artist
+                    .into_iter()
+                    .map(Into::into)
+                    .collect())
+            },
+        )
+        .await
     }
 
     /// Tracks similar to a named track (`track.getSimilar`).
@@ -229,24 +333,32 @@ impl LastfmClient {
         track: &str,
         limit: u32,
     ) -> LastfmResult<Vec<LastfmTrack>> {
-        let limit = limit.to_string();
-        let resp: SimilarTracksResponse = self
-            .get(
-                "track.getsimilar",
-                &[
-                    ("artist", artist),
-                    ("track", track),
-                    ("limit", &limit),
-                    ("autocorrect", "1"),
-                ],
-            )
-            .await?;
-        Ok(resp
-            .similartracks
-            .track
-            .into_iter()
-            .map(Into::into)
-            .collect())
+        let this = self.clone();
+        let (artist, track) = (artist.to_owned(), track.to_owned());
+        self.cached_call(
+            format!("lastfm:similar-tracks:{artist}:{track}:{limit}"),
+            move || async move {
+                let limit = limit.to_string();
+                let resp: SimilarTracksResponse = this
+                    .get(
+                        "track.getsimilar",
+                        &[
+                            ("artist", &artist),
+                            ("track", &track),
+                            ("limit", &limit),
+                            ("autocorrect", "1"),
+                        ],
+                    )
+                    .await?;
+                Ok(resp
+                    .similartracks
+                    .track
+                    .into_iter()
+                    .map(Into::into)
+                    .collect())
+            },
+        )
+        .await
     }
 
     /// An artist's most-played tracks (`artist.getTopTracks`).
@@ -256,14 +368,22 @@ impl LastfmClient {
         artist: &str,
         limit: u32,
     ) -> LastfmResult<Vec<LastfmTrack>> {
-        let limit = limit.to_string();
-        let resp: TracksResponse = self
-            .get(
-                "artist.gettoptracks",
-                &[("artist", artist), ("limit", &limit), ("autocorrect", "1")],
-            )
-            .await?;
-        Ok(resp.tracks.track.into_iter().map(Into::into).collect())
+        let this = self.clone();
+        let artist = artist.to_owned();
+        self.cached_call(
+            format!("lastfm:artist-top-tracks:{artist}:{limit}"),
+            move || async move {
+                let limit = limit.to_string();
+                let resp: TracksResponse = this
+                    .get(
+                        "artist.gettoptracks",
+                        &[("artist", &artist), ("limit", &limit), ("autocorrect", "1")],
+                    )
+                    .await?;
+                Ok(resp.tracks.track.into_iter().map(Into::into).collect())
+            },
+        )
+        .await
     }
 }
 

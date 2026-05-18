@@ -6,10 +6,10 @@
 //! the public [`LastfmArtist`] / [`LastfmTrack`] types are the flat,
 //! convenient projections the rest of the crate uses.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// A Last.fm artist: just a name (Last.fm has no Spotify ids).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastfmArtist {
     /// The artist's name, used verbatim as the search query when resolving
     /// the artist back to a Spotify object.
@@ -17,7 +17,7 @@ pub struct LastfmArtist {
 }
 
 /// A Last.fm track: a title plus its artist's name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastfmTrack {
     /// The track title.
     pub name: String,

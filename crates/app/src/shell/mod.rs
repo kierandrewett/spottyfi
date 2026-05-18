@@ -99,26 +99,38 @@ impl ShellState {
         if self.session.is_some() {
             return;
         }
+        // One persistent metadata store, shared by the lyrics layer and the
+        // Last.fm cache. `None` if the platform cache dir is unavailable.
+        let metadata_store = match open_metadata_store() {
+            Ok(store) => Some(store),
+            Err(err) => {
+                tracing::warn!(%err, "metadata cache unavailable; lyrics and Last.fm uncached");
+                None
+            }
+        };
         // Last.fm powers Browse's charts and recommendations. With no API key
-        // configured this is `None` and Browse degrades gracefully.
+        // configured this is `None` and Browse degrades gracefully; its chart
+        // and similarity results are cached so a relaunch does not re-fetch.
         let lastfm = match spottyfi_api::lastfm::LastfmClient::from_env() {
-            Ok(client) => Some(client),
+            Ok(client) => Some(match &metadata_store {
+                Some(store) => client.with_cache(Arc::clone(store)),
+                None => client,
+            }),
             Err(err) => {
                 tracing::info!(%err, "Last.fm not configured; Browse charts disabled");
                 None
             }
         };
         // The lyrics source layer — lrclib (the free default) is always on.
-        // A persistent lyrics cache is attached when the metadata SQLite
-        // store opens, so revisiting a track does not re-fetch its lyrics.
+        // The persistent lyrics cache shares the metadata store, so revisiting
+        // a track does not re-fetch its lyrics.
         let lyrics = {
             let service = spottyfi_api::lyrics::LyricsService::from_env();
-            match open_lyrics_cache() {
-                Ok(cache) => service.with_cache(cache),
-                Err(err) => {
-                    tracing::warn!(%err, "lyrics cache unavailable; lyrics will not be cached");
-                    service
+            match &metadata_store {
+                Some(store) => {
+                    service.with_cache(spottyfi_api::lyrics::LyricsCache::new(Arc::clone(store)))
                 }
+                None => service,
             }
         };
         let services = PageServices {
@@ -232,16 +244,14 @@ fn apply_nav(persisted: &mut PersistedShell, request: NavRequest) {
     }
 }
 
-/// Open the persistent lyrics cache over the platform metadata database.
+/// Open the persistent metadata store over the platform metadata database.
 ///
-/// The lyrics rows live in the same SQLite store as the rest of the metadata
-/// cache (its `lyrics` table); opening it here just attaches a second handle.
-/// On failure the lyrics layer runs cache-less — every lookup hits the
-/// network — rather than failing the login.
-fn open_lyrics_cache() -> Result<spottyfi_api::lyrics::LyricsCache, spottyfi_cache::CacheError> {
+/// The store is shared by the lyrics layer (its `lyrics` table) and the
+/// Last.fm cache (the `collections` table). On failure both run cache-less —
+/// every lookup hits the network — rather than failing the login.
+fn open_metadata_store() -> Result<Arc<spottyfi_cache::MetadataCache>, spottyfi_cache::CacheError> {
     let db_path = spottyfi_cache::paths::metadata_db_path()?;
-    let store = spottyfi_cache::MetadataCache::open(db_path)?;
-    Ok(spottyfi_api::lyrics::LyricsCache::new(Arc::new(store)))
+    Ok(Arc::new(spottyfi_cache::MetadataCache::open(db_path)?))
 }
 
 /// Apply one [`TabCommand`] to the persisted dock — the right-click menu's
