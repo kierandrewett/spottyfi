@@ -61,11 +61,6 @@ fn main_entries() -> Vec<Entry> {
             label: "Discover",
             tab: Tab::MadeForYou,
         },
-        Entry {
-            icon: Icon::Podcast,
-            label: "Podcasts",
-            tab: Tab::Placeholder("Podcasts".to_owned()),
-        },
     ]
 }
 
@@ -80,17 +75,12 @@ fn library_entries() -> Vec<Entry> {
         Entry {
             icon: Icon::RecentlyPlayed,
             label: "Recently Played",
-            tab: Tab::Placeholder("Recently Played".to_owned()),
+            tab: Tab::RecentlyPlayed,
         },
         Entry {
             icon: Icon::Heart,
             label: "Liked Songs",
             tab: Tab::LikedSongs,
-        },
-        Entry {
-            icon: Icon::Podcast,
-            label: "Your Podcasts",
-            tab: Tab::Placeholder("Your Podcasts".to_owned()),
         },
         Entry {
             icon: Icon::Disc,
@@ -100,12 +90,7 @@ fn library_entries() -> Vec<Entry> {
         Entry {
             icon: Icon::User,
             label: "Your Artists",
-            tab: Tab::Placeholder("Your Artists".to_owned()),
-        },
-        Entry {
-            icon: Icon::List,
-            label: "Local Files",
-            tab: Tab::Placeholder("Local Files".to_owned()),
+            tab: Tab::FollowedArtists,
         },
     ]
 }

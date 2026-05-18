@@ -152,6 +152,16 @@ pub trait SpotifyApi: Send + Sync {
     /// deprecated and works for newly-registered apps.
     async fn current_user_top_tracks(&self, limit: u32) -> ApiResult<Vec<Track>>;
 
+    /// The user's recent listening history
+    /// (`GET /me/player/recently-played`), served with stale-while-revalidate
+    /// caching. `limit` caps how many recent tracks are returned.
+    async fn recently_played(&self, limit: u32) -> ApiResult<Vec<Track>>;
+
+    /// The artists the user follows (`GET /me/following?type=artist`), served
+    /// with stale-while-revalidate caching. Cursor pages are followed up to
+    /// `limit` artists.
+    async fn followed_artists(&self, limit: u32) -> ApiResult<Vec<Artist>>;
+
     /// A multi-type catalogue search (`GET /search`).
     async fn search(
         &self,

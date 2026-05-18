@@ -58,6 +58,10 @@ pub enum Tab {
     /// The Made For You page: recommendations seeded from the user's top
     /// artists and tracks via Last.fm.
     MadeForYou,
+    /// The Recently Played page: the user's recent listening history.
+    RecentlyPlayed,
+    /// The Your Artists page: the artists the user follows.
+    FollowedArtists,
     /// The Settings page: audio, equalizer, local files, appearance, hotkeys.
     Settings,
     /// A not-yet-built page. Carries its display name; the body is a "coming
@@ -98,6 +102,8 @@ impl Tab {
             Tab::Charts => "Charts",
             Tab::NewReleases => "New Releases",
             Tab::MadeForYou => "Made For You",
+            Tab::RecentlyPlayed => "Recently Played",
+            Tab::FollowedArtists => "Your Artists",
             Tab::Settings => "Settings",
             Tab::Placeholder(_) => "Coming soon",
             Tab::NowPlayingArt => "Now Playing",

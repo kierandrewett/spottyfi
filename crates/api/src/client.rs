@@ -527,6 +527,56 @@ impl SpotifyApi for SpotifyClient {
     }
 
     #[tracing::instrument(skip(self))]
+    #[allow(deprecated)] // rspotify mis-marks `current_user_recently_played`.
+    async fn recently_played(&self, limit: u32) -> ApiResult<Vec<Track>> {
+        let this = self.clone();
+        self.cached(Kind::Collection, "recently-played", move || {
+            let this = this.clone();
+            async move {
+                let page = this
+                    .request(|| {
+                        this.rspotify
+                            .current_user_recently_played(Some(limit), None)
+                    })
+                    .await?;
+                Ok(page.items.iter().map(|h| map::track(&h.track)).collect())
+            }
+        })
+        .await
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn followed_artists(&self, limit: u32) -> ApiResult<Vec<Artist>> {
+        let this = self.clone();
+        self.cached(Kind::Collection, "followed-artists", move || {
+            let this = this.clone();
+            async move {
+                // `me/following` is cursor-paginated; follow the `after`
+                // cursor, collecting until exhausted or the cap is reached.
+                let mut artists = Vec::new();
+                let mut after: Option<String> = None;
+                loop {
+                    let after_ref = after.clone();
+                    let page = this
+                        .request(|| {
+                            this.rspotify
+                                .current_user_followed_artists(after_ref.as_deref(), Some(50))
+                        })
+                        .await?;
+                    artists.extend(page.items.iter().map(map::artist));
+                    after = page.cursors.and_then(|c| c.after);
+                    if after.is_none() || artists.len() >= limit as usize {
+                        break;
+                    }
+                }
+                artists.truncate(limit as usize);
+                Ok(artists)
+            }
+        })
+        .await
+    }
+
+    #[tracing::instrument(skip(self))]
     async fn search(
         &self,
         query: &str,

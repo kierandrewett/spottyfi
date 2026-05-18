@@ -166,6 +166,8 @@ impl ShellState {
             Tab::Charts,
             Tab::NewReleases,
             Tab::MadeForYou,
+            Tab::RecentlyPlayed,
+            Tab::FollowedArtists,
         ]);
         self.session = Some(ActiveSession {
             pages,

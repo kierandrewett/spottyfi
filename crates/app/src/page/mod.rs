@@ -23,6 +23,7 @@ mod browse;
 mod cards;
 mod category;
 mod charts;
+mod followed_artists;
 mod home;
 mod incremental;
 mod library;
@@ -32,6 +33,7 @@ mod made_for_you;
 mod new_releases;
 mod playlist;
 mod promise;
+mod recently_played;
 mod search;
 mod search_load;
 mod settings;
@@ -58,6 +60,7 @@ pub use artist::ArtistPage;
 pub use browse::BrowsePage;
 pub use category::CategoryPage;
 pub use charts::ChartsPage;
+pub use followed_artists::FollowedArtistsPage;
 pub use home::HomePage;
 pub use library::LibraryPage;
 pub use liked::LikedSongsPage;
@@ -65,6 +68,7 @@ pub use lyrics::LyricsPanel;
 pub use made_for_you::MadeForYouPage;
 pub use new_releases::NewReleasesPage;
 pub use playlist::PlaylistPage;
+pub use recently_played::RecentlyPlayedPage;
 pub use search::SearchPage;
 pub use settings::{settings_page, SettingsAction, SettingsContext};
 
@@ -291,6 +295,8 @@ fn build_page(tab: &Tab, services: &PageServices) -> Box<dyn Page> {
         Tab::Charts => Box::new(ChartsPage::new(services)),
         Tab::NewReleases => Box::new(NewReleasesPage::new(services)),
         Tab::MadeForYou => Box::new(MadeForYouPage::new(services)),
+        Tab::RecentlyPlayed => Box::new(RecentlyPlayedPage::new(services)),
+        Tab::FollowedArtists => Box::new(FollowedArtistsPage::new(services)),
         // The Lyrics panel is registry-backed (it needs `PageServices` to
         // fetch lyrics) even though it is docked like an auxiliary panel.
         Tab::Lyrics => Box::new(LyricsPanel::new(services)),
