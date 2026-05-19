@@ -86,19 +86,32 @@ experience, source-tagged everywhere, de-duplicated.
   findings fixed (per-request salt, `error_for_status`, empty-library
   decode, case-insensitive MBID match, no-artist dedup safety, Unicode-aware
   normalisation).
+- **Phase C player done.** Extracted a shared `CpalOutput` stage from
+  `CpalSink`; built `HttpAudioPlayer` — fetch + `symphonia` decode (FLAC /
+  MP3 / Ogg-Vorbis) + resample → `CpalOutput`, on its own thread, with
+  play/pause/resume/stop/seek/volume/position. Subsonic audio is playable.
 
 ## Status — honest assessment
 
-Phases **A and B are complete, tested and committed**: a real OpenSubsonic
-client and the whole multi-source + de-dup architecture. These are the
-foundations and they are solid.
+The **whole foundation stack is complete, tested and committed**:
 
-The remaining phases (**C** playback engine, **D** settings/first-run wizard,
-**E** search UI + source switching, **F/G** Apple Music) are *app
-integration* — wiring the foundations through the audio engine and the egui
-frontend. That is a large body of work: a second playback path
-(`symphonia` HTTP decode → the cpal sink), source-config persistence, new
-settings + wizard UI, and source-aware search/browse/transport screens. It is
-**not an overnight deliverable**, and CEF-based Apple Music playback is a
-substantial subproject of its own. Tonight delivered the foundations to
-spec; the integration is the next, larger push.
+- **A** — OpenSubsonic client (`crates/subsonic`).
+- **B** — multi-source abstraction + cross-source de-duplication
+  (`crates/sources`).
+- **C (player half)** — `HttpAudioPlayer`: fetch → `symphonia` decode →
+  the shared `CpalOutput`. Subsonic audio is fully playable as a unit.
+
+Every layer a multi-source app needs — talk to the server, model sources
+uniformly, de-duplicate, decode and play non-Spotify audio — exists, is unit
+tested, and was validated against the OpenSubsonic spec by an opencode pass.
+
+**What remains is app integration** and it is the large majority of the
+effort: the `app` crate is still Spotify-shaped end to end. Wiring the
+foundations in means a source-aware engine/controller/queue, a `SourceRegistry`
+in the app state, source-config persistence, the first-run wizard and the
+settings UI, and source-aware search/browse/transport screens with badges and
+in-player source switching — plus the Apple Music catalog client and the CEF
+playback subproject. That is a multi-day push, not an overnight one. It is
+**not** started here, deliberately: a half-wired `app` crate would break the
+build for no gain. The foundations are landed clean so the integration can
+proceed crate by crate.
