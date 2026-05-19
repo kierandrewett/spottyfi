@@ -21,7 +21,7 @@ use librespot::core::config::SessionConfig;
 use librespot::core::session::Session;
 use librespot::core::{FileId, SpotifyId};
 use librespot::metadata::audio::{AudioFileFormat, AudioItem, UniqueFields};
-use librespot::playback::audio_backend;
+use librespot::playback::audio_backend::Sink;
 use librespot::playback::config::{Bitrate, PlayerConfig, VolumeCtrl};
 use librespot::playback::mixer::softmixer::SoftMixer;
 use librespot::playback::mixer::{Mixer, MixerConfig};
@@ -204,11 +204,6 @@ impl Engine {
             .map(|m| Arc::new(m) as Arc<dyn Mixer>)
             .map_err(|err| AudioError::Connect(err.to_string()))?;
 
-        // The stock backend builder (the `rodio` sink), wrapped per-stream by
-        // Spottyfi's `TappedSink` so the EQ DSP and the UI sample tap sit
-        // between librespot and the real output.
-        let backend = audio_backend::find(None).ok_or(AudioError::NoBackend)?;
-        let audio_format = crate::sink::DECODE_FORMAT;
         let soft_volume = mixer.get_soft_volume();
         let eq_params: SharedEqParams = Arc::new(ArcSwap::from_pointee(EqParams::default()));
         let tap = AudioTap::new();
@@ -220,8 +215,20 @@ impl Engine {
         // opens its own audio-file streams independently of playback.
         let connect_session = session.clone();
         let analysis_session = connect_session.clone();
+        // Spottyfi's own `cpal` output sink — low, fixed latency and instant
+        // pause — wrapped per-stream by `TappedSink` so the EQ DSP and the UI
+        // sample tap sit between librespot and the real output. The sink is
+        // built on librespot's player thread (`cpal::Stream` is `!Send`); a
+        // device-open failure degrades to a silent `NullSink` rather than
+        // panicking, so login still succeeds.
         let player = Player::new(player_config, session, soft_volume, move || {
-            let inner = backend(None, audio_format);
+            let inner: Box<dyn Sink> = match crate::cpal_sink::CpalSink::open() {
+                Ok(sink) => Box::new(sink),
+                Err(err) => {
+                    tracing::error!(%err, "audio output device unavailable; playing silently");
+                    Box::new(crate::cpal_sink::NullSink)
+                }
+            };
             Box::new(TappedSink::new(inner, Arc::clone(&sink_params), &sink_tap))
         });
 

@@ -31,6 +31,7 @@
 mod config;
 mod connect;
 mod controller;
+mod cpal_sink;
 mod dsp;
 mod engine;
 mod error;

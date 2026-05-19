@@ -9,21 +9,24 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-# The default audio backend. librespot's `rodio` backend goes through ALSA on
-# Linux (and the ALSA shim on PipeWire); it is the only backend Phase 2 wires.
 # `rustls-tls-native-roots` keeps librespot's TLS on rustls, matching the rest
 # of the workspace (reqwest, rspotify) rather than pulling in native-tls.
-default = ["rodio-backend"]
-rodio-backend = ["librespot/rodio-backend", "librespot/rustls-tls-native-roots"]
+default = ["rustls-tls"]
+rustls-tls = ["librespot/rustls-tls-native-roots"]
 
 [dependencies]
 spottyfi-models = { workspace = true }
 spottyfi-auth = { workspace = true }
 
 # librespot: audio streaming + Spotify session. `default-features = false`
-# drops the discovery/Connect mDNS stack and every bundled audio backend; the
-# `rodio-backend` feature above opts the chosen one back in.
+# drops the discovery/Connect mDNS stack and every bundled audio backend —
+# Spottyfi supplies its own output sink (`crate::cpal_sink`).
 librespot = { version = "0.8", default-features = false }
+
+# cpal: the cross-platform audio device layer. Spottyfi drives it directly
+# (see `crate::cpal_sink`) instead of librespot's buffered `rodio` backend,
+# for low, fixed output latency and an instant pause.
+cpal = "0.16"
 
 tokio = { workspace = true }
 tracing = { workspace = true }

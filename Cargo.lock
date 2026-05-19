@@ -3984,7 +3984,6 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88258620bf3e6808ea1fadd11639648d77c06280b9f5a4c9d14ea79f6f998af6"
 dependencies = [
- "cpal",
  "form_urlencoded",
  "futures-util",
  "librespot-audio",
@@ -3994,7 +3993,6 @@ dependencies = [
  "portable-atomic",
  "rand 0.9.4",
  "rand_distr",
- "rodio",
  "shell-words",
  "symphonia",
  "thiserror 2.0.18",
@@ -6253,17 +6251,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rodio"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e40ecf59e742e03336be6a3d53755e789fd05a059fa22dfa0ed624722319e183"
-dependencies = [
- "cpal",
- "dasp_sample",
- "num-rational",
-]
-
-[[package]]
 name = "ron"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7178,6 +7165,7 @@ name = "spottyfi-audio"
 version = "1.0.0"
 dependencies = [
  "arc-swap",
+ "cpal",
  "lewton",
  "librespot",
  "rand 0.10.1",

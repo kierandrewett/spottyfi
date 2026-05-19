@@ -25,7 +25,6 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use librespot::playback::audio_backend::{Sink, SinkResult};
-use librespot::playback::config::AudioFormat;
 use librespot::playback::convert::Converter;
 use librespot::playback::decoder::AudioPacket;
 use librespot::playback::{NUM_CHANNELS, SAMPLE_RATE};
@@ -159,12 +158,6 @@ impl Sink for TappedSink {
         self.inner.write(AudioPacket::Samples(processed), converter)
     }
 }
-
-/// The fixed audio format librespot decodes Spotify streams to.
-///
-/// Re-exported so [`Engine`](crate::engine::Engine) does not need to import it
-/// from librespot directly.
-pub(crate) const DECODE_FORMAT: AudioFormat = AudioFormat::F32;
 
 #[cfg(test)]
 mod tests {
