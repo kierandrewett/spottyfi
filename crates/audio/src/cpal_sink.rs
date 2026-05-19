@@ -18,7 +18,7 @@
 //! single-producer/single-consumer queue, lock-free on the hot path.
 
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -42,6 +42,42 @@ const RING_LATENCY_MS: usize = 150;
 /// A short, bounded wait: the consumer notifies on every drain, but the
 /// timeout guarantees progress even if a wakeup is missed.
 const PRODUCER_PARK: Duration = Duration::from_millis(5);
+
+/// Time constant of the per-sample output-gain ramp.
+///
+/// Every volume change, pause and crossfade step is delivered as a new target
+/// gain; the callback glides to it over roughly this long. Short enough to
+/// feel instant, long enough that no gain change ever clicks ("zipper noise").
+const GAIN_RAMP_SECONDS: f32 = 0.008;
+
+/// The real-time control surface the engine shares with the running sink.
+///
+/// Every field is an atomic the engine writes and the audio callback reads, so
+/// volume, pause and seek take effect within one device buffer (a few ms)
+/// rather than behind the ring buffer.
+#[derive(Clone)]
+pub struct SinkControls {
+    /// Target output gain as `f32` bits — the callback ramps toward it.
+    pub gain: Arc<AtomicU32>,
+    /// While `true` the callback emits silence and freezes the ring, so a
+    /// resume replays the buffered audio instantly. Driven by `start`/`stop`.
+    pub paused: Arc<AtomicBool>,
+    /// A one-shot flag: when set, the callback drops all buffered audio. The
+    /// engine raises it after a seek so stale pre-seek audio is never heard.
+    pub flush: Arc<AtomicBool>,
+}
+
+impl SinkControls {
+    /// Build a control surface with the given initial gain.
+    #[must_use]
+    pub fn new(initial_gain: f32) -> Self {
+        Self {
+            gain: Arc::new(AtomicU32::new(initial_gain.to_bits())),
+            paused: Arc::new(AtomicBool::new(false)),
+            flush: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
 
 /// The lock-free single-producer/single-consumer sample ring.
 ///
@@ -155,8 +191,8 @@ impl RingConsumer {
         n
     }
 
-    /// Drop all buffered audio — used when paused so resume starts clean.
-    fn clear(&self) {
+    /// Drop all buffered audio — used after a seek so stale audio is skipped.
+    fn drain(&self) {
         let write_pos = self.ring.write_pos.load(Ordering::Acquire);
         self.ring.read_pos.store(write_pos, Ordering::Release);
         self.ring.space.notify_one();
@@ -217,7 +253,8 @@ pub struct CpalSink {
     _stream: cpal::Stream,
     /// The ring producer the decode thread writes decoded PCM into.
     producer: RingProducer,
-    /// `true` while paused — the callback then emits silence and drains.
+    /// `true` while paused — the callback then emits silence and freezes the
+    /// ring. Shared with the engine; flipped by `start`/`stop`.
     paused: Arc<AtomicBool>,
     /// Optional resampler, present only when the device is not 44.1 kHz.
     resampler: Option<Resampler>,
@@ -228,11 +265,14 @@ pub struct CpalSink {
 impl CpalSink {
     /// Open the default output device and start its stream.
     ///
+    /// `controls` is the real-time surface the engine drives — output gain,
+    /// pause and seek-flush all take effect inside the audio callback.
+    ///
     /// # Errors
     ///
     /// Returns [`AudioError::NoBackend`] if no output device is available or
     /// the stream cannot be built.
-    pub fn open() -> AudioResult<Self> {
+    pub fn open(controls: SinkControls) -> AudioResult<Self> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or(AudioError::NoBackend)?;
         let supported = device.default_output_config().map_err(|err| {
@@ -261,15 +301,16 @@ impl CpalSink {
 
         let latency_samples = SAMPLE_RATE as usize / 1000 * RING_LATENCY_MS * 2;
         let (producer, consumer) = ring_pair(latency_samples);
-        let paused = Arc::new(AtomicBool::new(false));
+        let paused = Arc::clone(&controls.paused);
 
         let stream = build_stream(
             &device,
             &config,
             sample_format,
             consumer,
-            Arc::clone(&paused),
+            controls,
             channels,
+            device_rate,
         )?;
         stream.play().map_err(|err| {
             tracing::error!(%err, "starting the cpal stream failed");
@@ -303,8 +344,9 @@ impl Sink for CpalSink {
     }
 
     fn stop(&mut self) -> SinkResult<()> {
-        // Instant: just flag the callback. It emits silence and drops the
-        // buffered audio itself — no draining, no blocking.
+        // Instant: just flag the callback. It emits silence and freezes the
+        // ring — no draining, no blocking. `stop` and `write` are serialised
+        // on librespot's player thread, so no `write` is ever in flight here.
         self.paused.store(true, Ordering::Release);
         Ok(())
     }
@@ -339,15 +381,16 @@ fn build_stream(
     config: &cpal::StreamConfig,
     format: SampleFormat,
     consumer: RingConsumer,
-    paused: Arc<AtomicBool>,
+    controls: SinkControls,
     channels: usize,
+    rate: u32,
 ) -> AudioResult<cpal::Stream> {
     match format {
-        SampleFormat::F32 => stream_for::<f32>(device, config, consumer, paused, channels),
-        SampleFormat::I16 => stream_for::<i16>(device, config, consumer, paused, channels),
-        SampleFormat::I32 => stream_for::<i32>(device, config, consumer, paused, channels),
-        SampleFormat::U16 => stream_for::<u16>(device, config, consumer, paused, channels),
-        SampleFormat::F64 => stream_for::<f64>(device, config, consumer, paused, channels),
+        SampleFormat::F32 => stream_for::<f32>(device, config, consumer, controls, channels, rate),
+        SampleFormat::I16 => stream_for::<i16>(device, config, consumer, controls, channels, rate),
+        SampleFormat::I32 => stream_for::<i32>(device, config, consumer, controls, channels, rate),
+        SampleFormat::U16 => stream_for::<u16>(device, config, consumer, controls, channels, rate),
+        SampleFormat::F64 => stream_for::<f64>(device, config, consumer, controls, channels, rate),
         other => {
             tracing::error!(?other, "unsupported output sample format");
             Err(AudioError::NoBackend)
@@ -360,29 +403,46 @@ fn stream_for<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     consumer: RingConsumer,
-    paused: Arc<AtomicBool>,
+    controls: SinkControls,
     channels: usize,
+    rate: u32,
 ) -> AudioResult<cpal::Stream>
 where
     T: SizedSample + FromSample<f32> + Send + 'static,
 {
+    // Per-sample one-pole coefficient for the gain ramp at the device rate.
+    let ramp = 1.0 - (-1.0 / (GAIN_RAMP_SECONDS * rate as f32)).exp();
+    // The gain the callback is currently *at* — glides toward `controls.gain`.
+    let mut gain = f32::from_bits(controls.gain.load(Ordering::Relaxed));
     // Interleaved-stereo scratch the callback pops into before spreading the
     // samples across however many channels the device actually wants.
     let mut stereo: Vec<f32> = Vec::new();
+
     let callback = move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-        let frames = data.len() / channels.max(1);
-        if paused.load(Ordering::Acquire) {
-            consumer.clear();
+        // A seek just happened: drop the now-stale buffered audio.
+        if controls.flush.swap(false, Ordering::AcqRel) {
+            consumer.drain();
+        }
+        // Paused: emit silence and *freeze* the ring — leaving it full means
+        // a resume replays instantly, with no refill gap.
+        if controls.paused.load(Ordering::Acquire) {
             data.fill(T::EQUILIBRIUM);
             return;
         }
+
+        let frames = data.len() / channels.max(1);
         stereo.resize(frames * 2, 0.0);
         let got = consumer.pop(&mut stereo[..frames * 2]);
         // Anything the ring could not supply is an underrun — emit silence.
         stereo[got..frames * 2].fill(0.0);
+
+        let target = f32::from_bits(controls.gain.load(Ordering::Relaxed));
         for (frame_index, frame) in data.chunks_mut(channels).enumerate() {
-            let left = stereo[frame_index * 2];
-            let right = stereo[frame_index * 2 + 1];
+            // Glide the gain one sample-frame closer to its target: an abrupt
+            // jump would click, this ramp is inaudible.
+            gain += (target - gain) * ramp;
+            let left = stereo[frame_index * 2] * gain;
+            let right = stereo[frame_index * 2 + 1] * gain;
             match channels {
                 1 => frame[0] = T::from_sample((left + right) * 0.5),
                 _ => {
@@ -457,12 +517,12 @@ mod tests {
     }
 
     #[test]
-    fn clear_drops_buffered_audio() {
+    fn drain_drops_buffered_audio() {
         let (producer, consumer) = ring_pair(8);
         producer.push_blocking(&[1.0, 2.0, 3.0, 4.0]);
-        consumer.clear();
+        consumer.drain();
         let mut out = [0.0; 4];
-        assert_eq!(consumer.pop(&mut out), 0, "cleared ring yields nothing");
+        assert_eq!(consumer.pop(&mut out), 0, "drained ring yields nothing");
     }
 
     #[test]

@@ -12,7 +12,7 @@
 //! [`ArcSwap`] snapshot. See `docs/threading.md`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -24,7 +24,7 @@ use librespot::metadata::audio::{AudioFileFormat, AudioItem, UniqueFields};
 use librespot::playback::audio_backend::Sink;
 use librespot::playback::config::{Bitrate, PlayerConfig, VolumeCtrl};
 use librespot::playback::mixer::softmixer::SoftMixer;
-use librespot::playback::mixer::{Mixer, MixerConfig};
+use librespot::playback::mixer::{Mixer, MixerConfig, NoOpVolume};
 use librespot::playback::player::{Player, PlayerEvent};
 use tokio::runtime::Handle;
 
@@ -55,14 +55,13 @@ const MAX_VOLUME: u16 = u16::MAX;
 /// The codec librespot decodes — Spotify streams Ogg Vorbis at every tier.
 pub(crate) const CODEC_NAME: &str = "Ogg Vorbis";
 
-/// Total duration of the play/pause volume fade.
+/// How long after a pause is requested librespot's decoder is actually
+/// stopped.
 ///
-/// Deliberately short — a perceptual softening of the cut, not a slow ramp.
-/// The fade runs in [`FADE_STEPS`] mixer writes spread across this window.
-const FADE_DURATION: Duration = Duration::from_millis(120);
-
-/// Number of discrete mixer-volume writes a fade is split into.
-const FADE_STEPS: u32 = 12;
+/// The output gain is dropped to silence the instant pause is pressed and
+/// glides down inside the audio callback; this short grace period lets that
+/// ramp finish so the decoder stop is inaudible.
+const PAUSE_RAMP: Duration = Duration::from_millis(20);
 
 /// The perceptual loudness exponent applied to the `0.0..=1.0` UI volume.
 ///
@@ -118,7 +117,9 @@ fn bitrate_for(quality: crate::config::StreamQuality) -> Bitrate {
 pub(crate) struct Engine {
     /// The librespot player. Cheap to clone (`Arc` inside).
     player: Arc<Player>,
-    /// The software mixer driving output volume.
+    /// The software mixer. librespot itself applies no volume (`NoOpVolume`)
+    /// — all gain is the cpal callback's — so this exists purely as the
+    /// volume state `Spirc` reads and writes for the Connect device.
     mixer: Arc<dyn Mixer>,
     /// The Spotify Connect device. `Spirc` owns the player for the purpose of
     /// loading tracks and reporting state; track loads route through it so
@@ -126,19 +127,20 @@ pub(crate) struct Engine {
     connect: ConnectDevice,
     /// The published playback snapshot, read by the UI each frame.
     state: Arc<ArcSwap<PlaybackState>>,
-    /// The user's chosen volume as a `0.0..=1.0` fraction, independent of any
-    /// in-progress fade. A pause fade ramps the *mixer* to silence but leaves
-    /// this untouched, so the resume fade knows the level to climb back to and
-    /// the UI's slider never twitches.
-    target_volume: Arc<AtomicU32>,
-    /// Generation counter used to cancel a fade that a newer one supersedes.
-    /// Each fade captures the value, then aborts as soon as it no longer
-    /// matches — so a quick pause/resume tap can't leave a stale ramp running.
-    fade_generation: Arc<AtomicU64>,
-    /// `true` while a play/pause fade owns the mixer. The crossfade ramp in
-    /// the position poller yields the mixer to the play/pause fade so the two
-    /// never fight over the volume during the ~120ms fade window.
-    fade_active: Arc<AtomicBool>,
+    /// The real-time control surface shared with [`CpalSink`](crate::cpal_sink):
+    /// output gain, the pause flag and the seek-flush flag. The engine writes
+    /// the gain and flush; the audio callback acts on them within a few ms.
+    controls: crate::cpal_sink::SinkControls,
+    /// The user's chosen volume as a `0.0..=1.0` fraction. The actual output
+    /// gain is `perceptual_volume(base_volume) * crossfade_gain`; keeping the
+    /// fraction separate means the UI slider never twitches during a fade.
+    base_volume: Arc<AtomicU32>,
+    /// The current crossfade level (`f32` bits, `0.0..=1.0`), `1.0` outside a
+    /// track transition. The poller writes it; it folds into the output gain.
+    crossfade_gain: Arc<AtomicU32>,
+    /// `false` while paused — the engine then leaves the output gain at
+    /// silence and the poller's crossfade ramp does not touch it.
+    output_active: Arc<AtomicBool>,
     /// Track-transition crossfade duration in seconds (`f32` bits), `0.0`
     /// when disabled. Read every poller tick to fade a track's head in and
     /// its tail out; live-adjustable via [`Engine::set_crossfade`].
@@ -204,11 +206,17 @@ impl Engine {
             .map(|m| Arc::new(m) as Arc<dyn Mixer>)
             .map_err(|err| AudioError::Connect(err.to_string()))?;
 
-        let soft_volume = mixer.get_soft_volume();
         let eq_params: SharedEqParams = Arc::new(ArcSwap::from_pointee(EqParams::default()));
         let tap = AudioTap::new();
         let sink_params = Arc::clone(&eq_params);
         let sink_tap = tap.clone();
+
+        // The real-time control surface shared with the cpal sink. Its initial
+        // gain is the mixer's starting volume run through the perceptual curve.
+        let initial_volume = volume_from_u16(mixer.volume());
+        let controls = crate::cpal_sink::SinkControls::new(perceptual_volume(initial_volume));
+        let sink_controls = controls.clone();
+
         // `Spirc` needs its own handle to the same session; `Session` is an
         // `Arc` inside, so the clone is cheap and shares one connection. A
         // further clone is kept for the background waveform analyser, which
@@ -220,9 +228,13 @@ impl Engine {
         // sample tap sit between librespot and the real output. The sink is
         // built on librespot's player thread (`cpal::Stream` is `!Send`); a
         // device-open failure degrades to a silent `NullSink` rather than
-        // panicking, so login still succeeds.
-        let player = Player::new(player_config, session, soft_volume, move || {
-            let inner: Box<dyn Sink> = match crate::cpal_sink::CpalSink::open() {
+        // panicking, so login still succeeds. librespot itself applies no
+        // volume (`NoOpVolume`) — all gain is the cpal callback's, so a
+        // volume change is heard within one device buffer rather than behind
+        // the ring.
+        let player = Player::new(player_config, session, Box::new(NoOpVolume), move || {
+            let inner: Box<dyn Sink> = match crate::cpal_sink::CpalSink::open(sink_controls.clone())
+            {
                 Ok(sink) => Box::new(sink),
                 Err(err) => {
                     tracing::error!(%err, "audio output device unavailable; playing silently");
@@ -236,7 +248,6 @@ impl Engine {
         // becomes the active device, so track loads route through it and
         // plays land in Spotify's listening history. `Spirc` shares the
         // player and mixer the engine just built.
-        let initial_volume = volume_from_u16(mixer.volume());
         let connect = ConnectDevice::start(
             connect_session,
             access_token,
@@ -261,9 +272,10 @@ impl Engine {
             mixer,
             connect,
             state,
-            target_volume: Arc::new(AtomicU32::new(initial_volume.to_bits())),
-            fade_generation: Arc::new(AtomicU64::new(0)),
-            fade_active: Arc::new(AtomicBool::new(false)),
+            controls,
+            base_volume: Arc::new(AtomicU32::new(initial_volume.to_bits())),
+            crossfade_gain: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            output_active: Arc::new(AtomicBool::new(true)),
             crossfade_secs: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             eq_params,
             tap,
@@ -329,104 +341,82 @@ impl Engine {
 
     /// Set the output volume from a `0.0..=1.0` fraction.
     ///
-    /// Applies immediately — the `SoftMixer` attenuation is an atomic store
-    /// read per decoded audio packet, so the change lands on the next packet
-    /// (single-digit milliseconds) with no smoothing or ramp.
+    /// Applies immediately: the audio callback reads the new gain and glides
+    /// to it within one device buffer (a few ms), the short ramp keeping the
+    /// change click-free. The `SoftMixer` is also updated so the Connect
+    /// device reports a consistent volume to Spotify.
     pub(crate) fn set_volume(&self, volume: f32) {
         let clamped = volume.clamp(0.0, 1.0);
-        // A manual volume change overrides any fade in progress and becomes the
-        // new level a later resume fades back to. Bumping the generation
-        // abandons the running fade; clearing `fade_active` hands the mixer
-        // back to the crossfade poller (the abandoned fade never reaches its
-        // own clear, so this is the only path that releases it here).
-        self.fade_generation.fetch_add(1, Ordering::SeqCst);
-        self.fade_active.store(false, Ordering::SeqCst);
-        self.target_volume
-            .store(clamped.to_bits(), Ordering::SeqCst);
+        self.base_volume.store(clamped.to_bits(), Ordering::SeqCst);
         self.mixer.set_volume(volume_to_u16(clamped));
+        self.refresh_gain();
         // The mixer does not emit an event; publish the change ourselves.
         publish_with(&self.state, |s| s.volume = clamped);
+    }
+
+    /// Recompute and publish the output gain from the base volume and the
+    /// current crossfade level. A no-op while paused — pause/resume own the
+    /// gain then.
+    fn refresh_gain(&self) {
+        refresh_output_gain(
+            &self.output_active,
+            &self.base_volume,
+            &self.crossfade_gain,
+            &self.controls.gain,
+        );
     }
 
     /// Set the track-transition crossfade duration, in seconds (`0.0` disables
     /// it). Applies live — the position poller picks the new value up on its
     /// next tick.
     ///
-    /// Disabling crossfade restores the mixer to the user's chosen volume in
-    /// case a tail fade-out had left it attenuated.
+    /// Disabling crossfade resets the crossfade level to full in case a tail
+    /// fade-out had left it attenuated.
     pub(crate) fn set_crossfade(&self, seconds: f32) {
         let seconds = seconds.max(0.0);
         self.crossfade_secs
             .store(seconds.to_bits(), Ordering::SeqCst);
         if seconds <= 0.0 {
-            let target = f32::from_bits(self.target_volume.load(Ordering::SeqCst));
-            self.mixer.set_volume(volume_to_u16(target));
+            self.crossfade_gain
+                .store(1.0f32.to_bits(), Ordering::SeqCst);
+            self.refresh_gain();
         }
     }
 
-    /// Pause playback with a short fade-out.
+    /// Pause playback.
     ///
-    /// The fade ramps the *mixer* — not the user's chosen volume — down to
-    /// silence over [`FADE_DURATION`], then issues the librespot pause. This
-    /// also masks the rodio backend's pause latency: `RodioSink::stop` blocks
-    /// until its buffer drains, so without the fade ~0.5s of already-buffered
-    /// audio would keep playing at full volume after the button press.
+    /// The output gain is dropped to silence immediately — the audio callback
+    /// glides there in a few ms — and librespot's decoder is stopped a short
+    /// [`PAUSE_RAMP`] later, once that ramp has finished, so the pause is
+    /// instant *and* click-free. The sink then freezes its ring buffer, so a
+    /// resume replays the buffered audio with no refill gap.
     pub(crate) fn pause(&self) {
+        self.output_active.store(false, Ordering::SeqCst);
+        self.controls.gain.store(0.0f32.to_bits(), Ordering::SeqCst);
         let player = Arc::clone(&self.player);
-        self.fade(0.0, move || player.pause());
-    }
-
-    /// Resume playback with a short fade-in.
-    ///
-    /// Drops the mixer to silence, issues the librespot play so the sink spins
-    /// up, then ramps the mixer back to the user's chosen volume.
-    pub(crate) fn resume(&self) {
-        let target = f32::from_bits(self.target_volume.load(Ordering::SeqCst));
-        self.mixer.set_volume(0);
-        self.player.play();
-        self.fade(target, || {});
-    }
-
-    /// Ramp the mixer volume to `to` over [`FADE_DURATION`], then run `on_done`.
-    ///
-    /// `to` is a perceptual `0.0..=1.0` fraction. The ramp interpolates in the
-    /// mixer's linear `u16` space so the step sizes are even. A newer fade (or
-    /// a manual volume change) bumps the generation counter and this ramp
-    /// abandons itself the moment it notices.
-    fn fade(&self, to: f32, on_done: impl FnOnce() + Send + 'static) {
-        let generation = self.fade_generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let mixer = Arc::clone(&self.mixer);
-        let fade_generation = Arc::clone(&self.fade_generation);
-        let fade_active = Arc::clone(&self.fade_active);
-        // Claim the mixer from the crossfade poller for the fade's lifetime.
-        fade_active.store(true, Ordering::SeqCst);
-
-        let from = i32::from(mixer.volume());
-        let dest = i32::from(volume_to_u16(to));
-        let step = FADE_DURATION / FADE_STEPS;
-
         tokio::spawn(async move {
-            let mut on_done = Some(on_done);
-            for i in 1..=FADE_STEPS {
-                tokio::time::sleep(step).await;
-                // A newer fade or a manual volume change supersedes this one.
-                // Whichever superseded us owns `fade_active` now, so leave it.
-                if fade_generation.load(Ordering::SeqCst) != generation {
-                    return;
-                }
-                let progressed = from + (dest - from) * (i as i32) / (FADE_STEPS as i32);
-                mixer.set_volume(progressed.clamp(0, i32::from(MAX_VOLUME)) as u16);
-                // Fire the side effect (the actual pause) at the *end* of a
-                // fade-out, once the mixer has reached silence.
-                if i == FADE_STEPS {
-                    if let Some(done) = on_done.take() {
-                        done();
-                    }
-                }
-            }
-            // The fade ran to completion uncontested — release the mixer.
-            fade_active.store(false, Ordering::SeqCst);
+            tokio::time::sleep(PAUSE_RAMP).await;
+            player.pause();
         });
+    }
+
+    /// Resume playback.
+    ///
+    /// Restarts librespot's decoder (the sink unfreezes its still-full ring,
+    /// so audio is immediate) and ramps the output gain back up from silence.
+    pub(crate) fn resume(&self) {
+        self.output_active.store(true, Ordering::SeqCst);
+        self.player.play();
+        self.refresh_gain();
+    }
+
+    /// Seek within the current track.
+    ///
+    /// Raises the sink's flush flag so the ~150ms of buffered pre-seek audio
+    /// is dropped rather than played before the seek lands.
+    pub(crate) fn seek(&self, position_ms: u32) {
+        self.controls.flush.store(true, Ordering::SeqCst);
+        self.player.seek(position_ms);
     }
 
     /// Spawn the player-event loop and the position poller.
@@ -437,9 +427,11 @@ impl Engine {
         let waveform = self.waveform.clone();
         let session = self.analysis_session.clone();
         let mixer = Arc::clone(&self.mixer);
-        let target_volume = Arc::clone(&self.target_volume);
-        let fade_active = Arc::clone(&self.fade_active);
+        let base_volume = Arc::clone(&self.base_volume);
+        let crossfade_gain = Arc::clone(&self.crossfade_gain);
         let crossfade_secs = Arc::clone(&self.crossfade_secs);
+        let output_active = Arc::clone(&self.output_active);
+        let output_gain = Arc::clone(&self.controls.gain);
 
         tokio::spawn(async move {
             // The poller ticks continuously; it only mutates the snapshot
@@ -448,6 +440,9 @@ impl Engine {
             // A locally tracked position, advanced between librespot's own
             // (coarser) position events for a smooth scrubber.
             let mut anchor: Option<PositionAnchor> = None;
+            // The last mixer volume the poller saw, to detect a Connect
+            // (remote) volume change and mirror it into the output gain.
+            let mut last_mixer_volume = mixer.volume();
 
             loop {
                 tokio::select! {
@@ -467,7 +462,23 @@ impl Engine {
                         if let Some(anchor) = anchor.as_ref() {
                             tick_position(&state, anchor);
                         }
-                        apply_crossfade(&state, &mixer, &target_volume, &crossfade_secs, &fade_active);
+                        poll_connect_volume(
+                            &state,
+                            &mixer,
+                            &mut last_mixer_volume,
+                            &base_volume,
+                            &crossfade_gain,
+                            &output_active,
+                            &output_gain,
+                        );
+                        apply_crossfade(
+                            &state,
+                            &crossfade_secs,
+                            &base_volume,
+                            &crossfade_gain,
+                            &output_active,
+                            &output_gain,
+                        );
                     }
                 }
             }
@@ -528,7 +539,53 @@ fn tick_position(state: &ArcSwap<PlaybackState>, anchor: &PositionAnchor) {
     }
 }
 
-/// Apply the track-transition crossfade by scaling the mixer volume.
+/// Recompute the output gain from the base volume and crossfade level and
+/// publish it to the audio callback.
+///
+/// A no-op while `active` is `false` (paused) — pause/resume own the gain
+/// then, and the poller must not lift it back off silence.
+fn refresh_output_gain(
+    active: &AtomicBool,
+    base_volume: &AtomicU32,
+    crossfade_gain: &AtomicU32,
+    output_gain: &AtomicU32,
+) {
+    if !active.load(Ordering::SeqCst) {
+        return;
+    }
+    let base = f32::from_bits(base_volume.load(Ordering::SeqCst));
+    let crossfade = f32::from_bits(crossfade_gain.load(Ordering::SeqCst));
+    let gain = perceptual_volume(base) * crossfade;
+    output_gain.store(gain.to_bits(), Ordering::SeqCst);
+}
+
+/// Mirror a Connect (remote) volume change into the local volume state.
+///
+/// `Spirc` drives the [`SoftMixer`] when the volume is changed from another
+/// Spotify client; the engine otherwise owns volume itself. When the mixer
+/// value changes without a local `set_volume`, it was a remote change — adopt
+/// it as the new base volume, refresh the gain and publish it for the UI.
+fn poll_connect_volume(
+    state: &ArcSwap<PlaybackState>,
+    mixer: &Arc<dyn Mixer>,
+    last_seen: &mut u16,
+    base_volume: &AtomicU32,
+    crossfade_gain: &AtomicU32,
+    output_active: &AtomicBool,
+    output_gain: &AtomicU32,
+) {
+    let current = mixer.volume();
+    if current == *last_seen {
+        return;
+    }
+    *last_seen = current;
+    let fraction = volume_from_u16(current);
+    base_volume.store(fraction.to_bits(), Ordering::SeqCst);
+    refresh_output_gain(output_active, base_volume, crossfade_gain, output_gain);
+    publish_with(state, |s| s.volume = fraction);
+}
+
+/// Apply the track-transition crossfade by scaling the output gain.
 ///
 /// Ramps a track's first `crossfade` seconds *in* and its last `crossfade`
 /// seconds *out*: the level factor is `min(position/N, remaining/N)` clamped
@@ -536,17 +593,18 @@ fn tick_position(state: &ArcSwap<PlaybackState>, anchor: &PositionAnchor) {
 /// tail fade and the incoming head fade meet at the track seam, giving a
 /// smooth transition with no hard cut.
 ///
-/// A no-op when crossfade is disabled, while a play/pause fade owns the mixer
-/// ([`Engine::fade`]), when paused, or when the track duration is unknown.
+/// A no-op when crossfade is disabled, when paused, or when the track
+/// duration is unknown.
 fn apply_crossfade(
     state: &ArcSwap<PlaybackState>,
-    mixer: &Arc<dyn Mixer>,
-    target_volume: &AtomicU32,
     crossfade_secs: &AtomicU32,
-    fade_active: &AtomicBool,
+    base_volume: &AtomicU32,
+    crossfade_gain: &AtomicU32,
+    output_active: &AtomicBool,
+    output_gain: &AtomicU32,
 ) {
     let crossfade = f32::from_bits(crossfade_secs.load(Ordering::SeqCst));
-    if crossfade <= 0.0 || fade_active.load(Ordering::SeqCst) {
+    if crossfade <= 0.0 {
         return;
     }
     let snapshot = state.load();
@@ -561,12 +619,8 @@ fn apply_crossfade(
         return;
     }
     let factor = crossfade_factor(snapshot.position.as_secs_f32(), total, crossfade);
-
-    // Scale the user's volume linearly in the mixer's curved `u16` space —
-    // the same space [`Engine::fade`] ramps in, so the two stay consistent.
-    let target = f32::from_bits(target_volume.load(Ordering::SeqCst));
-    let scaled = (f32::from(volume_to_u16(target)) * factor).round();
-    mixer.set_volume(scaled.clamp(0.0, f32::from(MAX_VOLUME)) as u16);
+    crossfade_gain.store(factor.to_bits(), Ordering::SeqCst);
+    refresh_output_gain(output_active, base_volume, crossfade_gain, output_gain);
 }
 
 /// The crossfade volume factor (`0.0..=1.0`) for a play head at `position`

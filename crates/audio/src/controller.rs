@@ -359,7 +359,7 @@ impl PlaybackController {
     #[tracing::instrument(skip(self))]
     pub async fn seek(&self, position: Duration) -> AudioResult<()> {
         let position_ms = u32::try_from(position.as_millis()).unwrap_or(u32::MAX);
-        self.engine.player().seek(position_ms);
+        self.engine.seek(position_ms);
         Ok(())
     }
 
