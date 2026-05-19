@@ -133,31 +133,57 @@ fn sleep_until_refresh(token: &Token) -> Duration {
     }
 }
 
-/// Spawn the background token auto-refresh task.
+/// How many consecutive refresh failures before the task gives up.
+///
+/// One failure is almost always a transient network blip — the task retries.
+/// Only a *sustained* run of failures means the refresh token is genuinely
+/// dead, at which point stopping (the user must log in again) is correct.
+const MAX_CONSECUTIVE_REFRESH_FAILURES: u32 = 5;
+
+/// Spawn the background token-refresh task.
 ///
 /// The task loops forever: it sleeps until shortly before the access token
-/// expires, refreshes it, re-persists it to the keyring, and repeats. It is
-/// detached; dropping the returned [`tokio::task::JoinHandle`] lets it run for
-/// the lifetime of the process. A persistent refresh failure ends the loop.
+/// expires, refreshes it, re-persists it to the keyring, and repeats. With
+/// rspotify's silent auto-refresh disabled (see `build_client`), this is the
+/// sole in-session refresher, so it must be resilient — a single failure is
+/// retried rather than fatal. It is detached; dropping the returned
+/// [`tokio::task::JoinHandle`] lets it run for the lifetime of the process.
 #[tracing::instrument(skip_all)]
 pub fn spawn_refresh_task(session: &Session) -> tokio::task::JoinHandle<()> {
     let client = session.client();
     tokio::spawn(async move {
+        let mut failures: u32 = 0;
         loop {
             let token = client.token.lock().await.ok().and_then(|g| g.clone());
-            let nap = token
-                .as_ref()
-                .map_or(MIN_REFRESH_INTERVAL, sleep_until_refresh);
+            // After a failure, retry soon rather than waiting for the (stale)
+            // expiry-derived interval.
+            let nap = if failures > 0 {
+                MIN_REFRESH_INTERVAL
+            } else {
+                token
+                    .as_ref()
+                    .map_or(MIN_REFRESH_INTERVAL, sleep_until_refresh)
+            };
 
             tracing::debug!(seconds = nap.as_secs(), "token refresh task sleeping");
             tokio::time::sleep(nap).await;
 
             match refresh_if_needed(&client).await {
-                Ok(true) => tracing::info!("access token refreshed"),
-                Ok(false) => tracing::trace!("access token still valid; no refresh"),
+                Ok(true) => {
+                    failures = 0;
+                    tracing::info!("access token refreshed");
+                }
+                Ok(false) => {
+                    failures = 0;
+                    tracing::trace!("access token still valid; no refresh");
+                }
                 Err(err) => {
-                    tracing::error!(%err, "token refresh failed; stopping refresh task");
-                    break;
+                    failures += 1;
+                    if failures >= MAX_CONSECUTIVE_REFRESH_FAILURES {
+                        tracing::error!(%err, failures, "token refresh keeps failing; stopping");
+                        break;
+                    }
+                    tracing::warn!(%err, failures, "token refresh failed; will retry");
                 }
             }
         }

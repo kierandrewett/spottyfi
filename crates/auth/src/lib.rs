@@ -49,8 +49,20 @@ pub enum AuthState {
 
 /// Build an rspotify PKCE client for the given config.
 ///
-/// rspotify's own file-based token cache is disabled (`token_cached = false`)
-/// because Spottyfi persists tokens itself, in the platform keyring.
+/// Two rspotify persistence/refresh knobs are deliberately **off**:
+///
+/// * `token_cached = false` — Spottyfi persists tokens itself, in the
+///   platform keyring, not rspotify's `.spotify_token_cache.json`.
+/// * `token_refreshing = false` — rspotify must **not** silently refresh the
+///   token on an API call. Spotify's PKCE flow *rotates* the refresh token:
+///   a refresh response can carry a brand-new refresh token, and the old one
+///   is then invalidated. A silent rspotify refresh updates only the
+///   in-memory token — never the keyring — so a rotation done that way is
+///   lost, and the next launch restores a dead refresh token and fails with
+///   `400 Bad Request`. Disabling it makes [`session::refresh_if_needed`] —
+///   which always re-persists — the single refresh path, so the keyring can
+///   never fall behind. The background [`spawn_refresh_task`] keeps the token
+///   fresh ahead of expiry.
 fn build_client(config: &AuthConfig) -> AuthCodePkceSpotify {
     let creds = Credentials::new_pkce(&config.client_id);
 
@@ -61,11 +73,8 @@ fn build_client(config: &AuthConfig) -> AuthCodePkceSpotify {
     };
 
     let rspotify_config = RspotifyConfig {
-        // Spottyfi owns token persistence; rspotify must not write its own
-        // `.spotify_token_cache.json`.
         token_cached: false,
-        // Refresh the access token automatically when a request finds it stale.
-        token_refreshing: true,
+        token_refreshing: false,
         ..RspotifyConfig::default()
     };
 
@@ -98,7 +107,16 @@ pub async fn restore(config: &AuthConfig) -> AuthResult<Option<Session>> {
 
     // Renew up front if the token is already stale, so the first API call
     // (the profile fetch) is guaranteed a valid access token.
-    session::refresh_if_needed(&client).await?;
+    //
+    // A failure here means the stored refresh token is no longer accepted —
+    // revoked by the user, or expired. That is not an *error* to surface; it
+    // just means there is no session to restore. Clear the dead token so the
+    // next launch does not retry it, and fall back to a fresh login.
+    if let Err(err) = session::refresh_if_needed(&client).await {
+        tracing::warn!(%err, "stored token could not be refreshed; clearing it");
+        let _ = storage::delete_token();
+        return Ok(None);
+    }
 
     let session = Session::from_client(client).await?;
     tracing::info!(user = %session.profile().id, "session restored from keyring");
