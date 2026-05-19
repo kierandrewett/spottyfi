@@ -28,14 +28,15 @@ experience, source-tagged everywhere, de-duplicated.
 - [x] `stream` + `getCoverArt` URL builders, `scrobble`, `star`/`unstar`
 - [x] Unit tests (auth, envelope, error, model parsing)
 
-### B — Multi-source architecture ✅ (Spotify adapter pending)
+### B — Multi-source architecture ✅
 - [x] `SourceId` / `SourceKind` / `SourceRef` — a source tag on every entity
 - [x] Source-neutral `Track` / `Album` / `Artist` / `SearchResults`
 - [x] `MusicSource` trait (search, browse, stream URL) + `can_play` capability
 - [x] `SourceRegistry` — concurrent `search_all` across all sources
-- [x] OpenSubsonic behind the trait (`SubsonicSource`)
-- [ ] Spotify adapted behind the trait — deferred (the existing Spotify `api`
-      is large; wiring it behind `MusicSource` is its own step)
+- [x] OpenSubsonic, Spotify and Apple Music all behind the `MusicSource`
+      trait (`SubsonicSource` / `SpotifySource` / `AppleMusicSource`)
+- [x] `PlaybackBackend` trait — librespot (`SpotifyBackend`) and HTTP
+      (`HttpAudioPlayer`) both behind it; Apple Music is catalog-only
 
 ### C — OpenSubsonic playback
 - [x] Shared `CpalOutput` output stage extracted from `CpalSink`

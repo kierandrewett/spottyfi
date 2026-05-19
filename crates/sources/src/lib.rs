@@ -18,6 +18,7 @@ pub mod entity;
 pub mod identity;
 pub mod registry;
 pub mod source;
+mod spotify_source;
 mod subsonic_source;
 
 pub use apple_music_source::AppleMusicSource;
@@ -26,4 +27,5 @@ pub use entity::{Album, Artist, SearchResults, Track};
 pub use identity::{SourceId, SourceKind, SourceRef};
 pub use registry::SourceRegistry;
 pub use source::{MusicSource, SourceError, SourceResult};
+pub use spotify_source::SpotifySource;
 pub use subsonic_source::SubsonicSource;

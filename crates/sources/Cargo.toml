@@ -11,6 +11,8 @@ rust-version.workspace = true
 [dependencies]
 spottyfi-subsonic = { workspace = true }
 spottyfi-applemusic = { workspace = true }
+spottyfi-api = { workspace = true }
+spottyfi-models = { workspace = true }
 
 serde = { workspace = true }
 tracing = { workspace = true }
