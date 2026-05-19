@@ -61,6 +61,8 @@ pub struct SubsonicDraft {
     pub username: String,
     /// The account password.
     pub password: String,
+    /// The id of the server being edited, or `None` for a fresh add.
+    pub editing: Option<String>,
 }
 
 /// Something the Settings page asked the shell to do this frame.
@@ -419,6 +421,7 @@ fn sources_section(ui: &mut egui::Ui, palette: &Palette, ctx: &mut SettingsConte
                 ));
             } else {
                 let mut remove: Option<String> = None;
+                let mut edit: Option<SubsonicDraft> = None;
                 for server in &ctx.settings.sources.subsonic_servers {
                     ui.horizontal(|ui| {
                         spottyfi_ui::icons::icon(
@@ -444,21 +447,43 @@ fn sources_section(ui: &mut egui::Ui, palette: &Palette, ctx: &mut SettingsConte
                             if ui.button("Remove").clicked() {
                                 remove = Some(server.id.clone());
                             }
+                            if ui.button("Edit").clicked() {
+                                // Load this server into the form for editing.
+                                edit = Some(SubsonicDraft {
+                                    name: server.name.clone(),
+                                    url: server.url.clone(),
+                                    username: server.username.clone(),
+                                    password: server.password.clone(),
+                                    editing: Some(server.id.clone()),
+                                });
+                            }
                         });
                     });
                     ui.add_space(2.0);
                 }
                 if let Some(id) = remove {
                     ctx.settings.sources.remove(&id);
+                    // A removed server must not stay loaded in the edit form.
+                    if ctx.subsonic_draft.editing.as_deref() == Some(id.as_str()) {
+                        *ctx.subsonic_draft = SubsonicDraft::default();
+                    }
+                }
+                if let Some(draft) = edit {
+                    *ctx.subsonic_draft = draft;
                 }
             }
 
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(6.0);
+            let editing = ctx.subsonic_draft.editing.is_some();
             ui.label(components::muted(
                 palette,
-                "Add an OpenSubsonic server",
+                if editing {
+                    "Edit OpenSubsonic server"
+                } else {
+                    "Add an OpenSubsonic server"
+                },
                 11.5,
             ));
             ui.add_space(4.0);
@@ -498,19 +523,36 @@ fn sources_section(ui: &mut egui::Ui, palette: &Palette, ctx: &mut SettingsConte
             let name = ctx.subsonic_draft.name.trim().to_owned();
             let url = ctx.subsonic_draft.url.trim().to_owned();
             let username = ctx.subsonic_draft.username.trim().to_owned();
+            let password = ctx.subsonic_draft.password.clone();
             let ready = !name.is_empty() && !url.is_empty() && !username.is_empty();
-            if ui
-                .add_enabled(ready, egui::Button::new("Add server"))
-                .clicked()
-            {
-                ctx.settings.sources.add_subsonic(
-                    name,
-                    url,
-                    username,
-                    ctx.subsonic_draft.password.clone(),
-                );
-                *ctx.subsonic_draft = SubsonicDraft::default();
-            }
+            ui.horizontal(|ui| {
+                let save_label = if editing {
+                    "Save changes"
+                } else {
+                    "Add server"
+                };
+                if ui
+                    .add_enabled(ready, egui::Button::new(save_label))
+                    .clicked()
+                {
+                    match &ctx.subsonic_draft.editing {
+                        Some(id) => {
+                            ctx.settings
+                                .sources
+                                .update(&id.clone(), name, url, username, password);
+                        }
+                        None => {
+                            ctx.settings
+                                .sources
+                                .add_subsonic(name, url, username, password);
+                        }
+                    }
+                    *ctx.subsonic_draft = SubsonicDraft::default();
+                }
+                if editing && ui.button("Cancel").clicked() {
+                    *ctx.subsonic_draft = SubsonicDraft::default();
+                }
+            });
         },
     );
 }

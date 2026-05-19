@@ -348,6 +348,26 @@ impl SourcesSettings {
         self.subsonic_servers.retain(|server| server.id != id);
         self.subsonic_servers.len() != before
     }
+
+    /// Update the server with `id` in place, keeping its id. Returns whether a
+    /// matching server was found.
+    pub fn update(
+        &mut self,
+        id: &str,
+        name: String,
+        url: String,
+        username: String,
+        password: String,
+    ) -> bool {
+        let Some(server) = self.subsonic_servers.iter_mut().find(|s| s.id == id) else {
+            return false;
+        };
+        server.name = name;
+        server.url = url;
+        server.username = username;
+        server.password = password;
+        true
+    }
 }
 
 /// The full persisted user-settings model surfaced on the Settings page.
@@ -473,6 +493,26 @@ mod tests {
         let text = ron::ser::to_string(&settings).expect("serialise settings");
         let restored: AppSettings = ron::from_str(&text).expect("deserialise settings");
         assert_eq!(restored.sources, sources);
+
+        assert!(sources.update(
+            &id,
+            "Home (edited)".to_owned(),
+            "https://music.example.com".to_owned(),
+            "kieran".to_owned(),
+            "newpass".to_owned(),
+        ));
+        assert_eq!(sources.subsonic_servers[0].name, "Home (edited)");
+        assert_eq!(sources.subsonic_servers[0].id, id, "the id is preserved");
+        assert!(
+            !sources.update(
+                "missing",
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new()
+            ),
+            "updating a gone server is a no-op",
+        );
 
         assert!(sources.remove(&id));
         assert!(sources.subsonic_servers.is_empty());
