@@ -1,0 +1,4 @@
+Heroicons (https://heroicons.com) — MIT License, (c) Tailwind Labs, Inc.
+https://github.com/tailwindlabs/heroicons/blob/master/LICENSE
+The `currentColor` stroke/fill is rewritten to white at vendor time so the
+app can tint each icon per widget.

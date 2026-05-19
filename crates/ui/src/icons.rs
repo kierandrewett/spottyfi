@@ -1,10 +1,13 @@
-//! The bundled [Lucide](https://lucide.dev) line-icon set, rendered as real
+//! The bundled [Heroicons](https://heroicons.com) icon set, rendered as real
 //! SVGs.
 //!
 //! Every icon Spottyfi uses is committed under `assets/icons/` and embedded
-//! into the binary with [`include_bytes!`]. They are monochrome line icons
-//! whose stroke is plain white in the source SVG, so a per-widget
-//! [`egui::Image::tint`] recolours them to any theme colour.
+//! into the binary with [`include_bytes!`]. A **mix of variants** is used:
+//! the transport / media controls (play, pause, skip, shuffle, repeat,
+//! volume) are the **solid** 24px Heroicons; everything else — navigation,
+//! chrome, the sidebar — is the **outline** set. The source `currentColor`
+//! is rewritten to white so a per-widget [`egui::Image::tint`] recolours
+//! each icon to any theme colour.
 //!
 //! Rasterisation goes through `egui_extras`' `svg` feature (resvg). The
 //! `egui_extras::install_image_loaders` call the `app` crate makes at startup
@@ -132,43 +135,47 @@ impl Icon {
     }
 
     /// The embedded SVG bytes for this icon.
+    ///
+    /// Transport controls map to **solid** Heroicons; every other icon to the
+    /// **outline** set. Heroicons has no disc/album glyph, so `Disc` reuses
+    /// the musical-note.
     fn bytes(self) -> &'static [u8] {
         match self {
-            Icon::Home => include_bytes!("../assets/icons/house.svg"),
-            Icon::Search => include_bytes!("../assets/icons/search.svg"),
-            Icon::Browse => include_bytes!("../assets/icons/compass.svg"),
-            Icon::Charts => include_bytes!("../assets/icons/chart-bar.svg"),
-            Icon::NewReleases => include_bytes!("../assets/icons/calendar.svg"),
-            Icon::Discover => include_bytes!("../assets/icons/sparkles.svg"),
-            Icon::Podcast => include_bytes!("../assets/icons/podcast.svg"),
-            Icon::MadeForYou => include_bytes!("../assets/icons/sparkles.svg"),
-            Icon::RecentlyPlayed => include_bytes!("../assets/icons/clock.svg"),
-            Icon::Heart => include_bytes!("../assets/icons/heart.svg"),
-            Icon::Disc => include_bytes!("../assets/icons/disc-3.svg"),
-            Icon::User => include_bytes!("../assets/icons/user.svg"),
-            Icon::Music => include_bytes!("../assets/icons/music.svg"),
-            Icon::Library => include_bytes!("../assets/icons/library.svg"),
-            Icon::Radio => include_bytes!("../assets/icons/radio.svg"),
-            Icon::List => include_bytes!("../assets/icons/list.svg"),
-            Icon::Plus => include_bytes!("../assets/icons/plus.svg"),
-            Icon::ChevronDown => include_bytes!("../assets/icons/chevron-down.svg"),
-            Icon::ChevronRight => include_bytes!("../assets/icons/chevron-right.svg"),
-            Icon::ChevronLeft => include_bytes!("../assets/icons/chevron-left.svg"),
-            Icon::Play => include_bytes!("../assets/icons/play.svg"),
-            Icon::Pause => include_bytes!("../assets/icons/pause.svg"),
-            Icon::SkipBack => include_bytes!("../assets/icons/skip-back.svg"),
-            Icon::SkipForward => include_bytes!("../assets/icons/skip-forward.svg"),
-            Icon::Shuffle => include_bytes!("../assets/icons/shuffle.svg"),
-            Icon::Repeat => include_bytes!("../assets/icons/repeat.svg"),
-            Icon::Volume => include_bytes!("../assets/icons/volume-2.svg"),
-            Icon::VolumeMuted => include_bytes!("../assets/icons/volume-x.svg"),
-            Icon::Settings => include_bytes!("../assets/icons/settings.svg"),
-            Icon::Devices => include_bytes!("../assets/icons/monitor-speaker.svg"),
-            Icon::Close => include_bytes!("../assets/icons/x.svg"),
-            Icon::Download => include_bytes!("../assets/icons/download.svg"),
-            Icon::ArrowLeft => include_bytes!("../assets/icons/arrow-left.svg"),
-            Icon::ArrowRight => include_bytes!("../assets/icons/arrow-right.svg"),
-            Icon::Queue => include_bytes!("../assets/icons/list-music.svg"),
+            Icon::Home => include_bytes!("../assets/icons/hero-home.svg"),
+            Icon::Search => include_bytes!("../assets/icons/hero-magnifying-glass.svg"),
+            Icon::Browse => include_bytes!("../assets/icons/hero-globe-alt.svg"),
+            Icon::Charts => include_bytes!("../assets/icons/hero-chart-bar.svg"),
+            Icon::NewReleases => include_bytes!("../assets/icons/hero-calendar-days.svg"),
+            Icon::Discover => include_bytes!("../assets/icons/hero-sparkles.svg"),
+            Icon::Podcast => include_bytes!("../assets/icons/hero-microphone.svg"),
+            Icon::MadeForYou => include_bytes!("../assets/icons/hero-sparkles.svg"),
+            Icon::RecentlyPlayed => include_bytes!("../assets/icons/hero-clock.svg"),
+            Icon::Heart => include_bytes!("../assets/icons/hero-heart.svg"),
+            Icon::Disc => include_bytes!("../assets/icons/hero-musical-note.svg"),
+            Icon::User => include_bytes!("../assets/icons/hero-user.svg"),
+            Icon::Music => include_bytes!("../assets/icons/hero-musical-note.svg"),
+            Icon::Library => include_bytes!("../assets/icons/hero-building-library.svg"),
+            Icon::Radio => include_bytes!("../assets/icons/hero-radio.svg"),
+            Icon::List => include_bytes!("../assets/icons/hero-list-bullet.svg"),
+            Icon::Plus => include_bytes!("../assets/icons/hero-plus.svg"),
+            Icon::ChevronDown => include_bytes!("../assets/icons/hero-chevron-down.svg"),
+            Icon::ChevronRight => include_bytes!("../assets/icons/hero-chevron-right.svg"),
+            Icon::ChevronLeft => include_bytes!("../assets/icons/hero-chevron-left.svg"),
+            Icon::Play => include_bytes!("../assets/icons/hero-play-solid.svg"),
+            Icon::Pause => include_bytes!("../assets/icons/hero-pause-solid.svg"),
+            Icon::SkipBack => include_bytes!("../assets/icons/hero-backward-solid.svg"),
+            Icon::SkipForward => include_bytes!("../assets/icons/hero-forward-solid.svg"),
+            Icon::Shuffle => include_bytes!("../assets/icons/hero-arrows-right-left-solid.svg"),
+            Icon::Repeat => include_bytes!("../assets/icons/hero-arrow-path-solid.svg"),
+            Icon::Volume => include_bytes!("../assets/icons/hero-speaker-wave-solid.svg"),
+            Icon::VolumeMuted => include_bytes!("../assets/icons/hero-speaker-x-mark-solid.svg"),
+            Icon::Settings => include_bytes!("../assets/icons/hero-cog-6-tooth.svg"),
+            Icon::Devices => include_bytes!("../assets/icons/hero-computer-desktop.svg"),
+            Icon::Close => include_bytes!("../assets/icons/hero-x-mark.svg"),
+            Icon::Download => include_bytes!("../assets/icons/hero-arrow-down-tray.svg"),
+            Icon::ArrowLeft => include_bytes!("../assets/icons/hero-arrow-left.svg"),
+            Icon::ArrowRight => include_bytes!("../assets/icons/hero-arrow-right.svg"),
+            Icon::Queue => include_bytes!("../assets/icons/hero-queue-list.svg"),
         }
     }
 
