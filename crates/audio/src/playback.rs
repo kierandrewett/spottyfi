@@ -1,10 +1,10 @@
 //! The backend-agnostic playback trait.
 //!
 //! Spottyfi plays from several backends — librespot for Spotify, the
-//! [`HttpAudioPlayer`](crate::http_player::HttpAudioPlayer) for OpenSubsonic,
-//! an embedded MusicKit player for Apple Music. [`PlaybackBackend`] is the one
-//! interface they all present, so the transport, the queue and the UI drive
-//! "the player" without ever knowing which backend is behind it.
+//! [`HttpAudioPlayer`](crate::http_player::HttpAudioPlayer) for OpenSubsonic.
+//! [`PlaybackBackend`] is the one interface they all present, so the
+//! transport, the queue and the UI drive "the player" without ever knowing
+//! which backend is behind it.
 //!
 //! Routing a track to its backend (by source kind) and resolving a
 //! backend-specific locator happens one layer up; a backend itself only ever

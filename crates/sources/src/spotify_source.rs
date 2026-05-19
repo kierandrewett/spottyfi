@@ -2,7 +2,7 @@
 //!
 //! Wraps the Spotify Web API ([`SpotifyApi`]) and maps its `models`-shaped
 //! results onto the unified [`entity`](crate::entity) types, so Spotify sits
-//! beside OpenSubsonic and Apple Music with no special-casing. Spotify audio
+//! beside OpenSubsonic with no special-casing. Spotify audio
 //! plays through librespot, so [`MusicSource::stream_url`] is `None` — the
 //! engine routes a Spotify track to its librespot backend by source kind.
 

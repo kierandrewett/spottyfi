@@ -9,9 +9,6 @@ pub enum SourceKind {
     Spotify,
     /// An OpenSubsonic-compatible server (Navidrome, Gonic, Airsonic, …).
     Subsonic,
-    /// Apple Music — a catalog source; playback (when wired) is via an
-    /// embedded MusicKit web player.
-    AppleMusic,
 }
 
 impl SourceKind {
@@ -21,7 +18,6 @@ impl SourceKind {
         match self {
             SourceKind::Spotify => "Spotify",
             SourceKind::Subsonic => "Subsonic",
-            SourceKind::AppleMusic => "Apple Music",
         }
     }
 
@@ -29,14 +25,12 @@ impl SourceKind {
     /// sources, the one with the highest priority is chosen as primary.
     ///
     /// A self-hosted Subsonic library ranks first (the user owns it, no rate
-    /// limits, often lossless); Spotify next (full streaming); Apple Music
-    /// last (catalog-only until CEF playback lands).
+    /// limits, often lossless); Spotify next (full streaming).
     #[must_use]
     pub fn dedup_priority(self) -> u8 {
         match self {
-            SourceKind::Subsonic => 3,
-            SourceKind::Spotify => 2,
-            SourceKind::AppleMusic => 1,
+            SourceKind::Subsonic => 2,
+            SourceKind::Spotify => 1,
         }
     }
 }

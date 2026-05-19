@@ -1,8 +1,8 @@
 //! Source-neutral music entities.
 //!
-//! Every source (Spotify, Subsonic, Apple Music) maps its own native model
-//! onto these unified types, so the rest of the app — search, browse, the
-//! player, de-duplication — works against one vocabulary and never has to
+//! Every source (Spotify, Subsonic) maps its own native model onto these
+//! unified types, so the rest of the app — search, browse, the player,
+//! de-duplication — works against one vocabulary and never has to
 //! special-case a backend. Each entity carries a [`SourceRef`] so its origin
 //! is always known and can be shown on a badge.
 
@@ -36,12 +36,12 @@ pub struct Track {
     /// The MusicBrainz recording id, when known — a high-confidence
     /// de-duplication key.
     pub mbid: Option<String>,
-    /// The ISRC recording code, when known. Spotify and Apple Music both
-    /// expose it, so it is the strongest cross-source de-duplication key.
+    /// The ISRC recording code, when known — an industry-standard recording
+    /// id, so it is a strong cross-source de-duplication key.
     pub isrc: Option<String>,
     /// Whether this track can actually be played from this source. `false`
-    /// for a catalog-only source (Apple Music before CEF playback) — it can
-    /// still be shown and de-duplicated against a playable source.
+    /// for a catalog-only entry — it can still be shown and de-duplicated
+    /// against a playable source.
     pub playable: bool,
 }
 

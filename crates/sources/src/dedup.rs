@@ -7,9 +7,9 @@
 //! source actually plays it.
 //!
 //! Matching is by a recording id when both sides carry one — MusicBrainz id,
-//! then ISRC (Spotify and Apple Music both expose ISRC, so it bridges them) —
-//! and otherwise by a normalised title/name + artist key that ignores casing,
-//! punctuation and noise like `(feat. …)` or `- 2011 Remaster`.
+//! then ISRC — and otherwise by a normalised title/name + artist key that
+//! ignores casing, punctuation and noise like `(feat. …)` or `- 2011
+//! Remaster`.
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -317,23 +317,24 @@ mod tests {
             track(SourceKind::Spotify, "Creep", "Radiohead", true),
             track(SourceKind::Subsonic, "creep", "radiohead", true),
             track(
-                SourceKind::AppleMusic,
+                SourceKind::Spotify,
                 "Creep (feat. nobody)",
                 "Radiohead",
-                false,
+                true,
             ),
         ];
         let deduped = dedup_tracks(tracks);
         assert_eq!(deduped.len(), 1, "all three are the same track");
-        // Subsonic outranks Spotify outranks Apple Music.
+        // Subsonic outranks Spotify.
         assert_eq!(deduped[0].primary.source.kind, SourceKind::Subsonic);
         assert_eq!(deduped[0].source_count(), 3);
     }
 
     #[test]
     fn unplayable_source_never_becomes_primary() {
+        // A track flagged unplayable must never outrank a playable one.
         let tracks = vec![
-            track(SourceKind::AppleMusic, "Song", "Artist", false),
+            track(SourceKind::Subsonic, "Song", "Artist", false),
             track(SourceKind::Spotify, "Song", "Artist", true),
         ];
         let deduped = dedup_tracks(tracks);
@@ -384,20 +385,19 @@ mod tests {
 
     #[test]
     fn isrc_match_collapses_across_services() {
-        // Spotify and Apple Music both expose ISRC — a shared code dedups
-        // them even when the titles differ cosmetically.
+        // A shared ISRC dedups two sources even when the titles differ
+        // cosmetically and the casing of the code differs.
         let mut a = track(SourceKind::Spotify, "Song", "Artist", true);
         let mut b = track(
-            SourceKind::AppleMusic,
+            SourceKind::Subsonic,
             "Song (Single Version)",
             "Artist",
-            false,
+            true,
         );
         a.isrc = Some("USABC1234567".to_owned());
         b.isrc = Some("usabc1234567".to_owned());
         let deduped = dedup_tracks(vec![a, b]);
         assert_eq!(deduped.len(), 1, "ISRC collapses the two");
-        assert!(deduped[0].primary.playable, "the playable source wins");
     }
 
     #[test]

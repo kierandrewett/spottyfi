@@ -23,10 +23,10 @@ pub enum SourceError {
 /// Convenience alias for results from a music source.
 pub type SourceResult<T> = Result<T, SourceError>;
 
-/// A music backend Spottyfi can search, browse and (usually) play.
+/// A music backend Spottyfi can search, browse and play.
 ///
-/// Each configured source — Spotify, an OpenSubsonic server, Apple Music —
-/// implements this. The app holds them in a [`SourceRegistry`](crate::registry::SourceRegistry)
+/// Each configured source — Spotify, an OpenSubsonic server — implements
+/// this. The app holds them in a [`SourceRegistry`](crate::registry::SourceRegistry)
 /// and treats them interchangeably; only [`MusicSource::can_play`] and the
 /// playback routing distinguish them.
 #[async_trait]
@@ -42,9 +42,9 @@ pub trait MusicSource: Send + Sync {
 
     /// Whether this source can actually play audio.
     ///
-    /// `false` marks a catalog-only source (Apple Music before CEF playback):
-    /// its entities are searchable and de-duplicate against a playable source,
-    /// but it cannot stream on its own.
+    /// `false` would mark a catalog-only source — searchable and able to
+    /// de-duplicate against a playable source, but unable to stream itself.
+    /// Both current sources (Spotify, Subsonic) return `true`.
     fn can_play(&self) -> bool;
 
     /// A streamable HTTP URL for a track, when the source plays over plain

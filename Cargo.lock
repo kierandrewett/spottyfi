@@ -7171,26 +7171,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spottyfi-applemusic"
-version = "1.0.0"
-dependencies = [
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "spottyfi-applemusic-player"
-version = "1.0.0"
-dependencies = [
- "spottyfi-audio",
- "tracing",
-]
-
-[[package]]
 name = "spottyfi-audio"
 version = "1.0.0"
 dependencies = [
@@ -7259,7 +7239,6 @@ dependencies = [
  "futures",
  "serde",
  "spottyfi-api",
- "spottyfi-applemusic",
  "spottyfi-models",
  "spottyfi-subsonic",
  "thiserror 2.0.18",
