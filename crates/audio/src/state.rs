@@ -18,6 +18,11 @@ pub struct TrackInfo {
     pub title: String,
     /// Contributing artist names, in billing order.
     pub artists: Vec<String>,
+    /// Base-62 Spotify ids for [`Self::artists`], in the same order.
+    ///
+    /// Either empty (ids unavailable — e.g. a local file) or exactly the same
+    /// length as `artists`, so `artists[i]` always pairs with `artist_ids[i]`.
+    pub artist_ids: Vec<String>,
     /// Album name, if known.
     pub album: String,
     /// URL of the album cover art at the largest available size, if any.

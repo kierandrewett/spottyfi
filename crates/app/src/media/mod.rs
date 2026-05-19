@@ -264,6 +264,7 @@ mod tests {
                 uri: "spotify:track:abc".to_owned(),
                 title: "Song".to_owned(),
                 artists: vec!["A".to_owned(), "B".to_owned()],
+                artist_ids: Vec::new(),
                 album: "Album".to_owned(),
                 art_url: Some("https://i.scdn.co/x".to_owned()),
                 duration: Duration::from_secs(200),

@@ -166,7 +166,9 @@ pub fn transport_bar(
                     .max_rect(left_rect)
                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
             );
-            now_playing(&mut left, palette, playback, remote);
+            if let Some(i) = now_playing(&mut left, palette, playback, remote) {
+                intent = Some(i);
+            }
 
             // Centre: the control cluster over the seek scrubber, genuinely
             // centred in the window.
@@ -302,16 +304,17 @@ pub fn connect_banner(
 const CENTRE_WIDTH: f32 = 520.0;
 
 /// The now-playing block: album art (live URL), title + artist, and a dimmed
-/// bitrate line.
+/// bitrate line. Each artist name is a link to that artist's page.
 fn now_playing(
     ui: &mut egui::Ui,
     palette: &Palette,
     playback: &PlaybackState,
     remote: Option<&RemotePlayback>,
-) {
+) -> Option<TransportIntent> {
     let art_url = playback.track.as_ref().and_then(|t| t.art_url.as_deref());
     components::album_art(ui, palette, art_url, 48.0, 0.0);
 
+    let mut intent = None;
     ui.add_space(10.0);
     ui.vertical(|ui| {
         ui.add_space(4.0);
@@ -326,10 +329,9 @@ fn now_playing(
                     )
                     .truncate(),
                 );
-                ui.add(
-                    egui::Label::new(components::muted(palette, track.artist_line(), 11.0))
-                        .truncate(),
-                );
+                if let Some(i) = artist_links(ui, palette, &track.artists, &track.artist_ids) {
+                    intent = Some(i);
+                }
                 // The real configured codec/bitrate, reported by the engine.
                 if let Some(codec_line) = playback.codec_line() {
                     ui.label(components::muted(palette, codec_line, 9.5));
@@ -369,6 +371,45 @@ fn now_playing(
             },
         }
     });
+    intent
+}
+
+/// Render a track's artists as a comma-separated row. An artist with a known
+/// id is a clickable link to its page; one without (a local file) is plain
+/// dimmed text.
+fn artist_links(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    artists: &[String],
+    artist_ids: &[String],
+) -> Option<TransportIntent> {
+    let mut intent = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for (index, name) in artists.iter().enumerate() {
+            if index > 0 {
+                ui.label(components::muted(palette, ", ", 11.0));
+            }
+            match artist_ids.get(index) {
+                Some(id) => {
+                    let link = ui.add(
+                        egui::Label::new(components::muted(palette, name, 11.0))
+                            .sense(egui::Sense::click()),
+                    );
+                    if link.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    if link.clicked() {
+                        intent = Some(TransportIntent::ShowTab(Tab::Artist(id.clone())));
+                    }
+                }
+                None => {
+                    ui.label(components::muted(palette, name, 11.0));
+                }
+            }
+        }
+    });
+    intent
 }
 
 /// The diameter of the central play/pause button — deliberately larger than

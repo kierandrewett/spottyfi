@@ -602,14 +602,34 @@ fn track_info(item: &AudioItem) -> TrackInfo {
         .max_by_key(|cover| i64::from(cover.width) * i64::from(cover.height))
         .map(|cover| cover.url.clone());
 
-    let (artists, album) = match &item.unique_fields {
-        UniqueFields::Track { artists, album, .. } => (
-            artists.0.iter().map(|a| a.name.clone()).collect(),
-            album.clone(),
-        ),
-        UniqueFields::Episode { show_name, .. } => (vec![show_name.clone()], String::new()),
+    let (artists, artist_ids, album) = match &item.unique_fields {
+        UniqueFields::Track { artists, album, .. } => {
+            let names: Vec<String> = artists.0.iter().map(|a| a.name.clone()).collect();
+            // Resolve each artist URI to a base-62 id. Keep the ids only if
+            // every one resolved, so `artists[i]` and `artist_ids[i]` stay
+            // aligned (a partial list would mislabel the links).
+            let ids: Vec<String> = artists
+                .0
+                .iter()
+                .filter_map(|a| {
+                    SpotifyId::try_from(&a.id)
+                        .ok()
+                        .and_then(|id| id.to_base62().ok())
+                })
+                .collect();
+            let ids = if ids.len() == names.len() {
+                ids
+            } else {
+                Vec::new()
+            };
+            (names, ids, album.clone())
+        }
+        UniqueFields::Episode { show_name, .. } => {
+            (vec![show_name.clone()], Vec::new(), String::new())
+        }
         UniqueFields::Local { artists, album, .. } => (
             artists.clone().map(|a| vec![a]).unwrap_or_default(),
+            Vec::new(),
             album.clone().unwrap_or_default(),
         ),
     };
@@ -618,6 +638,7 @@ fn track_info(item: &AudioItem) -> TrackInfo {
         uri: item.uri.clone(),
         title: item.name.clone(),
         artists,
+        artist_ids,
         album,
         art_url,
         duration: Duration::from_millis(u64::from(item.duration_ms)),
