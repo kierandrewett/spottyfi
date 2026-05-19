@@ -79,3 +79,23 @@ experience, source-tagged everywhere, de-duplicated.
   concurrent `search_all`; cross-source de-duplication (MusicBrainz-id or
   fuzzy title/artist key, noise-aware) collapsing the same song to one entry
   with ranked alternatives; the OpenSubsonic adapter. 8 unit tests.
+- **opencode validation pass** run against the OpenSubsonic spec; six
+  findings fixed (per-request salt, `error_for_status`, empty-library
+  decode, case-insensitive MBID match, no-artist dedup safety, Unicode-aware
+  normalisation).
+
+## Status — honest assessment
+
+Phases **A and B are complete, tested and committed**: a real OpenSubsonic
+client and the whole multi-source + de-dup architecture. These are the
+foundations and they are solid.
+
+The remaining phases (**C** playback engine, **D** settings/first-run wizard,
+**E** search UI + source switching, **F/G** Apple Music) are *app
+integration* — wiring the foundations through the audio engine and the egui
+frontend. That is a large body of work: a second playback path
+(`symphonia` HTTP decode → the cpal sink), source-config persistence, new
+settings + wizard UI, and source-aware search/browse/transport screens. It is
+**not an overnight deliverable**, and CEF-based Apple Music playback is a
+substantial subproject of its own. Tonight delivered the foundations to
+spec; the integration is the next, larger push.
