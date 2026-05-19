@@ -111,11 +111,18 @@ fn load_track(
     uri: &str,
     position_ms: u32,
 ) -> AudioResult<()> {
-    if !activated.swap(true, Ordering::SeqCst) {
+    // Claim the one-time activation. `compare_exchange` lets exactly one
+    // caller win the race; if `activate()` then fails we release the claim so
+    // a later play retries rather than skipping activation forever.
+    if activated
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
+    {
         tracing::info!("activating spottyfi as the active connect device on first play");
-        spirc
-            .activate()
-            .map_err(|err| AudioError::Connect(err.to_string()))?;
+        if let Err(err) = spirc.activate() {
+            activated.store(false, Ordering::SeqCst);
+            return Err(AudioError::Connect(err.to_string()));
+        }
     }
     let options = LoadRequestOptions {
         start_playing: true,

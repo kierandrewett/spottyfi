@@ -436,22 +436,35 @@ impl PlaybackController {
                 if !matches!(event, PlayerEvent::EndOfTrack { .. }) {
                     continue;
                 }
-                let next = lock(&queue).advance();
-                match next {
-                    Some(track) => match state::normalise_uri(&track.uri) {
-                        Ok(uri) => {
-                            tracing::info!(%uri, "auto-advancing to next track");
-                            // Route through the Connect device so the next
-                            // play is reported to Spotify (history / scrobble).
-                            if let Err(err) = loader.load_track(&uri, 0) {
-                                tracing::warn!(%err, %uri, "auto-advance: load failed");
-                            }
-                        }
+                // Advance to the next *playable* track: a track whose URI is
+                // unparseable, or that the Connect device rejects, is skipped
+                // so one bad entry never strands auto-advance. The skip count
+                // is bounded by the queue length to avoid an unbounded loop.
+                let limit = {
+                    let snap = lock(&queue).snapshot();
+                    (snap.manual.len() + snap.up_next_context.len()).max(1)
+                };
+                for _ in 0..limit {
+                    let Some(track) = lock(&queue).advance() else {
+                        tracing::debug!("auto-advance: queue exhausted, stopping");
+                        break;
+                    };
+                    let uri = match state::normalise_uri(&track.uri) {
+                        Ok(uri) => uri,
                         Err(err) => {
-                            tracing::warn!(%err, uri = %track.uri, "auto-advance: unplayable");
+                            tracing::warn!(%err, uri = %track.uri, "auto-advance: unplayable, skipping");
+                            continue;
                         }
-                    },
-                    None => tracing::debug!("auto-advance: queue exhausted, stopping"),
+                    };
+                    tracing::info!(%uri, "auto-advancing to next track");
+                    // Route through the Connect device so the next play is
+                    // reported to Spotify (history / scrobble).
+                    match loader.load_track(&uri, 0) {
+                        Ok(()) => break,
+                        Err(err) => {
+                            tracing::warn!(%err, %uri, "auto-advance: load failed, skipping");
+                        }
+                    }
                 }
                 queue_state.store(Arc::new(lock(&queue).snapshot()));
             }

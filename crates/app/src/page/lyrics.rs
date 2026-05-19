@@ -217,6 +217,15 @@ fn synced_lyrics(
     let current = spottyfi_api::lyrics::current_synced_line(lines, position);
     let mut action = None;
 
+    // Auto-scroll only when the current line *changes*. egui honours every
+    // `scroll_to_me` request, so calling it each frame would fight a user who
+    // scrolls away manually; the previous current line is stashed in egui's
+    // per-widget memory and compared here.
+    let scroll_id = ui.id().with("synced_lyrics_current");
+    let last_current: Option<usize> = ui.data(|d| d.get_temp(scroll_id)).flatten();
+    let freshly_current = current.is_some() && current != last_current;
+    ui.data_mut(|d| d.insert_temp(scroll_id, current));
+
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -227,12 +236,7 @@ fn synced_lyrics(
                 if response.clicked() {
                     action = Some(PageAction::Seek(line.at));
                 }
-                // Auto-scroll: keep the current line in view. Only scroll when
-                // the line is freshly current, so manual scrolling is not
-                // fought every frame — `scroll_to_me` with no animation when
-                // already visible is a no-op, but egui still respects an
-                // explicit request, so it is gated on `is_current`.
-                if is_current {
+                if is_current && freshly_current {
                     response.scroll_to_me(Some(egui::Align::Center));
                 }
             }
