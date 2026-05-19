@@ -38,7 +38,10 @@ experience, source-tagged everywhere, de-duplicated.
       is large; wiring it behind `MusicSource` is its own step)
 
 ### C — OpenSubsonic playback
-- [ ] HTTP-stream audio player: `symphonia` decode → the cpal sink
+- [x] Shared `CpalOutput` output stage extracted from `CpalSink`
+- [x] HTTP-stream audio player: fetch → `symphonia` decode → `CpalOutput`
+      (`crate::http_player::HttpAudioPlayer`) — play/pause/resume/stop/seek/
+      volume/position, FLAC + MP3 + Ogg-Vorbis
 - [ ] Engine routes by source: librespot for Spotify, HTTP player for Subsonic
 - [ ] Transport/queue source-aware
 

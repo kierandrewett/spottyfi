@@ -210,20 +210,22 @@ fn ring_pair(min_samples: usize) -> (RingProducer, RingConsumer) {
     )
 }
 
-/// Linear-interpolating stereo resampler, used only when the output device
-/// cannot run at librespot's native 44.1 kHz.
-struct Resampler {
-    /// Output-to-input sample-rate ratio (`44100 / device_rate`).
+/// Linear-interpolating stereo resampler.
+///
+/// Used by [`CpalSink`] to reach a non-44.1 kHz device, and by the HTTP
+/// player to reach the device rate from whatever rate a file decodes at.
+pub(crate) struct Resampler {
+    /// Output-to-input sample-rate ratio (`from_rate / to_rate`).
     step: f64,
     /// Fractional read position within the input stream.
     pos: f64,
-    /// The most recent input frame, for interpolation across `write` calls.
+    /// The most recent input frame, for interpolation across calls.
     last: [f32; 2],
 }
 
 impl Resampler {
     /// A resampler converting `from_rate` Hz to `to_rate` Hz.
-    fn new(from_rate: u32, to_rate: u32) -> Self {
+    pub(crate) fn new(from_rate: u32, to_rate: u32) -> Self {
         Self {
             step: f64::from(from_rate) / f64::from(to_rate),
             pos: 0.0,
@@ -233,7 +235,7 @@ impl Resampler {
 
     /// Resample interleaved-stereo `input` from `from_rate` to `to_rate`,
     /// appending the result to `out`.
-    fn process(&mut self, input: &[f32], out: &mut Vec<f32>) {
+    pub(crate) fn process(&mut self, input: &[f32], out: &mut Vec<f32>) {
         let frames = input.len() / 2;
         while self.pos < frames as f64 {
             let i = self.pos as usize;

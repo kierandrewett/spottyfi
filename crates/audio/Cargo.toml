@@ -41,3 +41,16 @@ rustfft = { workspace = true }
 # Pure-Rust Ogg Vorbis decoder, used by `crate::waveform` to decode a whole
 # track off-thread and build the full-song waveform envelope.
 lewton = "0.10"
+
+# symphonia: the pure-Rust decoder behind the OpenSubsonic HTTP player
+# (`crate::http_player`). FLAC / MP3 / Ogg-Vorbis cover what Subsonic servers
+# stream (and they transcode anything else).
+symphonia = { version = "0.5", default-features = false, features = [
+    "flac",
+    "mp3",
+    "vorbis",
+    "ogg",
+] }
+
+# The HTTP client that fetches OpenSubsonic audio streams.
+reqwest = { workspace = true }
