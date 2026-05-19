@@ -630,13 +630,24 @@ fn apply_crossfade(
 /// (and back down over the final `crossfade` seconds). A track shorter than
 /// `2 * crossfade` never reaches full volume — its fade-in and fade-out
 /// overlap, which is the intended behaviour.
+///
+/// The ramp follows an **equal-power** (quarter-sine) curve rather than a
+/// straight line: a track holds near full volume for longer and then drops
+/// quickly through the seam, so the transition spends far less time sagging
+/// at low volume than a linear fade would.
 fn crossfade_factor(position: f32, total: f32, crossfade: f32) -> f32 {
     if crossfade <= 0.0 {
         return 1.0;
     }
     let fade_in = (position / crossfade).clamp(0.0, 1.0);
     let fade_out = ((total - position) / crossfade).clamp(0.0, 1.0);
-    fade_in.min(fade_out)
+    equal_power(fade_in.min(fade_out))
+}
+
+/// Shape a `0.0..=1.0` linear ramp position into an equal-power gain with a
+/// quarter-sine curve: `0 -> 0`, `1 -> 1`, and a gentle knee in between.
+fn equal_power(linear: f32) -> f32 {
+    (linear.clamp(0.0, 1.0) * std::f32::consts::FRAC_PI_2).sin()
 }
 
 /// Kick off background full-song waveform analysis for a just-changed track.
@@ -865,11 +876,14 @@ mod tests {
         // 6s crossfade on a 200s track.
         // Start of the track: silent, ramping in.
         assert_eq!(crossfade_factor(0.0, 200.0, 6.0), 0.0);
-        assert!((crossfade_factor(3.0, 200.0, 6.0) - 0.5).abs() < 1e-6);
+        // Halfway through the ramp the equal-power curve sits above 0.5.
+        let mid = crossfade_factor(3.0, 200.0, 6.0);
+        assert!((mid - 0.707).abs() < 0.01, "equal-power midpoint: {mid}");
         // Once past the ramp-in window: full volume.
-        assert_eq!(crossfade_factor(60.0, 200.0, 6.0), 1.0);
+        assert!((crossfade_factor(60.0, 200.0, 6.0) - 1.0).abs() < 1e-6);
         // Final seconds: ramping back out to silence at the seam.
-        assert!((crossfade_factor(197.0, 200.0, 6.0) - 0.5).abs() < 1e-6);
+        let tail = crossfade_factor(197.0, 200.0, 6.0);
+        assert!((tail - 0.707).abs() < 0.01, "equal-power tail: {tail}");
         assert_eq!(crossfade_factor(200.0, 200.0, 6.0), 0.0);
     }
 
