@@ -815,9 +815,10 @@ fn activity_indicator(ui: &mut egui::Ui, palette: &Palette, activity: &ActivityR
 
     ui.add_space(8.0);
 
-    // The dropdown: a flat button that opens a panel listing every job.
+    // The dropdown: a flat button that opens a panel listing every job. (No
+    // glyph caret — the bundled fonts lack the triangle code points.)
     let button = egui::Button::new(
-        egui::RichText::new(format!("{summary}  \u{25be}"))
+        egui::RichText::new(summary)
             .size(10.5)
             .color(palette.text_muted),
     )

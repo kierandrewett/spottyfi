@@ -287,34 +287,49 @@ fn sort_header(
     action: &mut Option<TrackAction>,
 ) {
     let active = state.column == column;
-    let text = if active {
-        let arrow = if state.descending {
-            " \u{25be}"
-        } else {
-            " \u{25b4}"
-        };
-        format!("{label}{arrow}")
-    } else {
-        label.to_owned()
-    };
     let color = if active {
         palette.text
     } else {
         palette.text_muted
     };
     let button = egui::Button::new(
-        egui::RichText::new(text)
+        egui::RichText::new(label)
             .family(crate::fonts::medium())
             .size(10.5)
             .color(color),
     )
     .frame(false);
-    if ui
+    let response = ui
         .add(button)
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if response.clicked() {
         *action = Some(TrackAction::Sort(column));
+    }
+    // The sort-direction caret is *painted*, not a glyph: the bundled UI fonts
+    // do not carry the small-triangle code points (they rendered as "?").
+    if active && ui.is_rect_visible(response.rect) {
+        let rect = response.rect;
+        let cx = rect.right() + 5.0;
+        let cy = rect.center().y;
+        let half = 3.0;
+        let tri = if state.descending {
+            vec![
+                egui::pos2(cx - half, cy - half * 0.5),
+                egui::pos2(cx + half, cy - half * 0.5),
+                egui::pos2(cx, cy + half * 0.7),
+            ]
+        } else {
+            vec![
+                egui::pos2(cx - half, cy + half * 0.5),
+                egui::pos2(cx + half, cy + half * 0.5),
+                egui::pos2(cx, cy - half * 0.7),
+            ]
+        };
+        ui.painter().add(egui::Shape::convex_polygon(
+            tri,
+            palette.text,
+            egui::Stroke::NONE,
+        ));
     }
 }
 
