@@ -208,14 +208,15 @@ impl ShellState {
         self.persisted.save();
     }
 
-    /// Reveal a dock tab: focus it if it is already open, otherwise add it to
-    /// the focused leaf. Used by the transport bar's shortcut buttons.
+    /// Reveal a dock tab: focus it if it is already open, otherwise dock it in
+    /// the slot its type belongs to — side panels (Queue, Visualiser, Now
+    /// Playing Art) join the side-panel column, everything else opens in the
+    /// centre pane. Used by the transport bar's shortcut buttons.
     pub fn reveal_tab(&mut self, tab: Tab) {
-        match self.persisted.dock.find_tab(&tab) {
-            Some(location) => {
-                let _ = self.persisted.dock.set_active_tab(location);
-            }
-            None => self.persisted.dock.push_to_focused_leaf(tab),
+        if tab.is_side_panel() {
+            nav::reveal_side_panel(&mut self.persisted.dock, tab);
+        } else {
+            nav::reveal_centre(&mut self.persisted.dock, tab);
         }
     }
 
@@ -238,10 +239,10 @@ fn apply_nav(persisted: &mut PersistedShell, request: NavRequest) {
     let PersistedShell {
         dock, dock_extras, ..
     } = persisted;
-    // A content page always belongs in the centre tab group — opening Search,
-    // a playlist, etc. should never land in a side panel's leaf. Panels are
-    // left to open wherever the focus is.
-    let main_pane = request.main_pane || request.tab.is_page();
+    // Anything that is not a side panel belongs in the centre tab group —
+    // opening Search, a playlist, Settings, etc. should never land in a side
+    // panel's leaf. Only the docked side panels open beside one another.
+    let main_pane = request.main_pane || !request.tab.is_side_panel();
     match (request.new_tab, main_pane) {
         (false, false) => nav::navigate_replace(dock, dock_extras, request.tab),
         (true, false) => nav::open_new_tab(dock, request.tab),

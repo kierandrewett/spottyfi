@@ -160,6 +160,18 @@ impl Tab {
     pub fn is_page(&self) -> bool {
         !self.is_panel()
     }
+
+    /// Whether this tab belongs in a docked side panel — the right-hand column
+    /// of the default layout — rather than the centre content area.
+    ///
+    /// This decides only where a *freshly opened* tab first lands: side-panel
+    /// tabs dock alongside each other, everything else opens in the centre
+    /// pane. The user can still drag any tab anywhere afterwards, and the
+    /// dragged layout persists.
+    #[must_use]
+    pub fn is_side_panel(&self) -> bool {
+        matches!(self, Tab::NowPlayingArt | Tab::Queue | Tab::Visualiser)
+    }
 }
 
 /// Something a dock tab raised this frame that the shell must act on.

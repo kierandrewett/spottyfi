@@ -125,6 +125,60 @@ fn navigate_replace_in(
     insert_new_tab(dock, leaf, tab);
 }
 
+/// Reveal a side-panel tab (Queue, Now Playing Art, Visualiser): focus it if
+/// already open, otherwise dock it next to any existing side panel, or — when
+/// no side-panel column exists at all — split a fresh right-hand column off
+/// the main pane.
+///
+/// This gives a sensible default home for panels; the user is free to drag
+/// them elsewhere afterwards.
+pub fn reveal_side_panel(dock: &mut DockState<Tab>, tab: Tab) {
+    if focus_if_open(dock, &tab) {
+        return;
+    }
+    if let Some(leaf) = side_panel_leaf_path(dock) {
+        insert_new_tab(dock, Some(leaf), tab);
+        return;
+    }
+    // No side-panel column exists — carve one off the right of the main pane.
+    match main_leaf_path(dock).filter(|path| path.surface == egui_dock::SurfaceIndex::main()) {
+        Some(main) => {
+            dock[main.surface].split_right(main.node, 0.74, vec![tab.clone()]);
+            let _ = focus_if_open(dock, &tab);
+        }
+        None => insert_new_tab(dock, None, tab),
+    }
+}
+
+/// Reveal a centre tab (Settings, Devices, a page): focus it if already open,
+/// otherwise add it as a new tab in the main (centre) pane rather than in
+/// whichever side-panel leaf happens to hold focus.
+pub fn reveal_centre(dock: &mut DockState<Tab>, tab: Tab) {
+    if focus_if_open(dock, &tab) {
+        return;
+    }
+    open_new_tab_main(dock, tab);
+}
+
+/// Focus `tab` if it is already open anywhere; returns whether it was found.
+fn focus_if_open(dock: &mut DockState<Tab>, tab: &Tab) -> bool {
+    if let Some(path) = dock.find_tab(tab) {
+        dock.set_focused_node_and_surface(path.node_path());
+        let _ = dock.set_active_tab(path);
+        true
+    } else {
+        false
+    }
+}
+
+/// The leaf of the first open side-panel tab, if any — the column new side
+/// panels should join.
+fn side_panel_leaf_path(dock: &DockState<Tab>) -> Option<egui_dock::NodePath> {
+    [Tab::Queue, Tab::NowPlayingArt, Tab::Visualiser]
+        .iter()
+        .find_map(|tab| dock.find_tab(tab).map(|path| path.node_path()))
+}
+
 /// Open `tab` in a brand-new tab (the Ctrl/Cmd-click rule), focusing it.
 ///
 /// Unlike [`navigate_replace`] this always adds a tab even when `tab` is
@@ -397,6 +451,56 @@ mod tests {
             queue_still,
             Some(queue_leaf),
             "the Queue panel leaf is left alone"
+        );
+    }
+
+    #[test]
+    fn revealed_side_panel_joins_an_existing_panel_column() {
+        use egui_dock::{NodeIndex, SurfaceIndex};
+        let mut dock = dock_with(vec![Tab::Home]);
+        let surface = SurfaceIndex::main();
+        dock[surface].split_right(NodeIndex::root(), 0.7, vec![Tab::Queue]);
+        let queue_leaf = dock.find_tab(&Tab::Queue).expect("queue").node_path();
+
+        // The Visualiser is a side panel — it must dock beside the Queue, not
+        // in the centre Home leaf.
+        reveal_side_panel(&mut dock, Tab::Visualiser);
+        let vis_leaf = dock.find_tab(&Tab::Visualiser).map(|p| p.node_path());
+        assert_eq!(vis_leaf, Some(queue_leaf), "Visualiser joined the column");
+        assert_ne!(vis_leaf, main_leaf_path(&dock));
+    }
+
+    #[test]
+    fn revealed_side_panel_splits_a_column_when_none_exists() {
+        // A single-leaf dock with only the centre Home tab.
+        let mut dock = dock_with(vec![Tab::Home]);
+        reveal_side_panel(&mut dock, Tab::Queue);
+        // The Queue gets its own leaf, distinct from the Home (centre) leaf.
+        let queue_leaf = dock.find_tab(&Tab::Queue).map(|p| p.node_path());
+        assert!(queue_leaf.is_some(), "Queue was docked");
+        assert_ne!(
+            queue_leaf,
+            main_leaf_path(&dock),
+            "Queue is not in the centre"
+        );
+    }
+
+    #[test]
+    fn revealed_centre_tab_lands_in_the_main_pane() {
+        use egui_dock::{NodeIndex, SurfaceIndex};
+        let mut dock = dock_with(vec![Tab::Home]);
+        let surface = SurfaceIndex::main();
+        dock[surface].split_right(NodeIndex::root(), 0.7, vec![Tab::Queue]);
+        // Focus the side panel, then reveal Settings — a centre tab.
+        let queue_leaf = dock.find_tab(&Tab::Queue).expect("queue").node_path();
+        dock.set_focused_node_and_surface(queue_leaf);
+
+        reveal_centre(&mut dock, Tab::Settings);
+        let settings_leaf = dock.find_tab(&Tab::Settings).map(|p| p.node_path());
+        assert_eq!(
+            settings_leaf,
+            main_leaf_path(&dock),
+            "Settings opened in the centre pane"
         );
     }
 
