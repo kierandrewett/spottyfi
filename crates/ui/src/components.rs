@@ -79,31 +79,44 @@ pub fn album_art(
     corner_radius: f32,
 ) -> egui::Response {
     let desired = egui::vec2(size, size);
+
+    // The flat fallback: an elevated square with a centred music-note glyph.
+    // Shown when there is no URL, while the image is still loading, and on any
+    // load error — so a transient fetch failure never flashes egui's built-in
+    // red "broken image" placeholder.
+    let placeholder = |ui: &mut egui::Ui| {
+        let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::hover());
+        if ui.is_rect_visible(rect) {
+            ui.painter()
+                .rect_filled(rect, corner_radius, palette.elevated);
+            let glyph = (size * 0.42).clamp(10.0, 48.0);
+            let glyph_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(glyph, glyph));
+            crate::icons::Icon::Music
+                .image(glyph, palette.text_muted)
+                .paint_at(ui, glyph_rect);
+        }
+        response
+    };
+
     match url {
-        Some(url) if !url.is_empty() => ui.add(
-            egui::Image::from_uri(url.to_owned())
+        Some(url) if !url.is_empty() => {
+            let image = egui::Image::from_uri(url.to_owned())
                 .fit_to_exact_size(desired)
                 .corner_radius(corner_radius)
                 // Photographic cover art is almost always drawn scaled down
                 // from a larger source; linear min/mag filtering keeps scaled
                 // covers smooth instead of hard-edged ("crispy").
-                .texture_options(egui::TextureOptions::LINEAR)
-                .show_loading_spinner(true),
-        ),
-        _ => {
-            let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::hover());
-            if ui.is_rect_visible(rect) {
-                ui.painter()
-                    .rect_filled(rect, corner_radius, palette.elevated);
-                let glyph = (size * 0.42).clamp(10.0, 48.0);
-                let glyph_rect =
-                    egui::Rect::from_center_size(rect.center(), egui::vec2(glyph, glyph));
-                crate::icons::Icon::Music
-                    .image(glyph, palette.text_muted)
-                    .paint_at(ui, glyph_rect);
+                .texture_options(egui::TextureOptions::LINEAR);
+            // Drive the load ourselves: only render the egui image once the
+            // texture is genuinely ready. While pending — or if the fetch
+            // errors — fall back to our own placeholder rather than letting
+            // egui paint a red error box for a frame.
+            match image.load_for_size(ui.ctx(), desired) {
+                Ok(egui::load::TexturePoll::Ready { .. }) => ui.add(image),
+                _ => placeholder(ui),
             }
-            response
         }
+        _ => placeholder(ui),
     }
 }
 
