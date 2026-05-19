@@ -10,6 +10,7 @@ rust-version.workspace = true
 
 [dependencies]
 spottyfi-subsonic = { workspace = true }
+spottyfi-applemusic = { workspace = true }
 
 serde = { workspace = true }
 tracing = { workspace = true }

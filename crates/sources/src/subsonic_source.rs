@@ -67,6 +67,8 @@ impl SubsonicSource {
             track_number: song.track,
             art_url,
             mbid: song.music_brainz_id,
+            // OpenSubsonic does not expose an ISRC field.
+            isrc: None,
             playable: true,
         }
     }

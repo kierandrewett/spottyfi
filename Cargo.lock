@@ -7250,6 +7250,7 @@ dependencies = [
  "async-trait",
  "futures",
  "serde",
+ "spottyfi-applemusic",
  "spottyfi-subsonic",
  "thiserror 2.0.18",
  "tokio",

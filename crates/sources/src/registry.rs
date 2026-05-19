@@ -158,6 +158,7 @@ mod tests {
                     track_number: None,
                     art_url: None,
                     mbid: None,
+                    isrc: None,
                     playable: true,
                 }],
                 albums: Vec::new(),

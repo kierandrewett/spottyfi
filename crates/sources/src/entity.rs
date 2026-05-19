@@ -36,6 +36,9 @@ pub struct Track {
     /// The MusicBrainz recording id, when known — a high-confidence
     /// de-duplication key.
     pub mbid: Option<String>,
+    /// The ISRC recording code, when known. Spotify and Apple Music both
+    /// expose it, so it is the strongest cross-source de-duplication key.
+    pub isrc: Option<String>,
     /// Whether this track can actually be played from this source. `false`
     /// for a catalog-only source (Apple Music before CEF playback) — it can
     /// still be shown and de-duplicated against a playable source.
