@@ -43,18 +43,16 @@ pub struct SubsonicClient {
     base: String,
     /// The account username.
     username: String,
-    /// The per-client random salt mixed into the auth token.
-    salt: String,
-    /// The auth token — `md5(password + salt)`, hex-encoded.
-    token: String,
+    /// The account password. Retained so a fresh random salt — and therefore
+    /// a fresh token — can be generated per request, as the spec recommends.
+    password: String,
 }
 
 impl SubsonicClient {
     /// Build a client for `config`.
     ///
-    /// The password is consumed here to derive the auth token and is not
-    /// retained. No network request is made; call [`SubsonicClient::ping`] to
-    /// verify the server is reachable and the credentials are valid.
+    /// No network request is made; call [`SubsonicClient::ping`] to verify the
+    /// server is reachable and the credentials are valid.
     ///
     /// # Errors
     ///
@@ -65,8 +63,6 @@ impl SubsonicClient {
         if base.is_empty() {
             return Err(SubsonicError::BadUrl("the server URL is empty".to_owned()));
         }
-        let salt = random_salt();
-        let token = hex::encode(Md5::digest(format!("{}{salt}", config.password).as_bytes()));
         let http = reqwest::Client::builder()
             .user_agent(concat!("Spottyfi/", env!("CARGO_PKG_VERSION")))
             .build()
@@ -75,17 +71,27 @@ impl SubsonicClient {
             http,
             base,
             username: config.username,
-            salt,
-            token,
+            password: config.password,
         })
+    }
+
+    /// A fresh `(salt, token)` pair — `token = md5(password + salt)`.
+    ///
+    /// Generated per request: the spec recommends a new random salt for every
+    /// call rather than a reused one.
+    fn credentials(&self) -> (String, String) {
+        let salt = random_salt();
+        let token = hex::encode(Md5::digest(format!("{}{salt}", self.password).as_bytes()));
+        (salt, token)
     }
 
     /// The authentication query parameters every request carries.
     fn auth_params(&self) -> Vec<(&'static str, String)> {
+        let (salt, token) = self.credentials();
         vec![
             ("u", self.username.clone()),
-            ("t", self.token.clone()),
-            ("s", self.salt.clone()),
+            ("t", token),
+            ("s", salt),
             ("v", API_VERSION.to_owned()),
             ("c", CLIENT_NAME.to_owned()),
             ("f", "json".to_owned()),
@@ -108,6 +114,11 @@ impl SubsonicClient {
             .query(&params)
             .send()
             .await
+            .map_err(|err| SubsonicError::Http(err.to_string()))?
+            // A non-2xx reply is an HTTP-level failure (a reverse proxy, a
+            // crashed server) — surface it as such rather than letting an
+            // HTML error page fail later as a confusing decode error.
+            .error_for_status()
             .map_err(|err| SubsonicError::Http(err.to_string()))?;
         let envelope: Envelope = response
             .json()
@@ -124,10 +135,14 @@ impl SubsonicClient {
         payload_key: &str,
     ) -> SubsonicResult<T> {
         let body = self.request_raw(endpoint, extra).await?;
+        // A missing payload key defaults to an empty object, not null: list
+        // endpoints (`getArtists`, …) legitimately omit the key when the
+        // library is empty, and every list model's fields are `default`, so
+        // `{}` decodes to "no results" rather than a spurious decode error.
         let payload = body
             .get(payload_key)
             .cloned()
-            .unwrap_or(serde_json::Value::Null);
+            .unwrap_or_else(|| serde_json::json!({}));
         serde_json::from_value(payload).map_err(|err| SubsonicError::Decode(err.to_string()))
     }
 
@@ -328,15 +343,16 @@ impl SubsonicClient {
     /// Build a signed `{base}/rest/{endpoint}?…` URL with the auth parameters
     /// and `extra` query pairs.
     fn signed_url(&self, endpoint: &str, extra: &[(&str, &str)]) -> SubsonicResult<String> {
-        let mut params: Vec<(&str, &str)> = vec![
-            ("u", &self.username),
-            ("t", &self.token),
-            ("s", &self.salt),
-            ("v", API_VERSION),
-            ("c", CLIENT_NAME),
-            ("f", "json"),
+        let (salt, token) = self.credentials();
+        let mut params: Vec<(&str, String)> = vec![
+            ("u", self.username.clone()),
+            ("t", token),
+            ("s", salt),
+            ("v", API_VERSION.to_owned()),
+            ("c", CLIENT_NAME.to_owned()),
+            ("f", "json".to_owned()),
         ];
-        params.extend_from_slice(extra);
+        params.extend(extra.iter().map(|(key, value)| (*key, (*value).to_owned())));
         let url =
             reqwest::Url::parse_with_params(&format!("{}/rest/{endpoint}", self.base), &params)
                 .map_err(|err| SubsonicError::BadUrl(err.to_string()))?;

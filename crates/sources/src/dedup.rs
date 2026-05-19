@@ -135,35 +135,48 @@ where
 
 /// The match key for a track: its MusicBrainz id when present, else a fuzzy
 /// title + primary-artist key.
+///
+/// MusicBrainz ids are case-insensitive, so they are lower-cased first. A
+/// track with no artist cannot be safely fuzzy-matched (two unrelated songs
+/// could share a title), so it is keyed uniquely and never de-duplicated.
 fn track_key(track: &Track) -> String {
     if let Some(mbid) = &track.mbid {
-        return format!("mbid:{mbid}");
+        return format!("mbid:{}", mbid.to_lowercase());
     }
-    format!(
-        "fuzzy:{}|{}",
-        normalize_title(&track.title),
-        normalize_name(&track.artist),
-    )
+    let artist = normalize_name(&track.artist);
+    if artist.is_empty() {
+        return unique_key(&track.source.source.0, &track.source.id);
+    }
+    format!("fuzzy:{}|{artist}", normalize_title(&track.title))
 }
 
 /// The match key for an album: MusicBrainz id, else album name + artist.
 fn album_key(album: &Album) -> String {
     if let Some(mbid) = &album.mbid {
-        return format!("mbid:{mbid}");
+        return format!("mbid:{}", mbid.to_lowercase());
     }
-    format!(
-        "fuzzy:{}|{}",
-        normalize_title(&album.name),
-        normalize_name(&album.artist),
-    )
+    let artist = normalize_name(&album.artist);
+    if artist.is_empty() {
+        return unique_key(&album.source.source.0, &album.source.id);
+    }
+    format!("fuzzy:{}|{artist}", normalize_title(&album.name))
 }
 
 /// The match key for an artist: MusicBrainz id, else the normalised name.
 fn artist_key(artist: &Artist) -> String {
     if let Some(mbid) = &artist.mbid {
-        return format!("mbid:{mbid}");
+        return format!("mbid:{}", mbid.to_lowercase());
     }
-    format!("fuzzy:{}", normalize_name(&artist.name))
+    let name = normalize_name(&artist.name);
+    if name.is_empty() {
+        return unique_key(&artist.source.source.0, &artist.source.id);
+    }
+    format!("fuzzy:{name}")
+}
+
+/// A key that never collides — used for entities too sparse to match safely.
+fn unique_key(source: &str, id: &str) -> String {
+    format!("unique:{source}:{id}")
 }
 
 /// Normalise a title for fuzzy matching: lower-case, drop noise parentheticals
@@ -215,12 +228,13 @@ fn strip_noise_brackets(text: &str) -> String {
     out
 }
 
-/// Keep only ASCII alphanumerics, fold everything else to single spaces.
+/// Keep only alphanumerics (Unicode-aware, so accents and non-Latin scripts
+/// survive), folding everything else to single spaces.
 fn alphanumeric_collapse(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last_was_space = true;
     for ch in text.chars() {
-        if ch.is_ascii_alphanumeric() {
+        if ch.is_alphanumeric() {
             out.push(ch);
             last_was_space = false;
         } else if !last_was_space {
@@ -321,5 +335,31 @@ mod tests {
         a.mbid = Some("mb-123".to_owned());
         b.mbid = Some("mb-123".to_owned());
         assert_eq!(dedup_tracks(vec![a, b]).len(), 1);
+    }
+
+    #[test]
+    fn mbid_match_is_case_insensitive() {
+        let mut a = track(SourceKind::Spotify, "A", "X", true);
+        let mut b = track(SourceKind::Subsonic, "B", "Y", true);
+        a.mbid = Some("ABC-DEF".to_owned());
+        b.mbid = Some("abc-def".to_owned());
+        assert_eq!(dedup_tracks(vec![a, b]).len(), 1, "MBIDs are UUIDs");
+    }
+
+    #[test]
+    fn tracks_with_no_artist_never_merge() {
+        // Two same-titled tracks with no artist must stay separate — they
+        // could be entirely different songs.
+        let a = track(SourceKind::Subsonic, "Untitled", "", true);
+        let mut b = track(SourceKind::Subsonic, "Untitled", "", true);
+        b.source.id = "different".to_owned();
+        assert_eq!(dedup_tracks(vec![a, b]).len(), 2);
+    }
+
+    #[test]
+    fn normalize_preserves_non_ascii_letters() {
+        // Accented / non-Latin letters must survive so they still match.
+        assert_eq!(normalize_name("Beyoncé"), normalize_name("beyoncé"));
+        assert!(!normalize_name("宇多田ヒカル").is_empty());
     }
 }
