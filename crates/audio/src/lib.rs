@@ -36,6 +36,7 @@ mod dsp;
 mod engine;
 mod error;
 mod http_player;
+mod playback;
 mod queue;
 mod sink;
 mod spectrum;
@@ -48,6 +49,7 @@ pub use crate::controller::{PlaybackController, SharedPlaybackState, SharedQueue
 pub use crate::dsp::BAND_COUNT as EQ_BAND_COUNT;
 pub use crate::error::{AudioError, AudioResult};
 pub use crate::http_player::HttpAudioPlayer;
+pub use crate::playback::PlaybackBackend;
 pub use crate::queue::{Queue, QueueState, QueueTrack, RepeatMode};
 pub use crate::spectrum::{SpectrumAnalyzer, SpectrumSnapshot, BAND_COUNT as SPECTRUM_BAND_COUNT};
 pub use crate::state::{normalise_uri, parse_playable, PlaybackState, TrackInfo};
