@@ -72,7 +72,7 @@ impl StreamTier {
 /// Quality and normalisation are start-time settings (see the module docs);
 /// crossfade is a UI-level preference with no engine support yet — librespot
 /// has no crossfade, so the value is persisted for a future custom backend.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AudioSettings {
     /// The streaming bitrate tier.
     pub quality: StreamTier,
@@ -83,6 +83,25 @@ pub struct AudioSettings {
     /// Persisted for a future custom backend — librespot itself has no
     /// crossfade, so this currently does not affect playback.
     pub crossfade_seconds: f32,
+    /// Output volume, `0.0..=1.0` — restored on the next launch.
+    #[serde(default = "default_volume")]
+    pub volume: f32,
+}
+
+/// The default output volume — full scale.
+fn default_volume() -> f32 {
+    1.0
+}
+
+impl Default for AudioSettings {
+    fn default() -> Self {
+        Self {
+            quality: StreamTier::default(),
+            normalisation: false,
+            crossfade_seconds: 0.0,
+            volume: default_volume(),
+        }
+    }
 }
 
 impl AudioSettings {
@@ -351,6 +370,7 @@ mod tests {
                 quality: StreamTier::Normal,
                 normalisation: true,
                 crossfade_seconds: 4.5,
+                volume: 0.6,
             },
             equalizer: EqualizerSettings {
                 enabled: true,

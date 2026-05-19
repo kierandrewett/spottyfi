@@ -34,6 +34,9 @@ pub struct SpottyfiApp {
     /// Whether Spotify playback is currently on another Connect device. When
     /// set, the transport's controls drive that device over the Web API.
     playing_elsewhere: bool,
+    /// Whether the persisted output volume has been pushed to the engine yet
+    /// this session — done once, the first frame the engine is ready.
+    volume_restored: bool,
     /// Per-frame UI state for the transport widgets (scrub drag, debug field).
     transport_ui: TransportUiState,
     /// The persisted + per-session shell state (dock layout, theme, sidebar).
@@ -104,6 +107,7 @@ impl SpottyfiApp {
             playback,
             devices: None,
             playing_elsewhere: false,
+            volume_restored: false,
             transport_ui: TransportUiState::default(),
             shell,
             avatar_image: Arc::new(ArcSwap::from_pointee(None)),
@@ -282,7 +286,11 @@ impl SpottyfiApp {
                     self.playback.seek(position);
                 }
             }
-            TransportIntent::SetVolume(volume) => self.playback.set_volume(volume),
+            TransportIntent::SetVolume(volume) => {
+                self.playback.set_volume(volume);
+                // Persist it so the level is restored on the next launch.
+                self.shell.persisted.settings.audio.volume = volume;
+            }
             TransportIntent::PlayUri(uri) => self.playback.play_uri(uri),
             TransportIntent::Next => {
                 if let (true, Some(devices)) = (self.playing_elsewhere, &self.devices) {
@@ -337,6 +345,8 @@ impl SpottyfiApp {
         self.api_attached = false;
         // Drop the device-list controller so its poller stops.
         self.devices = None;
+        // A future login re-applies the persisted volume to its fresh engine.
+        self.volume_restored = false;
         // Drop the avatar so a future login fetches a fresh one.
         self.avatar_texture = None;
         self.avatar_requested = false;
@@ -377,6 +387,16 @@ impl eframe::App for SpottyfiApp {
                 let playback = self.playback.state();
                 let queue = self.playback.queue_state();
                 let engine = self.playback.status();
+
+                // Restore the persisted output volume once the engine is
+                // ready — done a single time per session.
+                if !self.volume_restored
+                    && matches!(*engine, crate::playback_controller::EngineStatus::Ready)
+                {
+                    self.playback
+                        .set_volume(self.shell.persisted.settings.audio.volume);
+                    self.volume_restored = true;
+                }
 
                 // Publish the live state for the desktop integrations, and
                 // fire a track-change notification if the user opted in.
