@@ -440,9 +440,9 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
                             // plain click replaces the focused tab. The
                             // modifier is read at click time, this frame.
                             let new_tab = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
-                            self.ctx
-                                .intents
-                                .push(page_action_to_intent(action, new_tab));
+                            if let Some(intent) = page_action_to_intent(action, new_tab) {
+                                self.ctx.intents.push(intent);
+                            }
                         }
                     }
                 }
@@ -455,8 +455,12 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
 /// `new_tab` carries the Ctrl/Cmd modifier state read at click time: an
 /// [`PageAction::Open`] becomes [`DockIntent::OpenInNewTab`] when it is held,
 /// [`DockIntent::Open`] (replace the focused tab) otherwise.
-fn page_action_to_intent(action: PageAction, new_tab: bool) -> DockIntent {
-    match action {
+///
+/// Returns `None` for actions that carry no shell intent — Liked Songs
+/// mutations, which [`PageRegistry::ui`](crate::page::PageRegistry) handles
+/// itself and so never bubble here.
+fn page_action_to_intent(action: PageAction, new_tab: bool) -> Option<DockIntent> {
+    Some(match action {
         PageAction::PlayContext {
             uri,
             name,
@@ -475,11 +479,13 @@ fn page_action_to_intent(action: PageAction, new_tab: bool) -> DockIntent {
         PageAction::Open(tab) => DockIntent::Open(tab),
         PageAction::CopyToClipboard(text) => DockIntent::CopyToClipboard(text),
         // Liked Songs mutations are dispatched inside `PageRegistry::ui` and
-        // never reach the shell as an intent.
+        // never reach the shell as an intent — drop them defensively rather
+        // than panicking if a future routing change lets one through.
         PageAction::SaveTrack(_) | PageAction::UnsaveTrack(_) => {
-            unreachable!("Liked Songs mutations are handled in the page registry")
+            tracing::warn!("Liked Songs mutation reached the shell; dropped");
+            return None;
         }
-    }
+    })
 }
 
 /// The Now Playing Art panel: the current track's album art, large.
@@ -1018,11 +1024,23 @@ mod tests {
     fn page_actions_map_to_dock_intents() {
         assert_eq!(
             page_action_to_intent(PageAction::Open(Tab::LikedSongs), false),
-            DockIntent::Open(Tab::LikedSongs)
+            Some(DockIntent::Open(Tab::LikedSongs))
         );
         assert_eq!(
             page_action_to_intent(PageAction::CopyToClipboard("uri".into()), false),
-            DockIntent::CopyToClipboard("uri".into())
+            Some(DockIntent::CopyToClipboard("uri".into()))
+        );
+    }
+
+    #[test]
+    fn liked_songs_mutations_carry_no_shell_intent() {
+        assert_eq!(
+            page_action_to_intent(PageAction::SaveTrack("id".into()), false),
+            None
+        );
+        assert_eq!(
+            page_action_to_intent(PageAction::UnsaveTrack("id".into()), false),
+            None
         );
     }
 
@@ -1031,11 +1049,11 @@ mod tests {
         // A plain click replaces the focused tab; Ctrl/Cmd-held opens a new one.
         assert_eq!(
             page_action_to_intent(PageAction::Open(Tab::Browse), false),
-            DockIntent::Open(Tab::Browse)
+            Some(DockIntent::Open(Tab::Browse))
         );
         assert_eq!(
             page_action_to_intent(PageAction::Open(Tab::Browse), true),
-            DockIntent::OpenInNewTab(Tab::Browse)
+            Some(DockIntent::OpenInNewTab(Tab::Browse))
         );
     }
 
@@ -1049,7 +1067,7 @@ mod tests {
         };
         assert!(matches!(
             page_action_to_intent(action, false),
-            DockIntent::Transport(TransportIntent::PlayContext { .. })
+            Some(DockIntent::Transport(TransportIntent::PlayContext { .. }))
         ));
     }
 }
