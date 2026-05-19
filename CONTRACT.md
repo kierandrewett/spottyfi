@@ -56,9 +56,12 @@ experience, source-tagged everywhere, de-duplicated.
 - [ ] "Best available source" selection + per-track source switch in the player
 - [ ] Source badge in the UI everywhere
 
-### F — Apple Music catalog
-- [ ] Apple Music catalog API client (developer token), metadata + search
-- [ ] Apple Music entries participate in dedup (playable via another source)
+### F — Apple Music catalog ✅
+- [x] Apple Music catalog API client (`crates/applemusic`) — developer-token
+      auth, search + song/album/artist lookup
+- [x] `AppleMusicSource` behind the `MusicSource` trait (catalog-only)
+- [x] Apple Music entries participate in dedup — ISRC bridges them to a
+      playable Spotify/Subsonic copy
 
 ### G — Apple Music playback via CEF
 - [ ] CEF integration scaffold (offscreen browser, helper process)
@@ -90,6 +93,19 @@ experience, source-tagged everywhere, de-duplicated.
   `CpalSink`; built `HttpAudioPlayer` — fetch + `symphonia` decode (FLAC /
   MP3 / Ogg-Vorbis) + resample → `CpalOutput`, on its own thread, with
   play/pause/resume/stop/seek/volume/position. Subsonic audio is playable.
+- **Phase F done.** `crates/applemusic` — Apple Music catalog client;
+  `AppleMusicSource` (catalog-only); ISRC added as a dedup key so Apple
+  Music search hits resolve onto a playable Spotify/Subsonic copy.
+- **Backend trait.** `audio::PlaybackBackend` — the one interface every
+  player (librespot / HTTP / future MusicKit) presents, so the transport
+  drives "the player" without knowing the backend. `HttpAudioPlayer`
+  implements it.
+- **App build/run verified.** `spottyfi` builds and launches cleanly with
+  every new crate in the workspace (clean startup logs, no panic, UI
+  reached). A screenshot could not be captured — this GNOME Wayland session
+  blocks programmatic screenshots from the agent sandbox (`gnome-screenshot`
+  no-ops, the GNOME Shell D-Bus call returns `AccessDenied`, `grim` reports
+  the compositor lacks the capture protocol).
 
 ## Status — honest assessment
 
