@@ -228,10 +228,15 @@ impl SpottyfiApp {
             let settings = &self.shell.persisted.settings;
             let config = settings.audio.engine_config();
             let eq = settings.equalizer;
-            // The engine starts with the user's persisted equaliser; both
-            // arguments are only consumed on the one start that actually runs.
-            self.playback
-                .ensure_started(&session, config, (eq.enabled, eq.band_gains_db));
+            // The engine starts with the user's persisted equaliser and
+            // crossfade; the arguments are only consumed on the one start that
+            // actually runs.
+            self.playback.ensure_started(
+                &session,
+                config,
+                (eq.enabled, eq.band_gains_db),
+                settings.audio.crossfade_seconds,
+            );
         }
     }
 
@@ -476,8 +481,15 @@ impl eframe::App for SpottyfiApp {
                     Some(ShellIntent::AudioSettingsChanged) => {
                         // librespot bakes bitrate / normalisation into its
                         // `PlayerConfig` at connect, so restart the engine to
-                        // apply the new audio settings.
-                        let config = self.shell.persisted.settings.audio.engine_config();
+                        // apply those. Crossfade applies live — push it without
+                        // a restart (a crossfade-only change leaves the engine
+                        // config untouched, so `restart_with` is then a no-op).
+                        let audio = &self.shell.persisted.settings.audio;
+                        let config = audio.engine_config();
+                        let crossfade = audio.crossfade_seconds;
+                        // Update crossfade first so a restart (if the engine
+                        // config also changed) starts with the new value.
+                        self.playback.set_crossfade(crossfade);
                         self.playback.restart_with(config);
                     }
                     Some(ShellIntent::EqualizerChanged) => {

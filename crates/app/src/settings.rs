@@ -70,8 +70,8 @@ impl StreamTier {
 /// Playback / audio engine settings.
 ///
 /// Quality and normalisation are start-time settings (see the module docs);
-/// crossfade is a UI-level preference with no engine support yet — librespot
-/// has no crossfade, so the value is persisted for a future custom backend.
+/// crossfade applies live — the engine fades each track's head in and its
+/// tail out over the configured duration.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AudioSettings {
     /// The streaming bitrate tier.
@@ -80,8 +80,8 @@ pub struct AudioSettings {
     pub normalisation: bool,
     /// Crossfade duration between tracks, in seconds (`0.0` disables it).
     ///
-    /// Persisted for a future custom backend — librespot itself has no
-    /// crossfade, so this currently does not affect playback.
+    /// Applied live by the audio engine: each track's first and last
+    /// `crossfade_seconds` are faded in and out, smoothing the transition.
     pub crossfade_seconds: f32,
     /// Output volume, `0.0..=1.0` — restored on the next launch.
     #[serde(default = "default_volume")]

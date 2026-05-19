@@ -401,6 +401,22 @@ impl PlaybackController {
         Ok(())
     }
 
+    /// Set the track-transition crossfade duration, in seconds (`0.0` disables
+    /// it).
+    ///
+    /// Applies live: the engine fades each track's head in and its tail out
+    /// over this many seconds. `app` calls this on startup and whenever the
+    /// crossfade setting changes.
+    ///
+    /// # Errors
+    ///
+    /// Currently infallible; returns [`AudioResult`] for API symmetry.
+    #[tracing::instrument(skip(self))]
+    pub async fn set_crossfade(&self, seconds: f32) -> AudioResult<()> {
+        self.engine.set_crossfade(seconds);
+        Ok(())
+    }
+
     /// Load `track` into the player and start it playing.
     ///
     /// The load is routed through the Spotify Connect device so the play is

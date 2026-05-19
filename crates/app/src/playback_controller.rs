@@ -60,6 +60,9 @@ pub struct PlaybackControllerHandle {
     /// becomes ready. Held here so a start (or restart) always begins with the
     /// user's persisted EQ rather than the engine default (a flat bypass).
     equalizer: (bool, [f32; spottyfi_audio::EQ_BAND_COUNT]),
+    /// The most recent crossfade duration, in seconds, applied to the engine
+    /// the moment it becomes ready and live whenever it changes.
+    crossfade: f32,
     /// The off-thread spectrum analyser the visualiser panel reads. Created
     /// once up front so its handle is stable; its analysis task is (re)spawned
     /// against the live tap each time the engine starts.
@@ -84,6 +87,7 @@ impl PlaybackControllerHandle {
             session: None,
             engine_config: EngineConfig::default(),
             equalizer: (false, [0.0; spottyfi_audio::EQ_BAND_COUNT]),
+            crossfade: 0.0,
             spectrum: SpectrumAnalyzer::new(),
         }
     }
@@ -138,6 +142,7 @@ impl PlaybackControllerHandle {
         session: &Session,
         config: EngineConfig,
         equalizer: (bool, [f32; spottyfi_audio::EQ_BAND_COUNT]),
+        crossfade: f32,
     ) {
         if self.audio_disabled || self.start_requested {
             return;
@@ -145,6 +150,7 @@ impl PlaybackControllerHandle {
         self.session = Some(session.clone());
         self.engine_config = config;
         self.equalizer = equalizer;
+        self.crossfade = crossfade;
         self.start_requested = true;
         self.spawn_start(session.clone(), config);
     }
@@ -182,6 +188,7 @@ impl PlaybackControllerHandle {
         let queue_slot = Arc::clone(&self.queue_state);
         let spectrum = self.spectrum.clone();
         let (eq_enabled, eq_gains) = self.equalizer;
+        let crossfade = self.crossfade;
 
         Self::publish_status(&status, &egui_ctx, EngineStatus::Starting);
 
@@ -201,6 +208,10 @@ impl PlaybackControllerHandle {
                     // live, so the first track plays with the user's EQ.
                     if let Err(err) = controller.set_equalizer(eq_enabled, eq_gains).await {
                         tracing::warn!(%err, "applying startup equaliser failed");
+                    }
+                    // Apply the persisted crossfade duration too.
+                    if let Err(err) = controller.set_crossfade(crossfade).await {
+                        tracing::warn!(%err, "applying startup crossfade failed");
                     }
                     // Spawn the off-thread spectrum analyser against the
                     // engine's post-EQ tap — the visualiser panel reads it.
@@ -393,6 +404,19 @@ impl PlaybackControllerHandle {
         self.dispatch(move |controller| async move {
             if let Err(err) = controller.set_equalizer(enabled, band_gains_db).await {
                 tracing::warn!(%err, "set_equalizer failed");
+            }
+        });
+    }
+
+    /// Push the track-transition crossfade duration to the audio engine.
+    ///
+    /// Like the equaliser, this applies live and is remembered so a later
+    /// engine (re)start re-applies it.
+    pub fn set_crossfade(&mut self, seconds: f32) {
+        self.crossfade = seconds;
+        self.dispatch(move |controller| async move {
+            if let Err(err) = controller.set_crossfade(seconds).await {
+                tracing::warn!(%err, "set_crossfade failed");
             }
         });
     }

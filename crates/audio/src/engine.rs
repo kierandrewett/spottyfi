@@ -12,7 +12,7 @@
 //! [`ArcSwap`] snapshot. See `docs/threading.md`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -135,6 +135,14 @@ pub(crate) struct Engine {
     /// Each fade captures the value, then aborts as soon as it no longer
     /// matches — so a quick pause/resume tap can't leave a stale ramp running.
     fade_generation: Arc<AtomicU64>,
+    /// `true` while a play/pause fade owns the mixer. The crossfade ramp in
+    /// the position poller yields the mixer to the play/pause fade so the two
+    /// never fight over the volume during the ~120ms fade window.
+    fade_active: Arc<AtomicBool>,
+    /// Track-transition crossfade duration in seconds (`f32` bits), `0.0`
+    /// when disabled. Read every poller tick to fade a track's head in and
+    /// its tail out; live-adjustable via [`Engine::set_crossfade`].
+    crossfade_secs: Arc<AtomicU32>,
     /// Live equaliser parameters, shared with every [`TappedSink`] the player
     /// builds. The controller swaps fresh params in; the sink picks them up on
     /// its next decoded packet.
@@ -248,6 +256,8 @@ impl Engine {
             state,
             target_volume: Arc::new(AtomicU32::new(initial_volume.to_bits())),
             fade_generation: Arc::new(AtomicU64::new(0)),
+            fade_active: Arc::new(AtomicBool::new(false)),
+            crossfade_secs: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             eq_params,
             tap,
             waveform: WaveformAnalyzer::new(),
@@ -318,13 +328,33 @@ impl Engine {
     pub(crate) fn set_volume(&self, volume: f32) {
         let clamped = volume.clamp(0.0, 1.0);
         // A manual volume change overrides any fade in progress and becomes the
-        // new level a later resume fades back to.
+        // new level a later resume fades back to. Bumping the generation
+        // abandons the running fade; clearing `fade_active` hands the mixer
+        // back to the crossfade poller (the abandoned fade never reaches its
+        // own clear, so this is the only path that releases it here).
         self.fade_generation.fetch_add(1, Ordering::SeqCst);
+        self.fade_active.store(false, Ordering::SeqCst);
         self.target_volume
             .store(clamped.to_bits(), Ordering::SeqCst);
         self.mixer.set_volume(volume_to_u16(clamped));
         // The mixer does not emit an event; publish the change ourselves.
         publish_with(&self.state, |s| s.volume = clamped);
+    }
+
+    /// Set the track-transition crossfade duration, in seconds (`0.0` disables
+    /// it). Applies live — the position poller picks the new value up on its
+    /// next tick.
+    ///
+    /// Disabling crossfade restores the mixer to the user's chosen volume in
+    /// case a tail fade-out had left it attenuated.
+    pub(crate) fn set_crossfade(&self, seconds: f32) {
+        let seconds = seconds.max(0.0);
+        self.crossfade_secs
+            .store(seconds.to_bits(), Ordering::SeqCst);
+        if seconds <= 0.0 {
+            let target = f32::from_bits(self.target_volume.load(Ordering::SeqCst));
+            self.mixer.set_volume(volume_to_u16(target));
+        }
     }
 
     /// Pause playback with a short fade-out.
@@ -360,6 +390,9 @@ impl Engine {
         let generation = self.fade_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let mixer = Arc::clone(&self.mixer);
         let fade_generation = Arc::clone(&self.fade_generation);
+        let fade_active = Arc::clone(&self.fade_active);
+        // Claim the mixer from the crossfade poller for the fade's lifetime.
+        fade_active.store(true, Ordering::SeqCst);
 
         let from = i32::from(mixer.volume());
         let dest = i32::from(volume_to_u16(to));
@@ -370,6 +403,7 @@ impl Engine {
             for i in 1..=FADE_STEPS {
                 tokio::time::sleep(step).await;
                 // A newer fade or a manual volume change supersedes this one.
+                // Whichever superseded us owns `fade_active` now, so leave it.
                 if fade_generation.load(Ordering::SeqCst) != generation {
                     return;
                 }
@@ -383,6 +417,8 @@ impl Engine {
                     }
                 }
             }
+            // The fade ran to completion uncontested — release the mixer.
+            fade_active.store(false, Ordering::SeqCst);
         });
     }
 
@@ -393,6 +429,10 @@ impl Engine {
         let player = Arc::clone(&self.player);
         let waveform = self.waveform.clone();
         let session = self.analysis_session.clone();
+        let mixer = Arc::clone(&self.mixer);
+        let target_volume = Arc::clone(&self.target_volume);
+        let fade_active = Arc::clone(&self.fade_active);
+        let crossfade_secs = Arc::clone(&self.crossfade_secs);
 
         tokio::spawn(async move {
             // The poller ticks continuously; it only mutates the snapshot
@@ -420,6 +460,7 @@ impl Engine {
                         if let Some(anchor) = anchor.as_ref() {
                             tick_position(&state, anchor);
                         }
+                        apply_crossfade(&state, &mixer, &target_volume, &crossfade_secs, &fade_active);
                     }
                 }
             }
@@ -478,6 +519,63 @@ fn tick_position(state: &ArcSwap<PlaybackState>, anchor: &PositionAnchor) {
     if current.position != clamped {
         publish_with(state, |s| s.position = clamped);
     }
+}
+
+/// Apply the track-transition crossfade by scaling the mixer volume.
+///
+/// Ramps a track's first `crossfade` seconds *in* and its last `crossfade`
+/// seconds *out*: the level factor is `min(position/N, remaining/N)` clamped
+/// to `0.0..=1.0`. Because librespot transitions are gapless, the outgoing
+/// tail fade and the incoming head fade meet at the track seam, giving a
+/// smooth transition with no hard cut.
+///
+/// A no-op when crossfade is disabled, while a play/pause fade owns the mixer
+/// ([`Engine::fade`]), when paused, or when the track duration is unknown.
+fn apply_crossfade(
+    state: &ArcSwap<PlaybackState>,
+    mixer: &Arc<dyn Mixer>,
+    target_volume: &AtomicU32,
+    crossfade_secs: &AtomicU32,
+    fade_active: &AtomicBool,
+) {
+    let crossfade = f32::from_bits(crossfade_secs.load(Ordering::SeqCst));
+    if crossfade <= 0.0 || fade_active.load(Ordering::SeqCst) {
+        return;
+    }
+    let snapshot = state.load();
+    if !snapshot.playing {
+        return;
+    }
+    let Some(track) = snapshot.track.as_ref() else {
+        return;
+    };
+    let total = track.duration.as_secs_f32();
+    if total <= 0.0 {
+        return;
+    }
+    let factor = crossfade_factor(snapshot.position.as_secs_f32(), total, crossfade);
+
+    // Scale the user's volume linearly in the mixer's curved `u16` space —
+    // the same space [`Engine::fade`] ramps in, so the two stay consistent.
+    let target = f32::from_bits(target_volume.load(Ordering::SeqCst));
+    let scaled = (f32::from(volume_to_u16(target)) * factor).round();
+    mixer.set_volume(scaled.clamp(0.0, f32::from(MAX_VOLUME)) as u16);
+}
+
+/// The crossfade volume factor (`0.0..=1.0`) for a play head at `position`
+/// seconds within a `total`-second track, given a `crossfade`-second ramp.
+///
+/// Ramps from `0.0` at the track edges to `1.0` once `crossfade` seconds in
+/// (and back down over the final `crossfade` seconds). A track shorter than
+/// `2 * crossfade` never reaches full volume — its fade-in and fade-out
+/// overlap, which is the intended behaviour.
+fn crossfade_factor(position: f32, total: f32, crossfade: f32) -> f32 {
+    if crossfade <= 0.0 {
+        return 1.0;
+    }
+    let fade_in = (position / crossfade).clamp(0.0, 1.0);
+    let fade_out = ((total - position) / crossfade).clamp(0.0, 1.0);
+    fade_in.min(fade_out)
 }
 
 /// Kick off background full-song waveform analysis for a just-changed track.
@@ -694,5 +792,31 @@ mod tests {
         assert_eq!(bitrate_kbps(Bitrate::Bitrate96), 96);
         assert_eq!(bitrate_kbps(Bitrate::Bitrate160), 160);
         assert_eq!(bitrate_kbps(Bitrate::Bitrate320), 320);
+    }
+
+    #[test]
+    fn crossfade_disabled_is_full_volume() {
+        assert_eq!(crossfade_factor(50.0, 200.0, 0.0), 1.0);
+    }
+
+    #[test]
+    fn crossfade_fades_track_edges() {
+        // 6s crossfade on a 200s track.
+        // Start of the track: silent, ramping in.
+        assert_eq!(crossfade_factor(0.0, 200.0, 6.0), 0.0);
+        assert!((crossfade_factor(3.0, 200.0, 6.0) - 0.5).abs() < 1e-6);
+        // Once past the ramp-in window: full volume.
+        assert_eq!(crossfade_factor(60.0, 200.0, 6.0), 1.0);
+        // Final seconds: ramping back out to silence at the seam.
+        assert!((crossfade_factor(197.0, 200.0, 6.0) - 0.5).abs() < 1e-6);
+        assert_eq!(crossfade_factor(200.0, 200.0, 6.0), 0.0);
+    }
+
+    #[test]
+    fn crossfade_on_a_short_track_never_reaches_full_volume() {
+        // A 4s track with a 6s crossfade: fade-in and fade-out overlap, so the
+        // factor peaks below 1.0 at the midpoint.
+        let peak = crossfade_factor(2.0, 4.0, 6.0);
+        assert!(peak > 0.0 && peak < 1.0, "peak factor was {peak}");
     }
 }

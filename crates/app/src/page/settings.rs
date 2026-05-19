@@ -229,8 +229,8 @@ fn audio_section(
             });
             ui.label(components::muted(
                 palette,
-                "Crossfade is saved for a future audio backend; librespot has \
-                 no crossfade today, so it does not yet affect playback.",
+                "Each track's start and end are faded over this duration, \
+                 smoothing the transition between tracks. Applies instantly.",
                 10.5,
             ));
 
