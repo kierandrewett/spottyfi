@@ -60,8 +60,10 @@ pub struct Album {
     pub year: Option<u32>,
     /// A cover-art URL, when the source exposes one directly.
     pub art_url: Option<String>,
-    /// How many tracks the album has.
-    pub track_count: u32,
+    /// How many tracks the album has, when the source reports it. `None`
+    /// from a source whose search results omit it (e.g. Spotify's simplified
+    /// album shape) — distinct from a known `Some(0)`.
+    pub track_count: Option<u32>,
     /// The MusicBrainz release id, when known.
     pub mbid: Option<String>,
 }

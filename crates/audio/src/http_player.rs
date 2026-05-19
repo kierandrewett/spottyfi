@@ -182,6 +182,9 @@ impl HttpAudioPlayer {
     pub fn stop(&self) {
         self.shared.generation.fetch_add(1, Ordering::SeqCst);
         self.controls.paused.store(true, Ordering::SeqCst);
+        // Drop the buffered audio so a later resume cannot replay a stopped
+        // track's tail.
+        self.controls.flush.store(true, Ordering::SeqCst);
     }
 
     /// Set the output volume from a `0.0..=1.0` fraction.
@@ -220,6 +223,10 @@ impl HttpAudioPlayer {
 
 impl Drop for HttpAudioPlayer {
     fn drop(&mut self) {
+        // Bump the generation first so a decode loop in progress aborts
+        // promptly, then ask the thread to exit. Without the bump the thread
+        // would not see `Shutdown` until the current track finished decoding.
+        self.shared.generation.fetch_add(1, Ordering::SeqCst);
         let _ = self.commands.send(Command::Shutdown);
     }
 }
@@ -265,7 +272,7 @@ fn decode_thread(
                 if shared.generation.load(Ordering::SeqCst) != generation {
                     continue;
                 }
-                decode_and_play(&output, device_rate, &flush, &bytes, generation, shared);
+                decode_and_play(&output, device_rate, &flush, bytes, generation, shared);
             }
         }
     }
@@ -273,15 +280,19 @@ fn decode_thread(
 
 /// Decode `bytes` and stream the PCM into `output` until the track ends or a
 /// newer generation supersedes it.
+///
+/// `finished` is set on *every* terminal exit — a clean end *and* a probe or
+/// decoder failure — so the queue advances past an unplayable track rather
+/// than stalling forever waiting for a "finished" that never comes.
 fn decode_and_play(
     output: &CpalOutput,
     device_rate: u32,
     flush: &AtomicBool,
-    bytes: &[u8],
+    bytes: Vec<u8>,
     generation: u64,
     shared: &Shared,
 ) {
-    let stream = MediaSourceStream::new(Box::new(Cursor::new(bytes.to_vec())), Default::default());
+    let stream = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
     let probed = match symphonia::default::get_probe().format(
         &Hint::new(),
         stream,
@@ -291,12 +302,14 @@ fn decode_and_play(
         Ok(probed) => probed,
         Err(err) => {
             tracing::warn!(%err, "could not probe the audio stream");
+            shared.finished.store(true, Ordering::SeqCst);
             return;
         }
     };
     let mut format = probed.format;
     let Some(track) = format.default_track() else {
         tracing::warn!("the audio stream has no playable track");
+        shared.finished.store(true, Ordering::SeqCst);
         return;
     };
     let track_id = track.id;
@@ -308,6 +321,7 @@ fn decode_and_play(
         Ok(decoder) => decoder,
         Err(err) => {
             tracing::warn!(%err, "no decoder for the audio stream");
+            shared.finished.store(true, Ordering::SeqCst);
             return;
         }
     };
@@ -375,13 +389,19 @@ fn decode_and_play(
         sample_buf.copy_interleaved_ref(decoded);
         to_stereo(sample_buf.samples(), spec.channels.count(), &mut stereo);
 
-        match resampler.as_mut() {
+        // Push abortably: if the ring is full while paused it is frozen, so a
+        // plain blocking push could wedge the thread past a stop / new load.
+        let superseded = || shared.generation.load(Ordering::SeqCst) != generation;
+        let pushed = match resampler.as_mut() {
             Some(resampler) => {
                 resampled.clear();
                 resampler.process(&stereo, &mut resampled);
-                output.push_samples(&resampled);
+                output.push_samples_abortable(&resampled, superseded)
             }
-            None => output.push_samples(&stereo),
+            None => output.push_samples_abortable(&stereo, superseded),
+        };
+        if !pushed {
+            break;
         }
     }
 

@@ -86,7 +86,7 @@ impl SubsonicSource {
             artist_ref: album.artist_id.map(|id| self.make_ref(id)),
             year: album.year,
             art_url,
-            track_count: album.song_count.unwrap_or(0),
+            track_count: album.song_count,
             mbid: album.music_brainz_id,
         }
     }

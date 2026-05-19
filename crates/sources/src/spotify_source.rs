@@ -115,7 +115,8 @@ impl SpotifySource {
                 .map(|aid| self.make_ref(aid.0)),
             year: album.release_date.as_deref().and_then(parse_year),
             art_url: album.images.first().map(|image| image.url.clone()),
-            track_count: 0,
+            // Spotify's simplified album (search results) omits the count.
+            track_count: None,
             mbid: None,
         })
     }

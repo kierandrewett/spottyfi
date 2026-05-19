@@ -134,11 +134,24 @@ struct RingProducer {
 impl RingProducer {
     /// Push every sample in `samples`, blocking while the ring is full.
     ///
-    /// Blocking *is* the back-pressure: librespot decodes faster than realtime,
+    /// Blocking *is* the back-pressure: a decoder runs faster than realtime,
     /// so a full ring simply means the consumer has not caught up yet.
     fn push_blocking(&self, samples: &[f32]) {
+        self.push_until(samples, || false);
+    }
+
+    /// Push every sample in `samples`, blocking while the ring is full, but
+    /// abandoning the push as soon as `should_abort` returns `true`.
+    ///
+    /// Returns `true` when every sample was written, `false` if it aborted.
+    /// This is what stops a paused HTTP decode thread (a frozen ring it can
+    /// never fill) from deadlocking against a `stop` / new `load`.
+    fn push_until(&self, samples: &[f32], should_abort: impl Fn() -> bool) -> bool {
         let mut written = 0;
         while written < samples.len() {
+            if should_abort() {
+                return false;
+            }
             let write_pos = self.ring.write_pos.load(Ordering::Relaxed);
             let read_pos = self.ring.read_pos.load(Ordering::Acquire);
             let free = self.ring.capacity - (write_pos - read_pos);
@@ -161,6 +174,7 @@ impl RingProducer {
             self.ring.write_pos.store(write_pos + n, Ordering::Release);
             written += n;
         }
+        true
     }
 }
 
@@ -344,6 +358,15 @@ impl CpalOutput {
     /// faster-than-realtime decoder to the audio clock.
     pub fn push_samples(&self, samples: &[f32]) {
         self.producer.push_blocking(samples);
+    }
+
+    /// Like [`CpalOutput::push_samples`], but abandons the push when
+    /// `should_abort` returns `true` — used by a decoder that must stay
+    /// responsive to stop/seek even while paused against a frozen ring.
+    ///
+    /// Returns `true` when fully pushed, `false` if it aborted.
+    pub fn push_samples_abortable(&self, samples: &[f32], should_abort: impl Fn() -> bool) -> bool {
+        self.producer.push_until(samples, should_abort)
     }
 }
 

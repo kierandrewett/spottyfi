@@ -68,6 +68,21 @@ const NOISE_WORDS: &[&str] = &[
     "stereo version",
 ];
 
+/// Words that mark a segment as a *distinct recording* — a segment carrying
+/// any of these is kept even if it also contains a noise word (e.g. a stray
+/// `(feat. … live)`), so a live/acoustic take never merges onto the studio
+/// version.
+const DISTINCTIVE_WORDS: &[&str] = &[
+    "live",
+    "acoustic",
+    "demo",
+    "remix",
+    "instrumental",
+    "unplugged",
+    "session",
+    "reprise",
+];
+
 /// De-duplicate tracks across sources.
 ///
 /// Group order follows first appearance, so a caller can preserve a relevance
@@ -179,8 +194,12 @@ fn artist_key(artist: &Artist) -> String {
 }
 
 /// A key that never collides — used for entities too sparse to match safely.
+///
+/// The source component is length-prefixed: `SourceId`s routinely contain a
+/// `:` (`subsonic:<uuid>`), so a plain `source:id` join would let
+/// `("a", "b:c")` and `("a:b", "c")` collide.
 fn unique_key(source: &str, id: &str) -> String {
-    format!("unique:{source}:{id}")
+    format!("unique:{}:{source}:{id}", source.len())
 }
 
 /// Normalise a title for fuzzy matching: lower-case, drop noise parentheticals
@@ -218,7 +237,9 @@ fn strip_noise_brackets(text: &str) -> String {
             '(' | '[' => depth += 1,
             ')' | ']' if depth > 0 => {
                 depth -= 1;
-                if depth == 0 && NOISE_WORDS.iter().all(|word| !segment.contains(word)) {
+                let has_noise = NOISE_WORDS.iter().any(|word| segment.contains(word));
+                let has_distinctive = DISTINCTIVE_WORDS.iter().any(|word| segment.contains(word));
+                if depth == 0 && (!has_noise || has_distinctive) {
                     // Keep a distinctive bracket segment verbatim.
                     out.push('(');
                     out.push_str(&segment);

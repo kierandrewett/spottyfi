@@ -41,6 +41,8 @@ impl AppleMusicClient {
     pub fn new(developer_token: String, storefront: String) -> AppleMusicResult<Self> {
         let http = reqwest::Client::builder()
             .user_agent(concat!("Spottyfi/", env!("CARGO_PKG_VERSION")))
+            // Bound every request so a hung connection cannot stall a caller.
+            .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|err| AppleMusicError::Http(err.to_string()))?;
         Ok(Self {
@@ -65,17 +67,24 @@ impl AppleMusicClient {
             .await
             .map_err(|err| AppleMusicError::Http(err.to_string()))?;
         let status = response.status();
-        let body: serde_json::Value = response
-            .json()
+        // Read the body as text first: an error reply may not be JSON at all
+        // (a gateway HTML page, an empty 401), and the HTTP status — not a
+        // decode failure — must drive the error.
+        let text = response
+            .text()
             .await
-            .map_err(|err| AppleMusicError::Decode(err.to_string()))?;
+            .map_err(|err| AppleMusicError::Http(err.to_string()))?;
         if !status.is_success() {
+            let message = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .map(|body| api_error_message(&body))
+                .unwrap_or_else(|| text.chars().take(200).collect());
             return Err(AppleMusicError::Api {
                 status: status.as_u16(),
-                message: api_error_message(&body),
+                message,
             });
         }
-        serde_json::from_value(body).map_err(|err| AppleMusicError::Decode(err.to_string()))
+        serde_json::from_str(&text).map_err(|err| AppleMusicError::Decode(err.to_string()))
     }
 
     /// Search the catalog for `term`, capping each list at `limit`.

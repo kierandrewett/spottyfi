@@ -5,8 +5,10 @@
 //! Subsonic-compatible server accepts, and every JSON reply is unwrapped from
 //! its `subsonic-response` envelope. See the [OpenSubsonic spec].
 //!
-//! [salt-and-token auth]: https://opensubsonic.netlify.app/docs/#authentication
+//! [salt-and-token auth]: https://opensubsonic.netlify.app/docs/api-reference/
 //! [OpenSubsonic spec]: https://opensubsonic.netlify.app/docs/
+
+use std::time::Duration;
 
 use md5::{Digest, Md5};
 use serde::de::DeserializeOwned;
@@ -65,6 +67,9 @@ impl SubsonicClient {
         }
         let http = reqwest::Client::builder()
             .user_agent(concat!("Spottyfi/", env!("CARGO_PKG_VERSION")))
+            // Bound every request so an unreachable or hung server cannot
+            // stall a caller indefinitely.
+            .timeout(Duration::from_secs(30))
             .build()
             .map_err(|err| SubsonicError::Http(err.to_string()))?;
         Ok(Self {
@@ -135,14 +140,15 @@ impl SubsonicClient {
         payload_key: &str,
     ) -> SubsonicResult<T> {
         let body = self.request_raw(endpoint, extra).await?;
-        // A missing payload key defaults to an empty object, not null: list
-        // endpoints (`getArtists`, …) legitimately omit the key when the
-        // library is empty, and every list model's fields are `default`, so
-        // `{}` decodes to "no results" rather than a spurious decode error.
-        let payload = body
-            .get(payload_key)
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({}));
+        // A missing — or explicitly `null` — payload key defaults to an empty
+        // object: list endpoints (`getArtists`, …) legitimately omit the key
+        // (or send `null`) when the library is empty, and every list model's
+        // fields are `default`, so `{}` decodes to "no results" rather than a
+        // spurious decode error.
+        let payload = match body.get(payload_key) {
+            None | Some(serde_json::Value::Null) => serde_json::json!({}),
+            Some(value) => value.clone(),
+        };
         serde_json::from_value(payload).map_err(|err| SubsonicError::Decode(err.to_string()))
     }
 

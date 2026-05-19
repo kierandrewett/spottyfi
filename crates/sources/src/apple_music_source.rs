@@ -108,7 +108,7 @@ impl MusicSource for AppleMusicSource {
                     artist_ref: None,
                     year: album.year,
                     art_url: album.artwork_url,
-                    track_count: album.track_count,
+                    track_count: Some(album.track_count),
                     mbid: None,
                 })
                 .collect(),
