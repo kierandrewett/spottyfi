@@ -1,0 +1,21 @@
+[package]
+name = "spottyfi-sources"
+description = "Multi-source music abstraction: unified entities, de-duplication and the MusicSource trait."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+spottyfi-subsonic = { workspace = true }
+
+serde = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

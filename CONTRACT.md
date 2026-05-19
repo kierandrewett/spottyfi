@@ -28,12 +28,14 @@ experience, source-tagged everywhere, de-duplicated.
 - [x] `stream` + `getCoverArt` URL builders, `scrobble`, `star`/`unstar`
 - [x] Unit tests (auth, envelope, error, model parsing)
 
-### B — Multi-source architecture
-- [ ] `SourceId` / `SourceKind` and a source tag on every entity
-- [ ] `MusicSource` trait (search, browse, resolve, stream) + capability flags
-- [ ] Source registry held by the app
-- [ ] Spotify adapted behind the trait
-- [ ] OpenSubsonic behind the trait
+### B — Multi-source architecture ✅ (Spotify adapter pending)
+- [x] `SourceId` / `SourceKind` / `SourceRef` — a source tag on every entity
+- [x] Source-neutral `Track` / `Album` / `Artist` / `SearchResults`
+- [x] `MusicSource` trait (search, browse, stream URL) + `can_play` capability
+- [x] `SourceRegistry` — concurrent `search_all` across all sources
+- [x] OpenSubsonic behind the trait (`SubsonicSource`)
+- [ ] Spotify adapted behind the trait — deferred (the existing Spotify `api`
+      is large; wiring it behind `MusicSource` is its own step)
 
 ### C — OpenSubsonic playback
 - [ ] HTTP-stream audio player: `symphonia` decode → the cpal sink
@@ -71,3 +73,9 @@ experience, source-tagged everywhere, de-duplicated.
   client: salt+token auth, envelope/error handling, all browse + search +
   library endpoints, signed stream/cover-art URLs, scrobble & star. 7 unit
   tests, clippy clean.
+- **Phase B done** (bar the Spotify adapter). `crates/sources` — the
+  multi-source layer: `SourceRef` tags every entity; source-neutral
+  `Track`/`Album`/`Artist`; the `MusicSource` trait + `SourceRegistry` with
+  concurrent `search_all`; cross-source de-duplication (MusicBrainz-id or
+  fuzzy title/artist key, noise-aware) collapsing the same song to one entry
+  with ranked alternatives; the OpenSubsonic adapter. 8 unit tests.

@@ -7230,6 +7230,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "spottyfi-sources"
+version = "1.0.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "serde",
+ "spottyfi-subsonic",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "spottyfi-state"
 version = "1.0.0"
 
