@@ -286,12 +286,79 @@ pub fn lyrics_provider_label(provider: LyricsProvider) -> &'static str {
         .map_or("Automatic (recommended)", |(_, label)| label)
 }
 
+/// One configured OpenSubsonic server.
+///
+/// Spottyfi is multi-source: alongside the built-in Spotify, the user can add
+/// any number of OpenSubsonic servers (Navidrome, Gonic, Airsonic, …). Each
+/// becomes a [`MusicSource`](spottyfi_sources::MusicSource) in the source
+/// registry, keyed by [`SubsonicServer::id`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubsonicServer {
+    /// A stable unique id, used as the source's `SourceId`.
+    pub id: String,
+    /// A display name, shown in Settings and on source badges.
+    pub name: String,
+    /// The server base URL (e.g. `https://music.example.com`).
+    pub url: String,
+    /// The account username.
+    pub username: String,
+    /// The account password. Stored verbatim in the local config file, as
+    /// Subsonic desktop clients conventionally do.
+    pub password: String,
+}
+
+/// Configured music sources beyond the built-in Spotify.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourcesSettings {
+    /// The user's OpenSubsonic servers.
+    #[serde(default)]
+    pub subsonic_servers: Vec<SubsonicServer>,
+}
+
+impl SourcesSettings {
+    /// Add an OpenSubsonic server, returning the generated id.
+    ///
+    /// The id is unique (a nanosecond timestamp) and stable for the server's
+    /// lifetime, so the source registry and any persisted per-source state
+    /// can rely on it.
+    pub fn add_subsonic(
+        &mut self,
+        name: String,
+        url: String,
+        username: String,
+        password: String,
+    ) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let id = format!("subsonic:{nanos}");
+        self.subsonic_servers.push(SubsonicServer {
+            id: id.clone(),
+            name,
+            url,
+            username,
+            password,
+        });
+        id
+    }
+
+    /// Remove the server with `id`, if present. Returns whether one was removed.
+    pub fn remove(&mut self, id: &str) -> bool {
+        let before = self.subsonic_servers.len();
+        self.subsonic_servers.retain(|server| server.id != id);
+        self.subsonic_servers.len() != before
+    }
+}
+
 /// The full persisted user-settings model surfaced on the Settings page.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
     /// Playback / audio engine settings.
     #[serde(default)]
     pub audio: AudioSettings,
+    /// Configured music sources (the OpenSubsonic servers).
+    #[serde(default)]
+    pub sources: SourcesSettings,
     /// Graphic-equalizer settings.
     #[serde(default)]
     pub equalizer: EqualizerSettings,
@@ -386,6 +453,30 @@ mod tests {
         let text = ron::ser::to_string(&settings).expect("serialise settings");
         let restored: AppSettings = ron::from_str(&text).expect("deserialise settings");
         assert_eq!(settings, restored);
+    }
+
+    #[test]
+    fn subsonic_servers_round_trip_and_manage() {
+        let mut sources = SourcesSettings::default();
+        let id = sources.add_subsonic(
+            "Home".to_owned(),
+            "https://music.example.com".to_owned(),
+            "kieran".to_owned(),
+            "hunter2".to_owned(),
+        );
+        assert_eq!(sources.subsonic_servers.len(), 1);
+
+        let settings = AppSettings {
+            sources: sources.clone(),
+            ..AppSettings::default()
+        };
+        let text = ron::ser::to_string(&settings).expect("serialise settings");
+        let restored: AppSettings = ron::from_str(&text).expect("deserialise settings");
+        assert_eq!(restored.sources, sources);
+
+        assert!(sources.remove(&id));
+        assert!(sources.subsonic_servers.is_empty());
+        assert!(!sources.remove(&id), "removing a gone server is a no-op");
     }
 
     #[test]

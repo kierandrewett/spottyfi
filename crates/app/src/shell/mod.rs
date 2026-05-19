@@ -72,6 +72,9 @@ pub struct ShellState {
     /// The draft folder path being typed in the Settings page's Local Files
     /// section — non-persisted, scoped to this session.
     local_folder_draft: String,
+    /// The draft OpenSubsonic server being filled in on the Settings page's
+    /// Sources section — non-persisted, scoped to this session.
+    subsonic_draft: crate::page::SubsonicDraft,
     /// The transient "capture a new shortcut" state for the Settings page's
     /// Hotkeys section — non-persisted, scoped to this session.
     hotkey_capture: crate::hotkeys::HotkeyCapture,
@@ -87,6 +90,7 @@ impl ShellState {
             session: None,
             activity: ActivityRegistry::new(),
             local_folder_draft: String::new(),
+            subsonic_draft: crate::page::SubsonicDraft::default(),
             hotkey_capture: crate::hotkeys::HotkeyCapture::default(),
         }
     }
@@ -906,6 +910,7 @@ fn dock(
         persisted,
         session,
         local_folder_draft,
+        subsonic_draft,
         hotkey_capture,
         ..
     } = state;
@@ -963,6 +968,7 @@ fn dock(
                 layout: *layout,
                 settings,
                 local_folder_draft,
+                subsonic_draft,
                 hotkey_capture,
             },
             pinned: &dock_extras.pinned,

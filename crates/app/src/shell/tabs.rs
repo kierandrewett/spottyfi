@@ -274,6 +274,8 @@ pub struct SettingsView<'a> {
     pub settings: &'a mut AppSettings,
     /// The draft folder path being typed in the Local Files section.
     pub local_folder_draft: &'a mut String,
+    /// The draft OpenSubsonic server being filled in on the Sources section.
+    pub subsonic_draft: &'a mut crate::page::SubsonicDraft,
     /// The transient "capture a new shortcut" state for the Hotkeys section.
     pub hotkey_capture: &'a mut crate::hotkeys::HotkeyCapture,
 }
@@ -430,6 +432,7 @@ impl egui_dock::TabViewer for ShellTabViewer<'_> {
                             layout: view.layout,
                             settings: view.settings,
                             local_folder_draft: view.local_folder_draft,
+                            subsonic_draft: view.subsonic_draft,
                             hotkey_capture: view.hotkey_capture,
                         };
                         for action in settings_page(ui, &mut page_ctx) {

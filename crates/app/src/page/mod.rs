@@ -70,7 +70,7 @@ pub use new_releases::NewReleasesPage;
 pub use playlist::PlaylistPage;
 pub use recently_played::RecentlyPlayedPage;
 pub use search::SearchPage;
-pub use settings::{settings_page, SettingsAction, SettingsContext};
+pub use settings::{settings_page, SettingsAction, SettingsContext, SubsonicDraft};
 
 /// Shared services a page needs to load its data.
 ///

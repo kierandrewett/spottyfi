@@ -43,8 +43,24 @@ pub struct SettingsContext<'a> {
     pub settings: &'a mut AppSettings,
     /// A draft folder path the user is typing in the Local Files section.
     pub local_folder_draft: &'a mut String,
+    /// The draft OpenSubsonic server being filled in on the Sources section.
+    pub subsonic_draft: &'a mut SubsonicDraft,
     /// The transient "capture a new shortcut" state for the Hotkeys section.
     pub hotkey_capture: &'a mut HotkeyCapture,
+}
+
+/// The half-filled OpenSubsonic server the user is typing into the Sources
+/// section — non-persisted, scoped to the session.
+#[derive(Debug, Default)]
+pub struct SubsonicDraft {
+    /// The server's display name.
+    pub name: String,
+    /// The server base URL.
+    pub url: String,
+    /// The account username.
+    pub username: String,
+    /// The account password.
+    pub password: String,
 }
 
 /// Something the Settings page asked the shell to do this frame.
@@ -79,6 +95,8 @@ pub fn settings_page(ui: &mut egui::Ui, ctx: &mut SettingsContext<'_>) -> Vec<Se
             page_title(ui, &palette);
 
             audio_section(ui, &palette, ctx, &mut actions);
+            ui.add_space(20.0);
+            sources_section(ui, &palette, ctx);
             ui.add_space(20.0);
             equalizer_section(ui, &palette, ctx, &mut actions);
             ui.add_space(20.0);
@@ -368,6 +386,148 @@ fn format_hz(hz: u32) -> String {
     } else {
         hz.to_string()
     }
+}
+
+/// The Music Sources section: the configured OpenSubsonic servers.
+///
+/// Spotify is built in and always present; this section manages the *extra*
+/// sources — the user's self-hosted OpenSubsonic servers — with add / remove.
+fn sources_section(ui: &mut egui::Ui, palette: &Palette, ctx: &mut SettingsContext<'_>) {
+    section(
+        ui,
+        palette,
+        "Music Sources",
+        "OpenSubsonic servers searched and played alongside Spotify.",
+        |ui| {
+            // Spotify is always available — show it, greyed, as a fixture.
+            ui.horizontal(|ui| {
+                spottyfi_ui::icons::icon(ui, spottyfi_ui::Icon::Music, 13.0, palette.accent);
+                ui.label(
+                    egui::RichText::new("Spotify")
+                        .size(11.5)
+                        .color(palette.text),
+                );
+                ui.label(components::muted(palette, "· built in", 10.5));
+            });
+            ui.add_space(4.0);
+
+            if ctx.settings.sources.subsonic_servers.is_empty() {
+                ui.label(components::muted(
+                    palette,
+                    "No OpenSubsonic servers added yet.",
+                    11.5,
+                ));
+            } else {
+                let mut remove: Option<String> = None;
+                for server in &ctx.settings.sources.subsonic_servers {
+                    ui.horizontal(|ui| {
+                        spottyfi_ui::icons::icon(
+                            ui,
+                            spottyfi_ui::Icon::Library,
+                            13.0,
+                            palette.text_muted,
+                        );
+                        ui.label(
+                            egui::RichText::new(&server.name)
+                                .size(11.5)
+                                .color(palette.text),
+                        );
+                        ui.add(
+                            egui::Label::new(components::muted(
+                                palette,
+                                format!("· {}", server.url),
+                                10.5,
+                            ))
+                            .truncate(),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("Remove").clicked() {
+                                remove = Some(server.id.clone());
+                            }
+                        });
+                    });
+                    ui.add_space(2.0);
+                }
+                if let Some(id) = remove {
+                    ctx.settings.sources.remove(&id);
+                }
+            }
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(6.0);
+            ui.label(components::muted(
+                palette,
+                "Add an OpenSubsonic server",
+                11.5,
+            ));
+            ui.add_space(4.0);
+            draft_field(
+                ui,
+                palette,
+                "Name",
+                &mut ctx.subsonic_draft.name,
+                "Home server",
+            );
+            draft_field(
+                ui,
+                palette,
+                "Server URL",
+                &mut ctx.subsonic_draft.url,
+                "https://music.example.com",
+            );
+            draft_field(
+                ui,
+                palette,
+                "Username",
+                &mut ctx.subsonic_draft.username,
+                "username",
+            );
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [88.0, 20.0],
+                    egui::Label::new(components::muted(palette, "Password", 11.5)),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(&mut ctx.subsonic_draft.password)
+                        .password(true)
+                        .desired_width(280.0),
+                );
+            });
+            ui.add_space(6.0);
+            let name = ctx.subsonic_draft.name.trim().to_owned();
+            let url = ctx.subsonic_draft.url.trim().to_owned();
+            let username = ctx.subsonic_draft.username.trim().to_owned();
+            let ready = !name.is_empty() && !url.is_empty() && !username.is_empty();
+            if ui
+                .add_enabled(ready, egui::Button::new("Add server"))
+                .clicked()
+            {
+                ctx.settings.sources.add_subsonic(
+                    name,
+                    url,
+                    username,
+                    ctx.subsonic_draft.password.clone(),
+                );
+                *ctx.subsonic_draft = SubsonicDraft::default();
+            }
+        },
+    );
+}
+
+/// One labelled single-line text field used by the add-a-server form.
+fn draft_field(ui: &mut egui::Ui, palette: &Palette, label: &str, value: &mut String, hint: &str) {
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [88.0, 20.0],
+            egui::Label::new(components::muted(palette, label, 11.5)),
+        );
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .hint_text(hint)
+                .desired_width(280.0),
+        );
+    });
 }
 
 /// The Local Files section: a list of local-music folders with add / remove.
