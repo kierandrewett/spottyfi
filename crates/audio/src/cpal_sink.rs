@@ -222,7 +222,16 @@ struct Resampler {
 }
 
 impl Resampler {
-    /// Resample interleaved-stereo `input` from 44.1 kHz to the device rate,
+    /// A resampler converting `from_rate` Hz to `to_rate` Hz.
+    fn new(from_rate: u32, to_rate: u32) -> Self {
+        Self {
+            step: f64::from(from_rate) / f64::from(to_rate),
+            pos: 0.0,
+            last: [0.0; 2],
+        }
+    }
+
+    /// Resample interleaved-stereo `input` from `from_rate` to `to_rate`,
     /// appending the result to `out`.
     fn process(&mut self, input: &[f32], out: &mut Vec<f32>) {
         let frames = input.len() / 2;
@@ -246,33 +255,34 @@ impl Resampler {
     }
 }
 
-/// A direct `cpal` output sink with instant pause and a low, fixed latency.
-pub struct CpalSink {
-    /// The live `cpal` stream. Kept alive for the sink's lifetime; never moved
-    /// off the thread it was built on (`cpal::Stream` is `!Send`).
+/// A `cpal` output device fronted by the low-latency ring buffer.
+///
+/// The shared, source-agnostic output stage. A producer pushes interleaved
+/// stereo `f32` *at the device sample rate*; the audio callback consumes it,
+/// applying the gain / pause / flush behaviour of [`SinkControls`]. Both the
+/// librespot [`CpalSink`] and the OpenSubsonic HTTP player feed one of these,
+/// so volume, pause and seek behave identically whatever the source.
+pub struct CpalOutput {
+    /// The live `cpal` stream. Kept alive for the output's lifetime; never
+    /// moved off the thread it was built on (`cpal::Stream` is `!Send`).
     _stream: cpal::Stream,
-    /// The ring producer the decode thread writes decoded PCM into.
+    /// The ring producer decoded PCM is written into.
     producer: RingProducer,
-    /// `true` while paused — the callback then emits silence and freezes the
-    /// ring. Shared with the engine; flipped by `start`/`stop`.
-    paused: Arc<AtomicBool>,
-    /// Optional resampler, present only when the device is not 44.1 kHz.
-    resampler: Option<Resampler>,
-    /// Scratch buffer for the `f64 -> f32` (and resample) conversion.
-    scratch: Vec<f32>,
 }
 
-impl CpalSink {
+impl CpalOutput {
     /// Open the default output device and start its stream.
     ///
-    /// `controls` is the real-time surface the engine drives — output gain,
+    /// `controls` is the real-time surface the caller drives — output gain,
     /// pause and seek-flush all take effect inside the audio callback.
+    /// Returns the output and the device's sample rate; the caller resamples
+    /// its audio to that rate before [`CpalOutput::push_samples`].
     ///
     /// # Errors
     ///
     /// Returns [`AudioError::NoBackend`] if no output device is available or
     /// the stream cannot be built.
-    pub fn open(controls: SinkControls) -> AudioResult<Self> {
+    pub fn open(controls: SinkControls) -> AudioResult<(Self, u32)> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or(AudioError::NoBackend)?;
         let supported = device.default_output_config().map_err(|err| {
@@ -299,9 +309,8 @@ impl CpalSink {
         let device_rate = config.sample_rate.0;
         let channels = config.channels as usize;
 
-        let latency_samples = SAMPLE_RATE as usize / 1000 * RING_LATENCY_MS * 2;
+        let latency_samples = device_rate as usize / 1000 * RING_LATENCY_MS * 2;
         let (producer, consumer) = ring_pair(latency_samples);
-        let paused = Arc::clone(&controls.paused);
 
         let stream = build_stream(
             &device,
@@ -317,19 +326,55 @@ impl CpalSink {
             AudioError::NoBackend
         })?;
 
+        tracing::info!(device_rate, channels, ?sample_format, "cpal output open");
+        Ok((
+            Self {
+                _stream: stream,
+                producer,
+            },
+            device_rate,
+        ))
+    }
+
+    /// Push interleaved-stereo `f32` samples *at the device sample rate*.
+    ///
+    /// Blocks while the ring is full — that back-pressure is what paces a
+    /// faster-than-realtime decoder to the audio clock.
+    pub fn push_samples(&self, samples: &[f32]) {
+        self.producer.push_blocking(samples);
+    }
+}
+
+/// The librespot audio backend — a [`Sink`] wrapping a [`CpalOutput`].
+pub struct CpalSink {
+    /// The shared cpal output stage.
+    output: CpalOutput,
+    /// `true` while paused — the callback then emits silence and freezes the
+    /// ring. Shared with the engine; flipped by `start`/`stop`.
+    paused: Arc<AtomicBool>,
+    /// Resampler from librespot's 44.1 kHz to the device rate, when they
+    /// differ.
+    resampler: Option<Resampler>,
+    /// Scratch buffer for the `f64 -> f32` (and resample) conversion.
+    scratch: Vec<f32>,
+}
+
+impl CpalSink {
+    /// Open the default output device as a librespot sink.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::NoBackend`] if no output device is available or
+    /// the stream cannot be built.
+    pub fn open(controls: SinkControls) -> AudioResult<Self> {
+        let paused = Arc::clone(&controls.paused);
+        let (output, device_rate) = CpalOutput::open(controls)?;
         let resampler = (device_rate != SAMPLE_RATE).then(|| {
             tracing::info!(device_rate, "output device is not 44.1 kHz; resampling");
-            Resampler {
-                step: f64::from(SAMPLE_RATE) / f64::from(device_rate),
-                pos: 0.0,
-                last: [0.0; 2],
-            }
+            Resampler::new(SAMPLE_RATE, device_rate)
         });
-
-        tracing::info!(device_rate, channels, ?sample_format, "cpal sink open");
         Ok(Self {
-            _stream: stream,
-            producer,
+            output,
             paused,
             resampler,
             scratch: Vec::new(),
@@ -370,7 +415,7 @@ impl Sink for CpalSink {
                 resampler.process(&input, &mut self.scratch);
             }
         }
-        self.producer.push_blocking(&self.scratch);
+        self.output.push_samples(&self.scratch);
         Ok(())
     }
 }
