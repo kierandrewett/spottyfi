@@ -165,60 +165,59 @@ impl Page for MadeForYouPage {
         };
 
         let mut action = None;
+        // The page header is fixed; only the content below scrolls.
+        ui.label(
+            egui::RichText::new("Made For You")
+                .family(spottyfi_ui::fonts::semibold())
+                .size(28.0)
+                .color(palette.text),
+        );
+        ui.label(components::muted(
+            &palette,
+            "Recommendations from your top artists and tracks, via Last.fm.",
+            12.0,
+        ));
+        ui.add_space(12.0);
+
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Made For You")
-                        .family(spottyfi_ui::fonts::semibold())
-                        .size(28.0)
-                        .color(palette.text),
-                );
-                ui.label(components::muted(
-                    &palette,
-                    "Recommendations from your top artists and tracks, via Last.fm.",
-                    12.0,
-                ));
-                ui.add_space(16.0);
-
-                match loaded {
-                    Err(err) => {
-                        cards::calm_note(
-                            ui,
-                            &palette,
-                            spottyfi_ui::Icon::MadeForYou,
-                            &format!("Couldn't build your mixes: {err}"),
-                        );
-                    }
-                    Ok(data) if data.track_mix.is_empty() && data.artist_mix.is_empty() => {
-                        ui.label(components::muted(
-                            &palette,
-                            "Listen to more music and your mixes will appear here.",
-                            13.0,
-                        ));
-                    }
-                    Ok(data) => {
-                        let playing = ctx.playback.track.as_ref().map(|t| t.uri.as_str());
-                        if !data.track_mix.is_empty() {
-                            components::section_header(ui, &palette, "Your Track Mix");
-                            ui.add_space(4.0);
-                            let context = super::track_view::PlayContext {
-                                uri: "spottyfi:made-for-you:track-mix".to_owned(),
-                                name: "Your Track Mix".to_owned(),
-                            };
-                            if let Some(a) =
-                                cards::track_list(ui, &palette, &data.track_mix, playing, &context)
-                            {
-                                action = Some(a);
-                            }
-                            ui.add_space(20.0);
+            .show(ui, |ui| match loaded {
+                Err(err) => {
+                    cards::calm_note(
+                        ui,
+                        &palette,
+                        spottyfi_ui::Icon::MadeForYou,
+                        &format!("Couldn't build your mixes: {err}"),
+                    );
+                }
+                Ok(data) if data.track_mix.is_empty() && data.artist_mix.is_empty() => {
+                    ui.label(components::muted(
+                        &palette,
+                        "Listen to more music and your mixes will appear here.",
+                        13.0,
+                    ));
+                }
+                Ok(data) => {
+                    let playing = ctx.playback.track.as_ref().map(|t| t.uri.as_str());
+                    if !data.track_mix.is_empty() {
+                        components::section_header(ui, &palette, "Your Track Mix");
+                        ui.add_space(4.0);
+                        let context = super::track_view::PlayContext {
+                            uri: "spottyfi:made-for-you:track-mix".to_owned(),
+                            name: "Your Track Mix".to_owned(),
+                        };
+                        if let Some(a) =
+                            cards::track_list(ui, &palette, &data.track_mix, playing, &context)
+                        {
+                            action = Some(a);
                         }
-                        if !data.artist_mix.is_empty() {
-                            components::section_header(ui, &palette, "Artists You Might Like");
-                            ui.add_space(4.0);
-                            if let Some(a) = cards::artist_grid(ui, &palette, &data.artist_mix) {
-                                action = Some(a);
-                            }
+                        ui.add_space(20.0);
+                    }
+                    if !data.artist_mix.is_empty() {
+                        components::section_header(ui, &palette, "Artists You Might Like");
+                        ui.add_space(4.0);
+                        if let Some(a) = cards::artist_grid(ui, &palette, &data.artist_mix) {
+                            action = Some(a);
                         }
                     }
                 }

@@ -103,55 +103,53 @@ impl Page for ChartsPage {
         };
 
         let mut action = None;
+        // The page header is fixed; only the content below scrolls.
+        ui.label(
+            egui::RichText::new("Charts")
+                .family(spottyfi_ui::fonts::semibold())
+                .size(28.0)
+                .color(palette.text),
+        );
+        ui.label(components::muted(
+            &palette,
+            "Global top tracks and artists, via Last.fm.",
+            12.0,
+        ));
+        ui.add_space(12.0);
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Charts")
-                        .family(spottyfi_ui::fonts::semibold())
-                        .size(28.0)
-                        .color(palette.text),
-                );
-                ui.label(components::muted(
-                    &palette,
-                    "Global top tracks and artists, via Last.fm.",
-                    12.0,
-                ));
-                ui.add_space(16.0);
-
-                match loaded {
-                    Err(LastfmError::NotConfigured) => {
-                        if let Some(a) = charts_unconfigured(ui, &palette) {
-                            action = Some(a);
-                        }
+            .show(ui, |ui| match loaded {
+                Err(LastfmError::NotConfigured) => {
+                    if let Some(a) = charts_unconfigured(ui, &palette) {
+                        action = Some(a);
                     }
-                    Err(err) => {
-                        cards::calm_note(
-                            ui,
-                            &palette,
-                            spottyfi_ui::Icon::Charts,
-                            &format!("Couldn't load the charts: {err}"),
-                        );
+                }
+                Err(err) => {
+                    cards::calm_note(
+                        ui,
+                        &palette,
+                        spottyfi_ui::Icon::Charts,
+                        &format!("Couldn't load the charts: {err}"),
+                    );
+                }
+                Ok(data) => {
+                    let playing = ctx.playback.track.as_ref().map(|t| t.uri.as_str());
+                    components::section_header(ui, &palette, "Top Tracks");
+                    ui.add_space(4.0);
+                    let context = super::track_view::PlayContext {
+                        uri: "spottyfi:charts:top-tracks".to_owned(),
+                        name: "Top Tracks".to_owned(),
+                    };
+                    if let Some(a) =
+                        cards::track_list(ui, &palette, &data.tracks, playing, &context)
+                    {
+                        action = Some(a);
                     }
-                    Ok(data) => {
-                        let playing = ctx.playback.track.as_ref().map(|t| t.uri.as_str());
-                        components::section_header(ui, &palette, "Top Tracks");
-                        ui.add_space(4.0);
-                        let context = super::track_view::PlayContext {
-                            uri: "spottyfi:charts:top-tracks".to_owned(),
-                            name: "Top Tracks".to_owned(),
-                        };
-                        if let Some(a) =
-                            cards::track_list(ui, &palette, &data.tracks, playing, &context)
-                        {
-                            action = Some(a);
-                        }
-                        ui.add_space(20.0);
-                        components::section_header(ui, &palette, "Top Artists");
-                        ui.add_space(4.0);
-                        if let Some(a) = cards::artist_grid(ui, &palette, &data.artists) {
-                            action = Some(a);
-                        }
+                    ui.add_space(20.0);
+                    components::section_header(ui, &palette, "Top Artists");
+                    ui.add_space(4.0);
+                    if let Some(a) = cards::artist_grid(ui, &palette, &data.artists) {
+                        action = Some(a);
                     }
                 }
             });

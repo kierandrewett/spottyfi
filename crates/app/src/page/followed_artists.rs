@@ -62,43 +62,42 @@ impl Page for FollowedArtistsPage {
         };
 
         let mut action = None;
+        // The page header is fixed; only the content below scrolls.
+        ui.label(
+            egui::RichText::new("Your Artists")
+                .family(spottyfi_ui::fonts::semibold())
+                .size(28.0)
+                .color(palette.text),
+        );
+        ui.add_space(8.0);
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Your Artists")
-                        .family(spottyfi_ui::fonts::semibold())
-                        .size(28.0)
-                        .color(palette.text),
-                );
-
-                match loaded {
-                    Err(err) => {
-                        ui.add_space(16.0);
-                        cards::calm_note(
-                            ui,
-                            &palette,
-                            spottyfi_ui::Icon::User,
-                            &format!("Couldn't load your artists: {err}"),
-                        );
-                    }
-                    Ok(artists) if artists.is_empty() => {
-                        ui.label(components::muted(
-                            &palette,
-                            "You're not following any artists yet.",
-                            12.0,
-                        ));
-                    }
-                    Ok(artists) => {
-                        ui.label(components::muted(
-                            &palette,
-                            format!("{} artists you follow.", artists.len()),
-                            12.0,
-                        ));
-                        ui.add_space(16.0);
-                        if let Some(a) = cards::artist_grid(ui, &palette, artists) {
-                            action = Some(a);
-                        }
+            .show(ui, |ui| match loaded {
+                Err(err) => {
+                    ui.add_space(16.0);
+                    cards::calm_note(
+                        ui,
+                        &palette,
+                        spottyfi_ui::Icon::User,
+                        &format!("Couldn't load your artists: {err}"),
+                    );
+                }
+                Ok(artists) if artists.is_empty() => {
+                    ui.label(components::muted(
+                        &palette,
+                        "You're not following any artists yet.",
+                        12.0,
+                    ));
+                }
+                Ok(artists) => {
+                    ui.label(components::muted(
+                        &palette,
+                        format!("{} artists you follow.", artists.len()),
+                        12.0,
+                    ));
+                    ui.add_space(16.0);
+                    if let Some(a) = cards::artist_grid(ui, &palette, artists) {
+                        action = Some(a);
                     }
                 }
             });

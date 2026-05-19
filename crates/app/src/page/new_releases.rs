@@ -65,17 +65,17 @@ impl Page for NewReleasesPage {
         };
 
         let mut action = None;
+        // The page header is fixed; only the content below scrolls.
+        ui.label(
+            egui::RichText::new("New Releases")
+                .family(spottyfi_ui::fonts::semibold())
+                .size(28.0)
+                .color(palette.text),
+        );
+        ui.add_space(12.0);
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("New Releases")
-                        .family(spottyfi_ui::fonts::semibold())
-                        .size(28.0)
-                        .color(palette.text),
-                );
-                ui.add_space(16.0);
-
                 match loaded {
                     // The endpoint is dead for this app — a clean note, no crash.
                     Err(ApiError::EndpointUnavailable { .. }) => {

@@ -238,7 +238,11 @@ fn apply_nav(persisted: &mut PersistedShell, request: NavRequest) {
     let PersistedShell {
         dock, dock_extras, ..
     } = persisted;
-    match (request.new_tab, request.main_pane) {
+    // A content page always belongs in the centre tab group — opening Search,
+    // a playlist, etc. should never land in a side panel's leaf. Panels are
+    // left to open wherever the focus is.
+    let main_pane = request.main_pane || request.tab.is_page();
+    match (request.new_tab, main_pane) {
         (false, false) => nav::navigate_replace(dock, dock_extras, request.tab),
         (true, false) => nav::open_new_tab(dock, request.tab),
         (false, true) => nav::navigate_replace_main(dock, dock_extras, request.tab),
