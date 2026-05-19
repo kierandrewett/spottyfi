@@ -7183,6 +7183,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "spottyfi-applemusic-player"
+version = "1.0.0"
+dependencies = [
+ "spottyfi-audio",
+ "tracing",
+]
+
+[[package]]
 name = "spottyfi-audio"
 version = "1.0.0"
 dependencies = [

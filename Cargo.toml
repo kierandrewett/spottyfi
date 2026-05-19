@@ -21,6 +21,7 @@ spottyfi-api = { path = "crates/api" }
 spottyfi-auth = { path = "crates/auth" }
 spottyfi-audio = { path = "crates/audio" }
 spottyfi-applemusic = { path = "crates/applemusic" }
+spottyfi-applemusic-player = { path = "crates/applemusic-player" }
 spottyfi-cache = { path = "crates/cache" }
 spottyfi-subsonic = { path = "crates/subsonic" }
 spottyfi-ui = { path = "crates/ui" }

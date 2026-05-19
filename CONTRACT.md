@@ -65,9 +65,14 @@ experience, source-tagged everywhere, de-duplicated.
       playable Spotify/Subsonic copy
 
 ### G — Apple Music playback via CEF
-- [ ] CEF integration scaffold (offscreen browser, helper process)
-- [ ] MusicKit JS bridge (developer + user token, load/play/pause/seek/volume)
-- [ ] Wire as an Apple Music playback backend
+- [x] `crates/applemusic-player` — `AppleMusicBackend` behind the
+      `PlaybackBackend` trait
+- [x] MusicKit JS bridge — bootstrap document + load/play/pause/stop/seek/
+      volume control protocol, behind a `WebEngine` seam
+- [ ] The CEF runtime `WebEngine` impl — an off-screen Chromium + Widevine.
+      Deliberately not in the default build: the CEF crate pulls a ~1 GB
+      binary distribution and needs Widevine provisioning + an Apple
+      developer token to test. Dropping it in is one `WebEngine` impl.
 
 ### H — Polish
 - [ ] Source badges, empty states, error surfaces
@@ -101,6 +106,13 @@ experience, source-tagged everywhere, de-duplicated.
   player (librespot / HTTP / future MusicKit) presents, so the transport
   drives "the player" without knowing the backend. `HttpAudioPlayer`
   implements it.
+- **Phase G scaffolded.** `crates/applemusic-player` — `AppleMusicBackend`
+  implements `PlaybackBackend` (so the transport drives Apple Music like any
+  backend); the full MusicKit JS v3 control protocol (bootstrap + load /
+  play / pause / stop / seek / volume) is built behind a `WebEngine` seam.
+  The CEF runtime engine is the one remaining `WebEngine` impl — kept out of
+  the default build because the CEF binary distribution + Widevine cannot be
+  provisioned or tested here.
 - **App build/run verified.** `spottyfi` builds and launches cleanly with
   every new crate in the workspace (clean startup logs, no panic, UI
   reached). A screenshot could not be captured — this GNOME Wayland session

@@ -1,0 +1,13 @@
+[package]
+name = "spottyfi-applemusic-player"
+description = "Apple Music playback for Spottyfi via an embedded MusicKit web player."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+spottyfi-audio = { workspace = true }
+tracing = { workspace = true }
