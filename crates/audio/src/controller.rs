@@ -155,6 +155,7 @@ impl PlaybackController {
             title: String::new(),
             artists: Vec::new(),
             album: String::new(),
+            album_id: None,
             art_url: None,
             duration: Duration::ZERO,
         });

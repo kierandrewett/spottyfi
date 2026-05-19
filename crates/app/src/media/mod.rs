@@ -280,6 +280,7 @@ mod tests {
                 title: "Next".to_owned(),
                 artists: vec![],
                 album: String::new(),
+                album_id: None,
                 art_url: None,
                 duration: Duration::from_secs(100),
             }],

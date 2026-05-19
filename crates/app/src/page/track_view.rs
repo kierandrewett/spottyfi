@@ -45,6 +45,7 @@ pub fn to_queue_track(track: &Track) -> Option<QueueTrack> {
         title: track.name.clone(),
         artists: track.artists.iter().map(|a| a.name.clone()).collect(),
         album: track.album.name.clone(),
+        album_id: track.album.id.as_ref().map(|id| id.0.clone()),
         art_url: track.album.images.first().map(|i| i.url.clone()),
         duration: Duration::from_millis(u64::from(track.duration_ms)),
     })

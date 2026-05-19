@@ -12,8 +12,8 @@
 //!
 //! Shuffle and repeat are wired to the engine: they project the live
 //! [`spottyfi_audio::QueueState`] and emit intents on click. The right-cluster
-//! toggles (settings / devices / queue) remain visual placeholders, themed and
-//! laid out so the bar reads as complete.
+//! shortcut buttons (settings / devices / queue) reveal their dock tabs, and
+//! the now-playing title and artists are links to the album and artist pages.
 
 use std::time::Duration;
 
@@ -166,7 +166,7 @@ pub fn transport_bar(
                     .max_rect(left_rect)
                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
             );
-            if let Some(i) = now_playing(&mut left, palette, playback, remote) {
+            if let Some(i) = now_playing(&mut left, palette, playback, queue, remote) {
                 intent = Some(i);
             }
 
@@ -309,6 +309,7 @@ fn now_playing(
     ui: &mut egui::Ui,
     palette: &Palette,
     playback: &PlaybackState,
+    queue: &QueueState,
     remote: Option<&RemotePlayback>,
 ) -> Option<TransportIntent> {
     let art_url = playback.track.as_ref().and_then(|t| t.art_url.as_deref());
@@ -320,15 +321,36 @@ fn now_playing(
         ui.add_space(4.0);
         match &playback.track {
             Some(track) => {
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(&track.title)
-                            .family(spottyfi_ui::fonts::medium())
-                            .size(12.5)
-                            .color(palette.text),
-                    )
-                    .truncate(),
-                );
+                // The title links to the album when the queue knows its id
+                // (an app-initiated play); a raw-URI play has no id, so the
+                // title is then plain text.
+                let album_id = queue
+                    .current
+                    .as_ref()
+                    .filter(|current| current.uri == track.uri)
+                    .and_then(|current| current.album_id.clone());
+                let title = egui::RichText::new(&track.title)
+                    .family(spottyfi_ui::fonts::medium())
+                    .size(12.5)
+                    .color(palette.text);
+                match album_id {
+                    Some(id) => {
+                        let link = ui.add(
+                            egui::Label::new(title)
+                                .truncate()
+                                .sense(egui::Sense::click()),
+                        );
+                        if link.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        if link.clicked() {
+                            intent = Some(TransportIntent::ShowTab(Tab::Album(id)));
+                        }
+                    }
+                    None => {
+                        ui.add(egui::Label::new(title).truncate());
+                    }
+                }
                 if let Some(i) = artist_links(ui, palette, &track.artists, &track.artist_ids) {
                     intent = Some(i);
                 }

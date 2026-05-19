@@ -38,6 +38,9 @@ pub struct QueueTrack {
     pub artists: Vec<String>,
     /// Album name, if known.
     pub album: String,
+    /// Base-62 Spotify id of the album, when known — used to make the album a
+    /// navigable link. Absent for raw-URI plays and local files.
+    pub album_id: Option<String>,
     /// URL of the album cover art, if any.
     pub art_url: Option<String>,
     /// Total track duration.
@@ -475,6 +478,7 @@ mod tests {
             title: uri.to_owned(),
             artists: vec!["Artist".to_owned()],
             album: "Album".to_owned(),
+            album_id: None,
             art_url: None,
             duration: Duration::from_secs(180),
         }
