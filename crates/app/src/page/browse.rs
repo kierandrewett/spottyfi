@@ -108,17 +108,18 @@ impl Page for BrowsePage {
         let palette = ctx.palette;
         let mut action = None;
 
+        // The page header stays fixed; only the content below scrolls.
+        ui.label(
+            egui::RichText::new("Browse")
+                .family(spottyfi_ui::fonts::semibold())
+                .size(28.0)
+                .color(palette.text),
+        );
+        ui.add_space(12.0);
+
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Browse")
-                        .family(spottyfi_ui::fonts::semibold())
-                        .size(28.0)
-                        .color(palette.text),
-                );
-                ui.add_space(16.0);
-
                 // The Spotify category grid.
                 components::section_header(ui, &palette, "Genres & Moods");
                 ui.add_space(6.0);

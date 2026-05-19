@@ -215,14 +215,19 @@ fn apply_palette(style: &mut egui::Style, palette: &Palette) {
     // Roomier buttons; this also sets the height of menu entries, so menus
     // read comfortably instead of feeling tight.
     style.spacing.button_padding = egui::vec2(10.0, 6.0);
-    // A border of breathing room inside menus and other popups.
-    style.spacing.menu_margin = egui::Margin::same(6);
+    // No inner margin on menus — entries run edge to edge inside the menu's
+    // outline; each entry's own button padding gives the breathing room.
+    style.spacing.menu_margin = egui::Margin::ZERO;
     // A comfortable minimum interactive height so menu entries, combo boxes
     // and small buttons are easy to hit and evenly sized.
     style.spacing.interact_size.y = 22.0;
     // A touch more gap between a checkbox/radio and its label.
     style.spacing.icon_spacing = 6.0;
     style.spacing.scroll = egui::style::ScrollStyle::thin();
+    // egui 0.34 paints a dark fade gradient at a scroll area's scrolled edge;
+    // it reads as an unwanted shadow creeping over content while scrolling.
+    // Disable it — the app is flat and the scrollbar already signals overflow.
+    style.spacing.scroll.fade.strength = 0.0;
 
     // Immediate, non-animated scrolling. This kills the lerp used by
     // `scroll_to_*` (jump-to-tab, focus-follows-selection) so navigation lands

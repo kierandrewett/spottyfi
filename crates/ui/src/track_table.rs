@@ -191,14 +191,12 @@ pub fn track_table(
             if columns.album {
                 header.col(|ui| {
                     paint_header_bg(ui, palette);
-                    column_rule(ui, palette);
                     sort_header(ui, palette, state, SortColumn::Album, "ALBUM", &mut action);
                 });
             }
             if columns.date_added {
                 header.col(|ui| {
                     paint_header_bg(ui, palette);
-                    column_rule(ui, palette);
                     sort_header(
                         ui,
                         palette,
@@ -211,7 +209,6 @@ pub fn track_table(
             }
             header.col(|ui| {
                 paint_header_bg(ui, palette);
-                column_rule(ui, palette);
                 sort_header(
                     ui,
                     palette,
@@ -264,16 +261,6 @@ fn now_playing_bg(palette: &Palette) -> egui::Color32 {
     // and unmistakably green, subtle enough not to fight the green title.
     let a = palette.accent;
     egui::Color32::from_rgba_unmultiplied(a.r(), a.g(), a.b(), 42)
-}
-
-/// Draw a thin vertical separator at the left edge of a column.
-fn column_rule(ui: &mut egui::Ui, palette: &Palette) {
-    let rect = ui.max_rect();
-    ui.painter().vline(
-        rect.left(),
-        rect.y_range().expand(2.0),
-        egui::Stroke::new(1.0, palette.outline),
-    );
 }
 
 /// Draw one clickable, sortable column header — uppercase, dimmed, with a
@@ -425,7 +412,6 @@ fn render_row(
     if columns.album {
         row.col(|ui| {
             paint_cell_bg(ui, row_bg);
-            column_rule(ui, palette);
             match &track.album.id {
                 Some(id) if !track.album.name.is_empty() => {
                     if link_label(ui, palette, &track.album.name, 12.0) {
@@ -450,7 +436,6 @@ fn render_row(
     if columns.date_added {
         row.col(|ui| {
             paint_cell_bg(ui, row_bg);
-            column_rule(ui, palette);
             let text = track_row.date_added.map(format_date).unwrap_or_default();
             ui.label(components::muted(palette, text, 11.5));
         });
@@ -459,7 +444,6 @@ fn render_row(
     // Duration — right-aligned so the m:ss values line up on their last digit.
     row.col(|ui| {
         paint_cell_bg(ui, row_bg);
-        column_rule(ui, palette);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(8.0);
             ui.label(components::muted(

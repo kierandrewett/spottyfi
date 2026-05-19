@@ -444,41 +444,41 @@ fn control_row(
         None => (playback.playing, playback.track.is_some()),
     };
 
-    // Lay the row out top-down/centre-aligned and drop the button cluster in
-    // as a single `horizontal` child: egui then centres that child by its
-    // intrinsic width, which it does reliably — unlike `with_main_align`,
-    // which left the cluster visibly off-centre from the seek bar below it.
-    ui.allocate_ui_with_layout(
+    // The cluster is a fixed width (five icon buttons at 6px spacing); place
+    // it in a rect centred on the row so it sits dead-centre over the seek
+    // bar — measured-and-placed, the only reliably-centred egui layout.
+    const CLUSTER_WIDTH: f32 = 168.0;
+    let (row, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
-        egui::Layout::top_down(egui::Align::Center),
-        |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                if icons::icon_button(ui, palette, Icon::Shuffle, 15.0, queue.shuffle, "Shuffle")
-                    .clicked()
-                {
-                    intent = Some(TransportIntent::SetShuffle(!queue.shuffle));
-                }
-                if icons::icon_button(ui, palette, Icon::SkipBack, 16.0, false, "Previous")
-                    .clicked()
-                {
-                    intent = Some(TransportIntent::Previous);
-                }
-
-                if play_button(ui, palette, playing, has_track).clicked() {
-                    intent = Some(TransportIntent::TogglePlayPause);
-                }
-
-                if icons::icon_button(ui, palette, Icon::SkipForward, 16.0, false, "Next").clicked()
-                {
-                    intent = Some(TransportIntent::Next);
-                }
-                if let Some(i) = repeat_button(ui, palette, queue.repeat) {
-                    intent = Some(i);
-                }
-            });
-        },
+        egui::Sense::hover(),
     );
+    let cluster_rect =
+        egui::Rect::from_center_size(row.center(), egui::vec2(CLUSTER_WIDTH, height));
+    let mut cluster = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(cluster_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    cluster.spacing_mut().item_spacing.x = 6.0;
+    {
+        let ui = &mut cluster;
+        if icons::icon_button(ui, palette, Icon::Shuffle, 15.0, queue.shuffle, "Shuffle").clicked()
+        {
+            intent = Some(TransportIntent::SetShuffle(!queue.shuffle));
+        }
+        if icons::icon_button(ui, palette, Icon::SkipBack, 16.0, false, "Previous").clicked() {
+            intent = Some(TransportIntent::Previous);
+        }
+        if play_button(ui, palette, playing, has_track).clicked() {
+            intent = Some(TransportIntent::TogglePlayPause);
+        }
+        if icons::icon_button(ui, palette, Icon::SkipForward, 16.0, false, "Next").clicked() {
+            intent = Some(TransportIntent::Next);
+        }
+        if let Some(i) = repeat_button(ui, palette, queue.repeat) {
+            intent = Some(i);
+        }
+    }
 
     intent
 }
